@@ -767,45 +767,55 @@ class Client(BaseClient):
 
     def _save_local_model_after_training(self):
         """
-        Save local model after training completion
-        Path format: /tmp/节点名/节点名+round
+        Save local model after training completion using chunked storage
+        Stores model weights as chunks in local database with key format:
+        (client_id, round_num, chunk_id) -> chunk_data
         """
         try:
-            import os
-            import torch
+            from federatedscope.core.chunk_manager import ChunkManager
             
-            # Get client name/identifier
-            client_name = f"client_{self.ID}"
+            # Get the trained model
+            model = None
+            if hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'model'):
+                model = self.trainer.ctx.model
+            elif hasattr(self.trainer, 'model'):
+                model = self.trainer.model
             
-            # Create directory path: /tmp/client_name/
-            save_dir = os.path.join(os.getcwd(), "tmp", client_name)
-            os.makedirs(save_dir, exist_ok=True)
+            if model is None:
+                logger.warning(f"⚠️ Client {self.ID}: Cannot save model - no accessible model found")
+                return
             
-            # Create filename: client_name + round
-            filename = f"{client_name}_round_{self.state}.pth"
-            save_path = os.path.join(save_dir, filename)
+            # Initialize ChunkManager for this client
+            if not hasattr(self, 'chunk_manager'):
+                self.chunk_manager = ChunkManager(client_id=self.ID)
             
-            # Save model using trainer's save_model method
-            if hasattr(self.trainer, 'save_model'):
-                self.trainer.save_model(save_path, cur_round=self.state)
-                logger.info(f"💾 Client {self.ID}: Saved local model to {save_path}")
+            # Save model as chunks (default: 10 chunks)
+            num_chunks = getattr(self._cfg, 'chunk_num', 10) if hasattr(self, '_cfg') else 10
+            saved_hashes = self.chunk_manager.save_model_chunks(
+                model=model,
+                round_num=self.state,
+                num_chunks=num_chunks
+            )
+            
+            if saved_hashes:
+                logger.info(f"✅ Client {self.ID}: Saved model as {len(saved_hashes)} chunks for round {self.state}")
+                
+                # Optional: cleanup old rounds to save space
+                if hasattr(self._cfg, 'chunk_keep_rounds') and self._cfg.chunk_keep_rounds > 0:
+                    self.chunk_manager.cleanup_old_rounds(keep_rounds=self._cfg.chunk_keep_rounds)
+                
+                # Log storage statistics
+                stats = self.chunk_manager.get_storage_stats()
+                logger.debug(f"📊 Client {self.ID}: Storage stats - "
+                           f"Total chunks: {stats.get('unique_chunks', 0)}, "
+                           f"Size: {stats.get('storage_size_mb', 0):.2f} MB")
             else:
-                # Fallback: save model state dict directly
-                if hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'model'):
-                    model_state = self.trainer.ctx.model.state_dict()
-                    checkpoint = {
-                        'client_id': self.ID,
-                        'round': self.state,
-                        'model': model_state,
-                        'timestamp': self.cur_timestamp
-                    }
-                    torch.save(checkpoint, save_path)
-                    logger.info(f"💾 Client {self.ID}: Saved local model to {save_path}")
-                else:
-                    logger.warning(f"⚠️ Client {self.ID}: Cannot save model - no accessible model found")
-                    
+                logger.error(f"❌ Client {self.ID}: Failed to save any chunks for round {self.state}")
+                
         except Exception as e:
-            logger.error(f"❌ Client {self.ID}: Failed to save local model: {e}")
+            logger.error(f"❌ Client {self.ID}: Failed to save model chunks: {e}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
 
     @classmethod
     def get_msg_handler_dict(cls):
