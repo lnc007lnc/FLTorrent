@@ -6,6 +6,7 @@ import pickle
 from federatedscope.core.message import Message
 from federatedscope.core.communication import StandaloneCommManager, \
     StandaloneDDPCommManager, gRPCCommManager
+from federatedscope.core.connection_monitor import ConnectionMonitor, ConnectionEvent
 from federatedscope.core.monitors.early_stopper import EarlyStopper
 from federatedscope.core.auxiliaries.trainer_builder import get_trainer
 from federatedscope.core.secret_sharing import AdditiveSecretSharing
@@ -181,6 +182,51 @@ class Client(BaseClient):
                 'host': self.comm_manager.host,
                 'port': self.comm_manager.port
             }
+            
+        # Initialize connection monitor
+        self.connection_monitor = ConnectionMonitor(
+            client_id=self.ID,
+            comm_manager=self.comm_manager,
+            server_id=self.server_id or 0
+        )
+        
+        # Link connection monitor to communication manager
+        if hasattr(self.comm_manager, 'connection_monitor'):
+            self.comm_manager.connection_monitor = self.connection_monitor
+        
+        # Start connection monitoring for distributed mode
+        if self.mode == 'distributed':
+            self.connection_monitor.start_monitoring()
+            # Report initial connection establishment
+            self.connection_monitor.report_connection_established(
+                peer_id=self.server_id or 0,
+                details={
+                    'client_address': self.local_address,
+                    'server_address': {'host': server_host, 'port': server_port} if 'server_host' in locals() else None,
+                    'initialization': True
+                }
+            )
+            
+    def cleanup(self):
+        """Clean up client resources and report disconnection"""
+        if hasattr(self, 'connection_monitor') and self.connection_monitor:
+            # Report disconnection before cleanup
+            self.connection_monitor.report_connection_lost(
+                peer_id=self.server_id or 0,
+                details={
+                    'reason': 'client_shutdown',
+                    'clean_shutdown': True
+                }
+            )
+            # Stop monitoring
+            self.connection_monitor.stop_monitoring()
+            
+    def __del__(self):
+        """Destructor - ensure cleanup is called"""
+        try:
+            self.cleanup()
+        except:
+            pass  # Ignore errors during destruction
 
     def _gen_timestamp(self, init_timestamp, instance_number):
         if init_timestamp is None:

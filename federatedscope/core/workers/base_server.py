@@ -47,6 +47,8 @@ class BaseServer(Worker):
                                ['model_para', 'evaluate', 'finish'])
         self.register_handlers('metrics', self.callback_funcs_for_metrics,
                                ['converged'])
+        self.register_handlers('connect_msg', self.callback_funcs_for_connection,
+                               ['connection_ack'])
 
     @abc.abstractmethod
     def run(self):

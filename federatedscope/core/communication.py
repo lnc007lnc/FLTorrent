@@ -129,6 +129,7 @@ class gRPCCommManager(object):
                                       options=options)
         self.neighbors = dict()
         self.monitor = None  # used to track the communication related metrics
+        self.connection_monitor = None  # Will be set by the client
 
     def serve(self, max_workers, host, port, options):
         """
@@ -186,8 +187,24 @@ class gRPCCommManager(object):
         request = message.transform(to_list=True)
         try:
             stub.sendMessage(request)
+            # Notify connection monitor about successful send (if available)
+            if hasattr(self, 'connection_monitor') and self.connection_monitor:
+                # This indicates connection is active
+                pass
         except grpc._channel._InactiveRpcError as error:
-            logger.warning(error)
+            logger.warning(f"Connection error to {receiver_address}: {error}")
+            # Notify connection monitor about connection failure
+            if hasattr(self, 'connection_monitor') and self.connection_monitor:
+                from federatedscope.core.connection_monitor import ConnectionEvent
+                self.connection_monitor.report_connection_lost(
+                    peer_id=message.receiver,
+                    details={
+                        'error_type': type(error).__name__,
+                        'error_message': str(error),
+                        'receiver_address': receiver_address,
+                        'message_type': message.msg_type
+                    }
+                )
             pass
         channel.close()
 

@@ -18,12 +18,13 @@ from federatedscope.core.auxiliaries.utils import merge_dict_of_results, \
 from federatedscope.core.auxiliaries.trainer_builder import get_trainer
 from federatedscope.core.secret_sharing import AdditiveSecretSharing
 from federatedscope.core.workers.base_server import BaseServer
+from federatedscope.core.workers.connection_handler_mixin import ConnectionHandlerMixin
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-class Server(BaseServer):
+class Server(BaseServer, ConnectionHandlerMixin):
     """
     The Server class, which describes the behaviors of server in an FL \
     course. The behaviors are described by the handled functions (named as \
@@ -74,6 +75,8 @@ class Server(BaseServer):
                  unseen_clients_id=None,
                  **kwargs):
         super(Server, self).__init__(ID, state, config, model, strategy)
+        # Initialize connection handler mixin
+        ConnectionHandlerMixin.__init__(self)
         # Register message handlers
         self._register_default_handlers()
 
