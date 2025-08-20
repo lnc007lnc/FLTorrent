@@ -49,6 +49,8 @@ class BaseServer(Worker):
                                ['converged'])
         self.register_handlers('connect_msg', self.callback_funcs_for_connection,
                                ['connection_ack'])
+        # Note: topology_instruction is handled on the client side, not server side
+        # The server sends topology instructions but doesn't need to handle them
 
     @abc.abstractmethod
     def run(self):

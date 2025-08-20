@@ -61,6 +61,9 @@ class BaseClient(Worker):
                                [None])
         self.register_handlers('converged', self.callback_funcs_for_converged,
                                [None])
+        self.register_handlers('topology_instruction', 
+                               self.callback_funcs_for_topology_instruction,
+                               ['connect_msg'])  # May send connect_msg to server when connections established
 
     @abc.abstractmethod
     def run(self):
@@ -146,5 +149,16 @@ class BaseClient(Worker):
 
         Arguments:
             message: The received message
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def callback_funcs_for_topology_instruction(self, message):
+        """
+        The handling function for receiving topology construction instructions
+        from the server, which tells the client which neighbors to connect to
+
+        Arguments:
+            message: The received message containing neighbor connection list
         """
         raise NotImplementedError
