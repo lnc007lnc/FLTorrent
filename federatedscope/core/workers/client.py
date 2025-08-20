@@ -496,6 +496,10 @@ class Client(BaseClient):
         self.ID = int(content)
         logger.info('Client (address {}:{}) is assigned with #{:d}.'.format(
             self.comm_manager.host, self.comm_manager.port, self.ID))
+        
+        # Update connection monitor with correct client ID
+        if hasattr(self, 'connection_monitor') and self.connection_monitor:
+            self.connection_monitor.client_id = self.ID
 
     def callback_funcs_for_join_in_info(self, message: Message):
         """
@@ -636,6 +640,126 @@ class Client(BaseClient):
             message: The received message
         """
         self._monitor.global_converged()
+
+    def callback_funcs_for_topology_instruction(self, message: Message):
+        """
+        The handling function for receiving topology construction instructions
+        from the server, which tells the client which neighbors to connect to
+
+        Arguments:
+            message: The received message containing neighbor connection list
+        """
+        try:
+            content = message.content
+            neighbors_to_connect = content.get('neighbors_to_connect', [])
+            topology_type = content.get('topology_type', 'unknown')
+            max_attempts = content.get('max_attempts', 3)
+            retry_delay = content.get('retry_delay', 2.0)
+            
+            logger.info(f"🌐 Client {self.ID}: Received topology instruction")
+            logger.info(f"   Topology type: {topology_type}")
+            logger.info(f"   Neighbors to connect: {neighbors_to_connect}")
+            
+            if not neighbors_to_connect:
+                logger.info(f"   No neighbors to connect for Client {self.ID}")
+                return
+            
+            # Establish connections to each neighbor
+            for neighbor_id in neighbors_to_connect:
+                self._connect_to_neighbor(neighbor_id, max_attempts, retry_delay)
+                
+        except Exception as e:
+            logger.error(f"❌ Client {self.ID}: Error processing topology instruction: {e}")
+
+    def _connect_to_neighbor(self, neighbor_id, max_attempts=3, retry_delay=2.0):
+        """
+        Attempt to connect to a specific neighbor client
+        
+        Args:
+            neighbor_id: ID of the neighbor to connect to
+            max_attempts: Maximum connection attempts
+            retry_delay: Delay between attempts
+        """
+        import time
+        
+        logger.info(f"🔗 Client {self.ID}: Attempting to connect to Client {neighbor_id}")
+        
+        for attempt in range(1, max_attempts + 1):
+            try:
+                # For simulation purposes, we'll assume the connection is successful
+                # In a real implementation, this would involve actual network connections
+                
+                # Simulate connection establishment
+                success = self._simulate_connection_to_peer(neighbor_id)
+                
+                if success:
+                    logger.info(f"✅ Client {self.ID}: Successfully connected to Client {neighbor_id}")
+                    
+                    # Report successful connection to server via connection monitor
+                    if hasattr(self, 'connection_monitor') and self.connection_monitor:
+                        self.connection_monitor.report_connection_established(
+                            peer_id=neighbor_id,
+                            details={
+                                'topology_connection': True,
+                                'attempt': attempt,
+                                'peer_address': f'simulated_address_{neighbor_id}'
+                            }
+                        )
+                    break
+                else:
+                    logger.warning(f"⚠️ Client {self.ID}: Connection to Client {neighbor_id} failed "
+                                 f"(attempt {attempt}/{max_attempts})")
+                    if attempt < max_attempts:
+                        time.sleep(retry_delay)
+                    
+            except Exception as e:
+                logger.error(f"❌ Client {self.ID}: Error connecting to Client {neighbor_id} "
+                           f"(attempt {attempt}/{max_attempts}): {e}")
+                if attempt < max_attempts:
+                    time.sleep(retry_delay)
+        
+        # If all attempts failed
+        if attempt == max_attempts:
+            logger.error(f"❌ Client {self.ID}: Failed to connect to Client {neighbor_id} "
+                        f"after {max_attempts} attempts")
+            
+            # Report failed connection to server
+            if hasattr(self, 'connection_monitor') and self.connection_monitor:
+                self.connection_monitor.report_connection_lost(
+                    peer_id=neighbor_id,
+                    details={
+                        'topology_connection': True,
+                        'error_message': f'Failed after {max_attempts} attempts',
+                        'final_attempt': attempt
+                    }
+                )
+
+    def _simulate_connection_to_peer(self, peer_id):
+        """
+        Simulate connection establishment to another peer client
+        In a real implementation, this would involve actual network protocols
+        
+        Args:
+            peer_id: ID of the peer to connect to
+            
+        Returns:
+            bool: True if connection successful, False otherwise
+        """
+        # For simulation purposes, randomly succeed most of the time
+        import random
+        success_rate = 0.8  # 80% success rate for simulation
+        success = random.random() < success_rate
+        
+        if success:
+            # In real implementation, this would:
+            # 1. Establish TCP/gRPC connection to peer
+            # 2. Exchange handshake messages
+            # 3. Add peer to communication manager
+            logger.debug(f"🔗 Simulated connection: Client {self.ID} -> Client {peer_id}")
+        else:
+            logger.debug(f"❌ Simulated connection failed: Client {self.ID} -> Client {peer_id}")
+            
+        return success
 
     @classmethod
     def get_msg_handler_dict(cls):

@@ -19,6 +19,7 @@ from federatedscope.core.auxiliaries.trainer_builder import get_trainer
 from federatedscope.core.secret_sharing import AdditiveSecretSharing
 from federatedscope.core.workers.base_server import BaseServer
 from federatedscope.core.workers.connection_handler_mixin import ConnectionHandlerMixin
+from federatedscope.core.topology_manager import TopologyManager
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -173,6 +174,16 @@ class Server(BaseServer, ConnectionHandlerMixin):
         self.sample_client_num = int(self._cfg.federate.sample_client_num)
         self.join_in_client_num = 0
         self.join_in_info = dict()
+        
+        # Initialize topology manager if enabled
+        self.topology_manager = None
+        if hasattr(self._cfg, 'topology') and self._cfg.topology.use:
+            # Will be initialized with actual client list after all clients join
+            self.topology_manager = TopologyManager(
+                topology_type=self._cfg.topology.type,
+                client_list=[]  # Will be updated when clients join
+            )
+            logger.info(f"Topology construction enabled: {self._cfg.topology.type}")
         # the unseen clients indicate the ones that do not contribute to FL
         # process by training on their local data and uploading their local
         # model update. The splitting is useful to check participation
@@ -264,7 +275,12 @@ class Server(BaseServer, ConnectionHandlerMixin):
         # Begin: Broadcast model parameters and start to FL train
         while self.join_in_client_num < self.client_num:
             msg = self.comm_manager.receive()
+            print(f"📥 SERVER: Received message type '{msg.msg_type}' from client {msg.sender}")
             self.msg_handlers[msg.msg_type](msg)
+
+        # Topology Construction Phase (if enabled)
+        if self.topology_manager is not None:
+            self._construct_network_topology()
 
         # Running: listen for message (updates from clients),
         # aggregate and broadcast feedbacks (aggregated model parameters)
@@ -276,6 +292,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
             while self.state <= self.total_round_num:
                 try:
                     msg = self.comm_manager.receive()
+                    print(f"📥 SERVER: Received message type '{msg.msg_type}' from client {msg.sender}")
                     move_on_flag = self.msg_handlers[msg.msg_type](msg)
                     if move_on_flag:
                         time_counter.reset()
@@ -384,6 +401,132 @@ class Server(BaseServer, ConnectionHandlerMixin):
             move_on_flag = False
 
         return move_on_flag
+
+    def _construct_network_topology(self):
+        """
+        Construct network topology between clients
+        
+        This method orchestrates the topology construction process:
+        1. Initialize topology with current client list
+        2. Compute required connections for each client
+        3. Send topology instructions to clients
+        4. Wait for all connections to be established
+        """
+        logger.info("🌐 Starting network topology construction...")
+        
+        # Get list of connected clients
+        client_list = list(range(1, self.client_num + 1))
+        
+        # Update topology manager with actual client list
+        self.topology_manager.client_list = client_list
+        
+        # Compute the topology structure
+        try:
+            topology_graph = self.topology_manager.compute_topology()
+            
+            if not topology_graph:
+                logger.warning("No topology computed, skipping topology construction")
+                return
+                
+            logger.info(f"📋 Computed topology: {topology_graph}")
+            
+            # Send topology instructions to each client
+            self._send_topology_instructions(topology_graph)
+            
+            # Wait for topology construction to complete
+            self._wait_for_topology_completion()
+            
+            logger.info("🎉 Network topology construction completed successfully!")
+            
+        except Exception as e:
+            logger.error(f"❌ Topology construction failed: {e}")
+            if self._cfg.topology.require_full_topology:
+                raise RuntimeError(f"Required topology construction failed: {e}")
+            else:
+                logger.warning("Continuing with incomplete topology as configured")
+
+    def _send_topology_instructions(self, topology_graph):
+        """
+        Send topology connection instructions to each client
+        
+        Args:
+            topology_graph: Dict[client_id] -> List[neighbor_ids]
+        """
+        logger.info("📤 Sending topology instructions to clients...")
+        
+        for client_id, neighbors in topology_graph.items():
+            if neighbors:  # Only send if client has neighbors to connect to
+                message = Message(
+                    msg_type='topology_instruction',
+                    sender=self.ID,
+                    receiver=[client_id],
+                    state=self.state,
+                    timestamp=self.cur_timestamp,
+                    content={
+                        'neighbors_to_connect': neighbors,
+                        'topology_type': self.topology_manager.topology_type.value,
+                        'max_attempts': self._cfg.topology.max_connection_attempts,
+                        'retry_delay': self._cfg.topology.connection_retry_delay
+                    }
+                )
+                
+                self.comm_manager.send(message)
+                logger.info(f"📨 Sent topology instruction to Client {client_id}: connect to {neighbors}")
+            else:
+                logger.info(f"📭 Client {client_id} has no connections required")
+
+    def _wait_for_topology_completion(self):
+        """
+        Wait for all required topology connections to be established
+        """
+        logger.info("⏳ Waiting for topology construction to complete...")
+        
+        start_time = time.time()
+        timeout = self._cfg.topology.timeout
+        check_interval = 2.0  # Check every 2 seconds
+        
+        while True:
+            # Check if topology is complete
+            if self.topology_manager.is_topology_complete():
+                construction_time = time.time() - start_time
+                logger.info(f"✅ Topology construction completed in {construction_time:.2f} seconds")
+                break
+            
+            # Check timeout
+            elapsed_time = time.time() - start_time
+            if elapsed_time > timeout:
+                if self._cfg.topology.require_full_topology:
+                    self.topology_manager.print_topology_status()
+                    raise TimeoutError(f"Topology construction timed out after {timeout} seconds")
+                else:
+                    logger.warning(f"⏰ Topology construction timed out after {timeout} seconds, "
+                                 f"continuing with partial topology")
+                    break
+            
+            # Print progress if verbose mode enabled
+            if self._cfg.topology.verbose and int(elapsed_time) % 10 == 0:
+                self.topology_manager.print_topology_status()
+            
+            # Wait for next check or handle incoming messages
+            try:
+                # Non-blocking receive with timeout
+                msg = self.comm_manager.receive()
+                if msg:
+                    print(f"📥 SERVER: Received message type '{msg.msg_type}' from client {msg.sender}")
+                    
+                    # Handle topology-related messages
+                    if msg.msg_type in self.msg_handlers:
+                        self.msg_handlers[msg.msg_type](msg)
+                    else:
+                        logger.warning(f"Unknown message type during topology construction: {msg.msg_type}")
+                        
+            except Exception as e:
+                # Continue if no message available
+                time.sleep(min(check_interval, timeout - elapsed_time))
+        
+        # Print final topology status
+        if self._cfg.topology.verbose:
+            self.topology_manager.print_topology_status()
 
     def check_and_save(self):
         """

@@ -188,6 +188,9 @@ class Message(object):
                 m_single.str_value = value
             elif type(value) in [float, np.float32]:
                 m_single.float_value = value
+            elif type(value) == bool:
+                # Convert boolean to string for protobuf compatibility
+                m_single.str_value = str(value)
             else:
                 raise ValueError(
                     'The data type {} has not been supported.'.format(

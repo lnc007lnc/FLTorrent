@@ -1,0 +1,85 @@
+# Example FederatedScope Configuration with Network Topology Construction
+# 
+# This configuration enables custom network topologies between clients
+# before starting federated learning training.
+
+use_gpu: False
+seed: 12345
+
+# Basic federated learning settings
+federate:
+  client_num: 4
+  mode: 'distributed'
+  total_round_num: 10
+  make_global_eval: False
+  sample_client_num: 4
+
+# Distributed mode settings
+distribute:
+  use: True
+  server_host: '127.0.0.1'
+  server_port: 50051
+  role: 'server'  # Set to 'client' for client configs
+
+# Network Topology Construction (NEW FEATURE!)
+topology:
+  # Enable topology construction phase
+  use: True
+  
+  # Type of topology to construct
+  # Options: 'star', 'ring', 'mesh', 'tree', 'custom'
+  type: 'star'
+  
+  # Timeout for topology construction (seconds)
+  timeout: 60.0
+  
+  # Maximum connection attempts per client
+  max_connection_attempts: 3
+  
+  # Delay between connection attempts (seconds)
+  connection_retry_delay: 2.0
+  
+  # Whether to require complete topology before starting training
+  require_full_topology: True
+  
+  # Whether to save topology construction logs
+  save_construction_log: True
+  
+  # Directory for topology logs
+  log_dir: 'topology_logs'
+  
+  # Verbose progress reporting
+  verbose: True
+  
+  # Custom topology specification (only used when type='custom')
+  # Format: {client_id: [neighbor_ids]}
+  # Example for custom topology:
+  # custom_graph:
+  #   1: [2, 3]    # Client 1 connects to clients 2 and 3
+  #   2: [1, 4]    # Client 2 connects to clients 1 and 4
+  #   3: [1]       # Client 3 connects to client 1
+  #   4: [2]       # Client 4 connects to client 2
+
+# Training settings
+trainer:
+  type: 'general'
+
+# Evaluation settings
+eval:
+  freq: 5
+  split: ['test']
+
+# Data settings
+data:
+  type: 'toy'
+  file_path: 'toy_data'
+
+# Model settings
+model:
+  type: 'lr'
+
+# Training configuration
+train:
+  optimizer:
+    lr: 0.01
+  local_update_steps: 5
