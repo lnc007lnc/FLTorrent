@@ -473,6 +473,10 @@ class Client(BaseClient):
                     else:
                         shared_model_para = symmetric_uniform_quantization(
                             shared_model_para, nbits)
+                
+                # Save local model after training completion
+                self._save_local_model_after_training()
+                
                 self.comm_manager.send(
                     Message(msg_type='model_para',
                             sender=self.ID,
@@ -760,6 +764,48 @@ class Client(BaseClient):
             logger.debug(f"❌ Simulated connection failed: Client {self.ID} -> Client {peer_id}")
             
         return success
+
+    def _save_local_model_after_training(self):
+        """
+        Save local model after training completion
+        Path format: /tmp/节点名/节点名+round
+        """
+        try:
+            import os
+            import torch
+            
+            # Get client name/identifier
+            client_name = f"client_{self.ID}"
+            
+            # Create directory path: /tmp/client_name/
+            save_dir = os.path.join(os.getcwd(), "tmp", client_name)
+            os.makedirs(save_dir, exist_ok=True)
+            
+            # Create filename: client_name + round
+            filename = f"{client_name}_round_{self.state}.pth"
+            save_path = os.path.join(save_dir, filename)
+            
+            # Save model using trainer's save_model method
+            if hasattr(self.trainer, 'save_model'):
+                self.trainer.save_model(save_path, cur_round=self.state)
+                logger.info(f"💾 Client {self.ID}: Saved local model to {save_path}")
+            else:
+                # Fallback: save model state dict directly
+                if hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'model'):
+                    model_state = self.trainer.ctx.model.state_dict()
+                    checkpoint = {
+                        'client_id': self.ID,
+                        'round': self.state,
+                        'model': model_state,
+                        'timestamp': self.cur_timestamp
+                    }
+                    torch.save(checkpoint, save_path)
+                    logger.info(f"💾 Client {self.ID}: Saved local model to {save_path}")
+                else:
+                    logger.warning(f"⚠️ Client {self.ID}: Cannot save model - no accessible model found")
+                    
+        except Exception as e:
+            logger.error(f"❌ Client {self.ID}: Failed to save local model: {e}")
 
     @classmethod
     def get_msg_handler_dict(cls):

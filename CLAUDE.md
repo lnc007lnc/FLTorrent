@@ -341,3 +341,191 @@ python federatedscope/main.py --cfg real_test_client_1.yaml  # Client configs
    - Check timeout settings: increase `topology.timeout` for large networks
    - Review server logs for "Starting network topology construction" message
    - Verify clients receive topology instructions: look for "🌐 Client X: Received topology instruction"
+
+## Synchronous Training Mode - Detailed Workflow Analysis
+
+### Core Training Flow After Local Training Completion
+
+FederatedScope implements **synchronous federated learning** with strict message-based coordination between server and clients. The system uses a **passive waiting mechanism** where the server blocks until receiving sufficient client updates before proceeding to aggregation.
+
+#### 1. Client-Side Training Completion Flow
+
+**Key Function Chain:**
+```
+client.callback_funcs_for_model_para() → trainer.train() → _run_routine() → comm_manager.send()
+```
+
+**Training Result Calculation:**
+- **File**: `federatedscope/core/trainers/trainer.py:233`
+- **Sample Size Calculation**: Accumulated during training via `ctx.num_samples += ctx.batch_size` (torch_trainer.py:407)
+- **Return Values**: `(num_samples, model_parameters, eval_metrics)`
+
+**Message Sending Process** (`client.py:476`):
+```python
+self.comm_manager.send(
+    Message(msg_type='model_para',
+            sender=self.ID,
+            receiver=[server_id],
+            state=self.state,
+            timestamp=timestamp,
+            content=(sample_size, shared_model_para)))
+```
+
+#### 2. Server-Side Synchronous Coordination
+
+**Message Routing** (`base_server.py:46`):
+```python
+self.register_handlers('model_para', self.callback_funcs_model_para)
+```
+
+**Synchronous Buffer Management** (`server.py:1075`):
+```python
+def callback_funcs_model_para(self, message: Message):
+    # Extract message content
+    content = message.content  # (sample_size, model_parameters)
+    
+    # Buffer management strategy
+    if round == self.state:
+        # Current round: save to main buffer
+        self.msg_buffer['train'][round][sender] = content
+    elif round >= self.state - self.staleness_toleration:
+        # Stale but tolerable: save to stale buffer
+        self.staled_msg_buffer.append((round, sender, content))
+    else:
+        # Too old: drop message
+        self.dropout_num += 1
+    
+    # Critical: check if enough messages received for aggregation
+    move_on_flag = self.check_and_move_on()
+```
+
+#### 3. Synchronization Check Mechanism
+
+**Core Synchronization Logic** (`server.py:335`):
+```python
+def check_and_move_on(self):
+    # Determine minimum required messages
+    if self._cfg.asyn.use:
+        min_received_num = self._cfg.asyn.min_received_num  # Async mode
+    else:
+        min_received_num = self._cfg.federate.sample_client_num  # Sync mode
+    
+    # Check if enough messages received
+    if self.check_buffer(self.state, min_received_num):
+        # Trigger aggregation
+        aggregated_num = self._perform_federated_aggregation()
+        self.state += 1
+        
+        # Start new training round
+        if self.state < self.total_round_num:
+            self._start_new_training_round(aggregated_num)
+```
+
+**Buffer Check Implementation** (`server.py:875`):
+```python
+def check_buffer(self, cur_round, min_received_num):
+    cur_buffer = self.msg_buffer['train'][cur_round]
+    # Synchronous condition: current messages + stale messages >= threshold
+    return len(cur_buffer) + len(self.staled_msg_buffer) >= min_received_num
+```
+
+#### 4. Aggregation Weight Calculation
+
+**FedAvg Weight Computation** (`clients_avg_aggregator.py:60`):
+```python
+def _para_weighted_avg(self, models):
+    # Calculate total training dataset size
+    training_set_size = sum(sample_size for sample_size, _ in models)
+    
+    # Weighted averaging per layer
+    for i, (local_sample_size, local_model) in enumerate(models):
+        if self.cfg.federate.ignore_weight:
+            weight = 1.0 / len(models)  # Equal weight
+        else:
+            weight = local_sample_size / training_set_size  # Data-proportional weight
+        
+        # Apply weighted averaging
+        if i == 0:
+            avg_model[key] = local_model[key] * weight
+        else:
+            avg_model[key] += local_model[key] * weight
+```
+
+**Aggregation Execution** (`server.py:583`):
+```python
+def _perform_federated_aggregation(self):
+    # Collect messages from current round
+    for client_id in train_msg_buffer.keys():
+        msg_list.append(train_msg_buffer[client_id])
+        staleness.append((client_id, 0))
+    
+    # Include stale but usable messages
+    for staled_message in self.staled_msg_buffer:
+        staleness.append((client_id, self.state - state))
+    
+    # Execute aggregation
+    result = aggregator.aggregate({
+        'client_feedback': msg_list,
+        'staleness': staleness,
+    })
+    
+    # Update global model
+    merged_param = merge_param_dict(model.state_dict().copy(), result)
+    model.load_state_dict(merged_param, strict=False)
+```
+
+#### 5. Next Round Initialization
+
+**Broadcasting New Global Model** (`server.py:638, 782`):
+```python
+def _start_new_training_round(self, aggregated_num=0):
+    # Synchronous mode: broadcast to all participating clients
+    self.broadcast_model_para(msg_type='model_para',
+                              sample_client_num=self.sample_client_num)
+
+def broadcast_model_para(self):
+    model_para = self.models[0].state_dict()
+    self.comm_manager.send(
+        Message(msg_type='model_para',
+                sender=self.ID,
+                receiver=receiver,
+                state=self.state,
+                content=model_para))
+```
+
+#### 6. Key Synchronization Points
+
+**Blocking Mechanism:**
+- ✅ **Passive Waiting**: Server waits for messages, doesn't actively poll
+- ✅ **Message-Driven**: Each `model_para` message triggers buffer check
+- ✅ **Threshold Control**: `min_received_num = cfg.federate.sample_client_num`
+- ✅ **State Synchronization**: `self.state` maintains round consistency
+
+**Weight Acquisition Process:**
+1. **Client Calculation**: Accumulate `batch_size` during training → `num_samples`
+2. **Message Transport**: `(sample_size, model_parameters)` sent to server
+3. **Server Extraction**: Extract sample sizes from message content
+4. **Weight Computation**: `weight = local_sample_size / training_set_size`
+
+**Message Interaction Timeline:**
+```
+Clients 1,2,3              Server
+    |                       |
+    | <-- model_para ------ | (Broadcast global model)
+    |                       |
+Local training...           |
+    |                       |
+    | ---- model_para ----> | (Send training results)
+    |                    Buffer check
+    |                    len(buffer) < min_num?
+    |                       | Continue waiting...
+    |                       |
+    | ---- model_para ----> | (More client results)
+    |                    Buffer check
+    |                    len(buffer) >= min_num!
+    |                    Execute aggregation
+    |                    Update global model
+    | <-- model_para ------ | (Broadcast new global model)
+```
+
+This synchronous design ensures consistency in federated learning through strict message buffering and threshold checking mechanisms, implementing true synchronous training coordination.

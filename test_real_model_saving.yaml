@@ -1,0 +1,43 @@
+# 真实FL测试配置 - 包含本地模型保存功能测试
+
+use_gpu: False
+seed: 2023
+backend: 'torch'
+
+# 基本FL设置
+federate:
+  client_num: 2  # 少量客户端便于测试
+  mode: 'standalone'  # 使用standalone模式便于快速测试
+  total_round_num: 3  # 少量轮次便于测试
+  make_global_eval: False
+  sample_client_num: 2
+  method: 'FedAvg'
+
+# 训练器设置
+trainer:
+  type: 'general'
+
+# 评估设置
+eval:
+  freq: 10
+  split: ['test']
+
+# 数据设置
+data:
+  type: 'toy'  # 使用toy数据集便于快速测试
+  
+# 模型设置
+model:
+  type: 'lr'  # 使用简单的逻辑回归模型
+  
+# 优化器设置
+train:
+  optimizer:
+    lr: 0.01
+    type: 'SGD'
+  local_update_steps: 2  # 少量更新步骤
+
+# 输出设置
+outdir: 'test_model_saving_exp'
+expname: 'local_model_saving_test'
+verbose: 1
