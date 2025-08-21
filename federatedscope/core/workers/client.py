@@ -13,6 +13,7 @@ from federatedscope.core.secret_sharing import AdditiveSecretSharing
 from federatedscope.core.auxiliaries.utils import merge_dict_of_results, \
     calculate_time_cost
 from federatedscope.core.workers.base_client import BaseClient
+from federatedscope.core.chunk_tracker import ChunkInfo
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -504,6 +505,9 @@ class Client(BaseClient):
         # Update connection monitor with correct client ID
         if hasattr(self, 'connection_monitor') and self.connection_monitor:
             self.connection_monitor.client_id = self.ID
+        
+        # Send initial chunk information to server
+        self.send_initial_chunk_info()
 
     def callback_funcs_for_join_in_info(self, message: Message):
         """
@@ -675,6 +679,23 @@ class Client(BaseClient):
         except Exception as e:
             logger.error(f"❌ Client {self.ID}: Error processing topology instruction: {e}")
 
+    def callback_funcs_for_connection_ack(self, message: Message):
+        """
+        Handle connection acknowledgment messages from server
+        Arguments:
+            message: The received acknowledgment message
+        """
+        try:
+            content = message.content
+            ack_timestamp = content.get('ack_timestamp', 0)
+            original_event = content.get('original_event', 'unknown')
+            status = content.get('status', 'unknown')
+            
+            logger.debug(f"📨 Client {self.ID}: Received connection ack for {original_event} (status: {status})")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Client {self.ID}: Error processing connection ack: {e}")
+
     def _connect_to_neighbor(self, neighbor_id, max_attempts=3, retry_delay=2.0):
         """
         Attempt to connect to a specific neighbor client
@@ -787,7 +808,10 @@ class Client(BaseClient):
             
             # Initialize ChunkManager for this client
             if not hasattr(self, 'chunk_manager'):
-                self.chunk_manager = ChunkManager(client_id=self.ID)
+                self.chunk_manager = ChunkManager(
+                    client_id=self.ID,
+                    change_callback=self._send_chunk_info_to_server
+                )
             
             # Save model as chunks (default: 10 chunks)
             num_chunks = getattr(self._cfg, 'chunk_num', 10) if hasattr(self, '_cfg') else 10
@@ -816,6 +840,54 @@ class Client(BaseClient):
             logger.error(f"❌ Client {self.ID}: Failed to save model chunks: {e}")
             import traceback
             logger.debug(f"Traceback: {traceback.format_exc()}")
+    
+    def _send_chunk_info_to_server(self, chunk_info: ChunkInfo):
+        """
+        发送chunk信息到服务器进行追踪
+        
+        Args:
+            chunk_info: chunk变化信息
+        """
+        try:
+            # 构造消息发送给服务器
+            msg = Message(
+                msg_type='chunk_info',
+                sender=self.ID,
+                receiver=[0],  # 发送给服务器 (ID=0)
+                state=self.state,
+                timestamp=chunk_info.timestamp,
+                content=chunk_info.to_dict()
+            )
+            
+            # 发送消息
+            self.comm_manager.send(msg)
+            logger.debug(f"📤 Client {self.ID}: 发送chunk信息到服务器 - "
+                        f"轮次{chunk_info.round_num}, chunk{chunk_info.chunk_id}, 操作{chunk_info.action}")
+            
+        except Exception as e:
+            logger.error(f"❌ Client {self.ID}: 发送chunk信息到服务器失败: {e}")
+    
+    def send_initial_chunk_info(self):
+        """
+        发送初始的chunk信息到服务器（在首次连接或重连后）
+        """
+        try:
+            if not hasattr(self, 'chunk_manager'):
+                return
+                
+            # 获取所有已存在的chunk信息
+            all_chunk_infos = self.chunk_manager.get_all_chunks_info()
+            
+            if all_chunk_infos:
+                logger.info(f"📤 Client {self.ID}: 发送初始chunk信息到服务器 ({len(all_chunk_infos)}个chunks)")
+                
+                for chunk_info in all_chunk_infos:
+                    self._send_chunk_info_to_server(chunk_info)
+            else:
+                logger.debug(f"📤 Client {self.ID}: 没有chunk信息需要发送")
+                
+        except Exception as e:
+            logger.error(f"❌ Client {self.ID}: 发送初始chunk信息失败: {e}")
 
     @classmethod
     def get_msg_handler_dict(cls):

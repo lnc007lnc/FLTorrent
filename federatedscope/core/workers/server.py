@@ -20,6 +20,7 @@ from federatedscope.core.secret_sharing import AdditiveSecretSharing
 from federatedscope.core.workers.base_server import BaseServer
 from federatedscope.core.workers.connection_handler_mixin import ConnectionHandlerMixin
 from federatedscope.core.topology_manager import TopologyManager
+from federatedscope.core.chunk_tracker import ChunkTracker, ChunkInfo
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -184,6 +185,11 @@ class Server(BaseServer, ConnectionHandlerMixin):
                 client_list=[]  # Will be updated when clients join
             )
             logger.info(f"Topology construction enabled: {self._cfg.topology.type}")
+        
+        # Initialize chunk tracker for BitTorrent-like chunk management
+        self.chunk_tracker = ChunkTracker()
+        logger.info("🗂️ Server: 初始化chunk tracker系统")
+    
         # the unseen clients indicate the ones that do not contribute to FL
         # process by training on their local data and uploading their local
         # model update. The splitting is useful to check participation
@@ -246,6 +252,16 @@ class Server(BaseServer, ConnectionHandlerMixin):
 
         # inject noise before broadcast
         self._noise_injector = None
+    
+    def _register_default_handlers(self):
+        """
+        Register default message handlers including chunk tracking
+        """
+        # Call parent class to register standard handlers
+        super(Server, self)._register_default_handlers()
+        
+        # Register chunk info handler
+        self.register_handlers('chunk_info', self.callback_funcs_for_chunk_info, [])
 
     @property
     def client_num(self):
@@ -275,12 +291,10 @@ class Server(BaseServer, ConnectionHandlerMixin):
         # Begin: Broadcast model parameters and start to FL train
         while self.join_in_client_num < self.client_num:
             msg = self.comm_manager.receive()
-            print(f"📥 SERVER: Received message type '{msg.msg_type}' from client {msg.sender}")
+            # print(f"📥 SERVER: Received message type '{msg.msg_type}' from client {msg.sender}")
             self.msg_handlers[msg.msg_type](msg)
 
-        # Topology Construction Phase (if enabled)
-        if self.topology_manager is not None:
-            self._construct_network_topology()
+        # Topology Construction Phase moved to trigger_for_start()
 
         # Running: listen for message (updates from clients),
         # aggregate and broadcast feedbacks (aggregated model parameters)
@@ -292,7 +306,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
             while self.state <= self.total_round_num:
                 try:
                     msg = self.comm_manager.receive()
-                    print(f"📥 SERVER: Received message type '{msg.msg_type}' from client {msg.sender}")
+                    # print(f"📥 SERVER: Received message type '{msg.msg_type}' from client {msg.sender}")
                     move_on_flag = self.msg_handlers[msg.msg_type](msg)
                     if move_on_flag:
                         time_counter.reset()
@@ -420,6 +434,13 @@ class Server(BaseServer, ConnectionHandlerMixin):
         # Update topology manager with actual client list
         self.topology_manager.client_list = client_list
         
+        logger.info(f"🔧 Topology setup: client_num={self.client_num}, client_list={client_list}")
+        
+        # Validate that we have clients to work with
+        if not client_list:
+            logger.error(f"❌ Cannot construct topology: no clients available (client_num={self.client_num})")
+            return
+        
         # Compute the topology structure
         try:
             topology_graph = self.topology_manager.compute_topology()
@@ -485,6 +506,8 @@ class Server(BaseServer, ConnectionHandlerMixin):
         timeout = self._cfg.topology.timeout
         check_interval = 2.0  # Check every 2 seconds
         
+        logger.info(f"🕐 Topology waiting configuration: timeout={timeout}s, check_interval={check_interval}s")
+        
         while True:
             # Check if topology is complete
             if self.topology_manager.is_topology_complete():
@@ -505,24 +528,37 @@ class Server(BaseServer, ConnectionHandlerMixin):
             
             # Print progress if verbose mode enabled
             if self._cfg.topology.verbose and int(elapsed_time) % 10 == 0:
+                logger.info(f"🕰️ Topology construction progress at {elapsed_time:.1f}s...")
                 self.topology_manager.print_topology_status()
             
-            # Wait for next check or handle incoming messages
+            # Handle incoming messages during topology construction
+            # Since gRPC receive() is blocking, we need to use a different approach
+            # Check for messages in a non-blocking way by using the message queue directly
             try:
-                # Non-blocking receive with timeout
-                msg = self.comm_manager.receive()
-                if msg:
-                    print(f"📥 SERVER: Received message type '{msg.msg_type}' from client {msg.sender}")
+                # Check if there are messages in the queue (non-blocking)
+                if hasattr(self.comm_manager, 'server_funcs') and \
+                   hasattr(self.comm_manager.server_funcs, 'msg_queue') and \
+                   len(self.comm_manager.server_funcs.msg_queue) > 0:
                     
-                    # Handle topology-related messages
-                    if msg.msg_type in self.msg_handlers:
-                        self.msg_handlers[msg.msg_type](msg)
-                    else:
-                        logger.warning(f"Unknown message type during topology construction: {msg.msg_type}")
+                    # There are messages waiting, process them
+                    msg = self.comm_manager.receive()
+                    if msg:
+                        logger.info(f"📥 SERVER: Received message type '{msg.msg_type}' from client {msg.sender} during topology wait")
+                        
+                        # Handle topology-related messages
+                        if msg.msg_type in self.msg_handlers:
+                            self.msg_handlers[msg.msg_type](msg)
+                        else:
+                            logger.warning(f"Unknown message type during topology construction: {msg.msg_type}")
+                else:
+                    # No messages in queue, sleep briefly before next check
+                    logger.info(f"💤 No pending messages, sleeping {check_interval}s before next topology check")
+                    time.sleep(check_interval)
                         
             except Exception as e:
-                # Continue if no message available
-                time.sleep(min(check_interval, timeout - elapsed_time))
+                # Error in message handling, continue after brief sleep
+                logger.debug(f"Message handling error during topology wait: {e}")
+                time.sleep(check_interval)
         
         # Print final topology status
         if self._cfg.topology.verbose:
@@ -946,6 +982,11 @@ class Server(BaseServer, ConnectionHandlerMixin):
             if self._cfg.federate.use_ss or self._cfg.vertical.use:
                 self.broadcast_client_address()
 
+            # Topology Construction Phase (if enabled) - BEFORE training starts
+            if self.topology_manager is not None:
+                logger.info("🚀 All clients joined! Starting topology construction before training...")
+                self._construct_network_topology()
+
             # get sampler
             if 'client_resource' in self._cfg.federate.join_in_info:
                 client_resource = [
@@ -1200,6 +1241,118 @@ class Server(BaseServer, ConnectionHandlerMixin):
         self.msg_buffer['eval'][rnd][sender] = content
 
         return self.check_and_move_on(check_eval_result=True)
+    
+    def callback_funcs_for_chunk_info(self, message: Message):
+        """
+        处理来自客户端的chunk信息报告
+        
+        Arguments:
+            message: 包含chunk信息的消息
+        """
+        try:
+            sender = message.sender
+            chunk_info_dict = message.content
+            
+            # 调试：打印原始数据类型
+            logger.debug(f"🔍 Raw chunk_info_dict types: {[(k, type(v), v) for k, v in chunk_info_dict.items()]}")
+            
+            # 安全地转换数据类型，处理bytes数据
+            def safe_convert(value, target_type, field_name="unknown"):
+                logger.debug(f"🔧 Converting {field_name}: {value} (type: {type(value)}) -> {target_type}")
+                
+                if isinstance(value, bytes):
+                    # 如果是bytes，尝试不同的处理方式
+                    if len(value) == 8:  # 可能是64位整数的bytes表示
+                        import struct
+                        try:
+                            # 尝试将8字节解释为little-endian 64位整数
+                            int_value = struct.unpack('<Q', value)[0] 
+                            logger.debug(f"🔧 Decoded bytes as int64: {int_value}")
+                            value = int_value
+                        except:
+                            # 如果失败，尝试解码为字符串
+                            try:
+                                value = value.decode('utf-8').rstrip('\x00')  # 移除null字符
+                                logger.debug(f"🔧 Decoded bytes as string: '{value}'")
+                            except:
+                                logger.warning(f"⚠️ Failed to decode bytes: {value}")
+                                return 0 if target_type == int else 0.0 if target_type == float else ""
+                    else:
+                        # 其他长度的bytes尝试解码为字符串
+                        try:
+                            value = value.decode('utf-8').rstrip('\x00')
+                        except:
+                            logger.warning(f"⚠️ Failed to decode bytes: {value}")
+                            return 0 if target_type == int else 0.0 if target_type == float else ""
+                
+                try:
+                    if target_type == int:
+                        return int(float(value)) if isinstance(value, str) and '.' in value else int(value)
+                    elif target_type == float:
+                        return float(value)
+                    elif target_type == str:
+                        return str(value)
+                    return value
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to convert {field_name} '{value}' to {target_type}: {e}")
+                    return 0 if target_type == int else 0.0 if target_type == float else ""
+            
+            # 从字典创建ChunkInfo对象，确保类型正确
+            chunk_info = ChunkInfo(
+                client_id=safe_convert(chunk_info_dict['client_id'], int, 'client_id'),
+                round_num=safe_convert(chunk_info_dict['round_num'], int, 'round_num'),
+                chunk_id=safe_convert(chunk_info_dict['chunk_id'], int, 'chunk_id'),
+                action=safe_convert(chunk_info_dict['action'], str, 'action'),
+                chunk_hash=safe_convert(chunk_info_dict['chunk_hash'], str, 'chunk_hash'),
+                chunk_size=safe_convert(chunk_info_dict['chunk_size'], int, 'chunk_size'),
+                timestamp=safe_convert(chunk_info_dict['timestamp'], float, 'timestamp')
+            )
+            
+            # 更新chunk追踪器
+            success = self.chunk_tracker.update_chunk_info(chunk_info)
+            
+            if success:
+                # 打印详细的chunk信息表
+                logger.info(f"📥 [CHUNK_INFO] Client={chunk_info.client_id:2d} | "
+                           f"Round={chunk_info.round_num:2d} | "
+                           f"Chunk={chunk_info.chunk_id:2d} | "
+                           f"Action={chunk_info.action:6s} | "
+                           f"Size={chunk_info.chunk_size:6d} | "
+                           f"Hash={chunk_info.chunk_hash[:8]}...")
+                
+                # 每处理10个chunk信息后，打印tracker统计
+                if hasattr(self, '_chunk_msg_count'):
+                    self._chunk_msg_count += 1
+                else:
+                    self._chunk_msg_count = 1
+                
+                if self._chunk_msg_count % 20 == 0:
+                    stats = self.chunk_tracker.get_tracker_stats()
+                    logger.info(f"📊 [TRACKER_STATS] Total_Chunks={stats['total_unique_chunks']} | "
+                              f"Active_Clients={stats['total_active_clients']} | "
+                              f"Total_Mappings={stats['total_chunk_mappings']} | "
+                              f"Rounds_Tracked={stats['rounds_tracked']}")
+            else:
+                logger.warning(f"⚠️ Server: 处理客户端{sender}的chunk信息失败")
+                
+        except Exception as e:
+            logger.error(f"❌ Server: 处理chunk信息消息失败: {e}")
+    
+    def get_chunk_tracker_stats(self) -> dict:
+        """获取chunk tracker统计信息"""
+        return self.chunk_tracker.get_tracker_stats()
+    
+    def query_chunk_locations(self, round_num: int, chunk_id: int) -> list:
+        """查询指定chunk的持有者列表"""
+        return self.chunk_tracker.get_chunk_locations(round_num, chunk_id)
+    
+    def get_client_chunks_list(self, client_id: int) -> list:
+        """获取指定客户端持有的chunks列表"""
+        return self.chunk_tracker.get_client_chunks(client_id)
+    
+    def get_round_chunk_availability(self, round_num: int) -> dict:
+        """获取指定轮次所有chunks的可用性统计"""
+        return self.chunk_tracker.get_chunk_availability(round_num)
 
     @classmethod
     def get_msg_handler_dict(cls):

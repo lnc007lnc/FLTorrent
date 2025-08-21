@@ -64,6 +64,9 @@ class BaseClient(Worker):
         self.register_handlers('topology_instruction', 
                                self.callback_funcs_for_topology_instruction,
                                ['connect_msg'])  # May send connect_msg to server when connections established
+        self.register_handlers('connection_ack',
+                               self.callback_funcs_for_connection_ack,
+                               [None])  # Simple acknowledgment handling
 
     @abc.abstractmethod
     def run(self):

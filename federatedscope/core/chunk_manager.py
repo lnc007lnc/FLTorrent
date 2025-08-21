@@ -1,6 +1,7 @@
 """
 基于您提供算法的模型分块管理系统
 使用扁平索引记录参数chunk信息，按节点名建立本地数据库存储chunk
+支持实时变化监控和chunk信息上报
 """
 
 import os
@@ -8,12 +9,17 @@ import json
 import hashlib
 import pickle
 import sqlite3
-from typing import Dict, List, Optional, Tuple, Any
+import threading
+import time
+from typing import Dict, List, Optional, Tuple, Any, Callable
 import numpy as np
 import torch
 import torch.nn as nn
 from datetime import datetime
 import logging
+
+# Import ChunkInfo for change monitoring
+from federatedscope.core.chunk_tracker import ChunkInfo, ChunkAction
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +35,16 @@ class ChunkManager:
       }
     """
     
-    def __init__(self, client_id: int):
+    def __init__(self, client_id: int, change_callback: Optional[Callable[[ChunkInfo], None]] = None):
         """
         初始化ChunkManager，为指定客户端创建独立的数据库
         
         Args:
             client_id: 客户端ID，用于创建节点特定的数据库文件
+            change_callback: 数据库变化时的回调函数，用于向服务器报告chunk变化
         """
         self.client_id = client_id
+        self.change_callback = change_callback
         
         # 按节点名创建数据库文件路径: /tmp/client_X/client_X_chunks.db
         client_name = f"client_{client_id}"
@@ -46,7 +54,17 @@ class ChunkManager:
         self.db_path = os.path.join(db_dir, f"{client_name}_chunks.db")
         self._init_database()
         
+        # 变化监控相关
+        self.monitoring_enabled = False
+        self.monitoring_thread = None
+        self.stop_monitoring = threading.Event()
+        self.last_db_mtime = 0
+        
         logger.info(f"📊 初始化节点 {client_id} 的chunk数据库: {self.db_path}")
+        
+        # 如果提供了回调函数，启动监控
+        if change_callback:
+            self.start_monitoring()
         
     def _init_database(self):
         """初始化SQLite数据库表结构"""
@@ -230,6 +248,16 @@ class ChunkManager:
                      parts_json, chunk_info['flat_size']))
                 
                 saved_hashes.append(chunk_hash)
+                
+                # 报告chunk变化
+                if self.change_callback:
+                    self.report_chunk_change(
+                        round_num=round_num,
+                        chunk_id=chunk_info['chunk_id'],
+                        action=ChunkAction.ADD.value,
+                        chunk_hash=chunk_hash,
+                        chunk_size=chunk_info['flat_size']
+                    )
                 
             conn.commit()
             conn.close()
@@ -472,3 +500,174 @@ class ChunkManager:
             import traceback
             logger.debug(traceback.format_exc())
             return False
+    
+    def start_monitoring(self):
+        """启动数据库变化监控"""
+        if self.monitoring_enabled:
+            logger.warning(f"⚠️ 节点 {self.client_id}: 监控已经启动")
+            return
+            
+        self.monitoring_enabled = True
+        self.stop_monitoring.clear()
+        self.last_db_mtime = self._get_db_mtime()
+        
+        self.monitoring_thread = threading.Thread(
+            target=self._monitor_database_changes,
+            daemon=True,
+            name=f"ChunkMonitor-{self.client_id}"
+        )
+        self.monitoring_thread.start()
+        
+        logger.info(f"🔍 节点 {self.client_id}: 启动chunk数据库变化监控")
+    
+    def stop_monitoring_thread(self):
+        """停止数据库变化监控"""
+        if not self.monitoring_enabled:
+            return
+            
+        self.monitoring_enabled = False
+        self.stop_monitoring.set()
+        
+        if self.monitoring_thread and self.monitoring_thread.is_alive():
+            self.monitoring_thread.join(timeout=2.0)
+            
+        logger.info(f"🛑 节点 {self.client_id}: 停止chunk数据库变化监控")
+    
+    def _get_db_mtime(self) -> float:
+        """获取数据库文件的修改时间"""
+        try:
+            return os.path.getmtime(self.db_path) if os.path.exists(self.db_path) else 0
+        except OSError:
+            return 0
+    
+    def _monitor_database_changes(self):
+        """监控数据库变化的后台线程"""
+        logger.debug(f"🔍 节点 {self.client_id}: 开始监控数据库变化")
+        
+        while not self.stop_monitoring.is_set():
+            try:
+                current_mtime = self._get_db_mtime()
+                
+                if current_mtime > self.last_db_mtime:
+                    # 数据库发生变化，检测具体变化
+                    self._detect_and_report_changes()
+                    self.last_db_mtime = current_mtime
+                
+                # 每秒检查一次
+                self.stop_monitoring.wait(1.0)
+                
+            except Exception as e:
+                logger.error(f"❌ 节点 {self.client_id}: 监控数据库变化失败: {e}")
+                self.stop_monitoring.wait(5.0)  # 错误后等待5秒再重试
+        
+        logger.debug(f"🔍 节点 {self.client_id}: 数据库变化监控线程退出")
+    
+    def _detect_and_report_changes(self):
+        """检测并报告数据库变化"""
+        if not self.change_callback:
+            return
+            
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 获取最近添加的chunk信息（基于创建时间）
+            cursor.execute('''
+                SELECT round_num, chunk_id, chunk_hash, flat_size, created_at
+                FROM chunk_metadata
+                ORDER BY created_at DESC
+                LIMIT 10
+            ''')
+            
+            recent_chunks = cursor.fetchall()
+            conn.close()
+            
+            # 报告最近的变化
+            for round_num, chunk_id, chunk_hash, flat_size, created_at in recent_chunks:
+                chunk_info = ChunkInfo(
+                    client_id=self.client_id,
+                    round_num=round_num,
+                    chunk_id=chunk_id,
+                    action=ChunkAction.ADD.value,
+                    chunk_hash=chunk_hash,
+                    chunk_size=flat_size,
+                    timestamp=time.time()
+                )
+                
+                # 调用回调函数报告变化
+                try:
+                    self.change_callback(chunk_info)
+                    logger.debug(f"📤 节点 {self.client_id}: 报告chunk变化 - 轮次{round_num}, chunk{chunk_id}")
+                except Exception as e:
+                    logger.error(f"❌ 节点 {self.client_id}: 报告chunk变化失败: {e}")
+                    
+        except Exception as e:
+            logger.error(f"❌ 节点 {self.client_id}: 检测数据库变化失败: {e}")
+    
+    def report_chunk_change(self, round_num: int, chunk_id: int, action: str, chunk_hash: str, chunk_size: int):
+        """手动报告chunk变化"""
+        if not self.change_callback:
+            return
+            
+        chunk_info = ChunkInfo(
+            client_id=self.client_id,
+            round_num=round_num,
+            chunk_id=chunk_id,
+            action=action,
+            chunk_hash=chunk_hash,
+            chunk_size=chunk_size,
+            timestamp=time.time()
+        )
+        
+        try:
+            self.change_callback(chunk_info)
+            logger.debug(f"📤 节点 {self.client_id}: 手动报告chunk变化 - {action} 轮次{round_num}, chunk{chunk_id}")
+        except Exception as e:
+            logger.error(f"❌ 节点 {self.client_id}: 手动报告chunk变化失败: {e}")
+    
+    def set_change_callback(self, callback: Callable[[ChunkInfo], None]):
+        """设置变化回调函数"""
+        self.change_callback = callback
+        
+        # 如果监控未启动且设置了回调，启动监控
+        if callback and not self.monitoring_enabled:
+            self.start_monitoring()
+        # 如果取消回调，停止监控
+        elif not callback and self.monitoring_enabled:
+            self.stop_monitoring_thread()
+            
+        logger.info(f"🔄 节点 {self.client_id}: 更新变化回调函数")
+    
+    def get_all_chunks_info(self) -> List[ChunkInfo]:
+        """获取所有chunk信息用于初始化报告"""
+        chunk_infos = []
+        
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT round_num, chunk_id, chunk_hash, flat_size, created_at
+                FROM chunk_metadata
+                ORDER BY round_num, chunk_id
+            ''')
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            for round_num, chunk_id, chunk_hash, flat_size, created_at in rows:
+                chunk_info = ChunkInfo(
+                    client_id=self.client_id,
+                    round_num=round_num,
+                    chunk_id=chunk_id,
+                    action=ChunkAction.ADD.value,
+                    chunk_hash=chunk_hash,
+                    chunk_size=flat_size,
+                    timestamp=time.time()
+                )
+                chunk_infos.append(chunk_info)
+                
+        except Exception as e:
+            logger.error(f"❌ 节点 {self.client_id}: 获取所有chunk信息失败: {e}")
+            
+        return chunk_infos

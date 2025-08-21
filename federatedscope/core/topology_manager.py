@@ -223,6 +223,11 @@ class TopologyManager:
         Returns:
             True if all required connections are established
         """
+        # If no topology requirements exist, topology is not complete
+        if not self.connection_requirements:
+            logger.debug("No topology requirements defined - topology not complete")
+            return False
+        
         for client_id, required_neighbors in self.connection_requirements.items():
             established_neighbors = self.established_connections.get(client_id, set())
             required_set = set(required_neighbors)
