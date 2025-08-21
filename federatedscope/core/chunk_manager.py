@@ -200,7 +200,7 @@ class ChunkManager:
         else:
             return np.array([])
     
-    def save_model_chunks(self, model: nn.Module, round_num: int, num_chunks: int = 10) -> List[str]:
+    def save_model_chunks(self, model: nn.Module, round_num: int, num_chunks: int = 10, keep_rounds: int = 2) -> List[str]:
         """
         将模型分割成chunks并保存到节点特定的数据库
         
@@ -208,6 +208,7 @@ class ChunkManager:
             model: PyTorch模型
             round_num: 训练轮次
             num_chunks: 分割的chunk数量
+            keep_rounds: 保留最近几轮的数据，默认2轮
             
         Returns:
             保存的chunk哈希列表
@@ -261,6 +262,9 @@ class ChunkManager:
                 
             conn.commit()
             conn.close()
+            
+            # 自动清理旧轮次数据，保留最近几轮
+            self.cleanup_old_rounds(keep_rounds=keep_rounds)
             
             logger.info(f"💾 节点 {self.client_id}: 第{round_num}轮保存了 {len(saved_hashes)} 个chunks")
             return saved_hashes
@@ -405,12 +409,12 @@ class ChunkManager:
             logger.error(f"❌ 获取存储统计失败: {e}")
             return {}
     
-    def cleanup_old_rounds(self, keep_rounds: int = 5):
+    def cleanup_old_rounds(self, keep_rounds: int = 2):
         """
         清理旧轮次的chunks，只保留最近的几轮
         
         Args:
-            keep_rounds: 保留最近几轮的数据
+            keep_rounds: 保留最近几轮的数据，默认只保留2轮
         """
         try:
             conn = sqlite3.connect(self.db_path)

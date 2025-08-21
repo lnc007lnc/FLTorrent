@@ -815,18 +815,16 @@ class Client(BaseClient):
             
             # Save model as chunks (default: 10 chunks)
             num_chunks = getattr(self._cfg, 'chunk_num', 10) if hasattr(self, '_cfg') else 10
+            keep_rounds = getattr(self._cfg, 'chunk_keep_rounds', 2) if hasattr(self, '_cfg') else 2
             saved_hashes = self.chunk_manager.save_model_chunks(
                 model=model,
                 round_num=self.state,
-                num_chunks=num_chunks
+                num_chunks=num_chunks,
+                keep_rounds=keep_rounds
             )
             
             if saved_hashes:
                 logger.info(f"✅ Client {self.ID}: Saved model as {len(saved_hashes)} chunks for round {self.state}")
-                
-                # Optional: cleanup old rounds to save space
-                if hasattr(self._cfg, 'chunk_keep_rounds') and self._cfg.chunk_keep_rounds > 0:
-                    self.chunk_manager.cleanup_old_rounds(keep_rounds=self._cfg.chunk_keep_rounds)
                 
                 # Log storage statistics
                 stats = self.chunk_manager.get_storage_stats()
