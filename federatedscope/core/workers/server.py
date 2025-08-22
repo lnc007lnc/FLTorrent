@@ -265,6 +265,15 @@ class Server(BaseServer, ConnectionHandlerMixin):
         
         # Register BitTorrent completion handler
         self.register_handlers('bittorrent_complete', self.callback_funcs_for_bittorrent_complete, [None])
+        
+        # Register BitTorrent protocol message handlers
+        self.register_handlers('bitfield', self.callback_funcs_for_bitfield, [])
+        self.register_handlers('interested', self.callback_funcs_for_interested, [])
+        self.register_handlers('unchoke', self.callback_funcs_for_unchoke, [])
+        self.register_handlers('choke', self.callback_funcs_for_choke, [])
+        self.register_handlers('have', self.callback_funcs_for_have, [])
+        self.register_handlers('request', self.callback_funcs_for_request, [])
+        self.register_handlers('piece', self.callback_funcs_for_piece, [])
 
     @property
     def client_num(self):
@@ -392,6 +401,10 @@ class Server(BaseServer, ConnectionHandlerMixin):
                     self.eval()
 
                 if self.state < self.total_round_num:
+                    # 🔥 关键修改：在开始新训练轮次前，先等待BitTorrent完成
+                    if hasattr(self._cfg, 'bittorrent') and self._cfg.bittorrent.enable and self.state > 1:
+                        self.trigger_bittorrent()
+                    
                     # Move to next round of training
                     logger.info(
                         f'----------- Starting a new training round (Round '
@@ -671,10 +684,6 @@ class Server(BaseServer, ConnectionHandlerMixin):
             # Due to lazy load, we merge two state dict
             merged_param = merge_param_dict(model.state_dict().copy(), result)
             model.load_state_dict(merged_param, strict=False)
-
-        # 🔧 新增：触发BitTorrent chunk交换
-        if hasattr(self._cfg, 'bittorrent') and self._cfg.bittorrent.enable and self.state > 0:
-            self.trigger_bittorrent()
 
         return aggregated_num
 
@@ -1365,8 +1374,8 @@ class Server(BaseServer, ConnectionHandlerMixin):
     
     def trigger_bittorrent(self):
         """
-        🔧 修复：非阻塞状态机版本
-        在聚合完成后触发BitTorrent chunk交换，但不阻塞Server主线程
+        🔧 修改：同步阻塞版本
+        在聚合完成后触发BitTorrent chunk交换，等待所有客户端完成后才继续
         """
         logger.info("[BT] Server: Initiating BitTorrent chunk exchange phase")
         
@@ -1396,17 +1405,82 @@ class Server(BaseServer, ConnectionHandlerMixin):
                     })
         )
         
-        # 设置超时定时器（非阻塞）
+        # 设置超时配置
         timeout = getattr(getattr(self._cfg, 'bittorrent', None), 'timeout', 60.0)
         self.bt_timeout = timeout
         
-        # 不阻塞，直接返回，等待消息回调处理完成状态
-        logger.info(f"[BT] Waiting for {self.client_num} clients to complete chunk exchange")
+        logger.info(f"[BT] Waiting for {self.client_num} clients to complete chunk exchange (timeout: {timeout}s)")
+        
+        # 🔥 关键修改：同步等待所有客户端完成BitTorrent
+        self._wait_for_all_bittorrent_completion()
+        
         return True
+
+    def _wait_for_all_bittorrent_completion(self):
+        """
+        🔥 新增：同步等待所有客户端完成BitTorrent交换
+        """
+        start_time = time.time()
+        check_interval = 2.0  # 每2秒检查一次
+        
+        logger.info(f"[BT] Starting synchronous wait for all {self.client_num} clients to complete BitTorrent exchange")
+        
+        while True:
+            # 检查是否所有客户端都已完成
+            completed_clients = len(self.bittorrent_completion_status)
+            if completed_clients >= self.client_num:
+                total_time = time.time() - start_time
+                logger.info(f"[BT] ✅ All {self.client_num} clients completed BitTorrent exchange in {total_time:.2f}s")
+                self.bt_state = 'COMPLETED'
+                break
+            
+            # 检查超时
+            elapsed_time = time.time() - start_time
+            if elapsed_time > self.bt_timeout:
+                logger.warning(f"[BT] ⏰ BitTorrent exchange timeout after {self.bt_timeout}s")
+                logger.warning(f"[BT] Only {completed_clients}/{self.client_num} clients completed")
+                self.bt_state = 'TIMEOUT'
+                break
+            
+            # 打印进度
+            if int(elapsed_time) % 10 == 0:  # 每10秒打印一次进度
+                logger.info(f"[BT] 🕰️ BitTorrent progress: {completed_clients}/{self.client_num} clients completed, {elapsed_time:.1f}s elapsed")
+            
+            # 在等待期间处理消息
+            try:
+                # 使用非阻塞方式检查消息队列
+                if hasattr(self.comm_manager, 'server_funcs') and \
+                   hasattr(self.comm_manager.server_funcs, 'msg_queue') and \
+                   len(self.comm_manager.server_funcs.msg_queue) > 0:
+                    
+                    # 处理消息
+                    msg = self.comm_manager.receive()
+                    if msg:
+                        logger.debug(f"[BT] Processing message type '{msg.msg_type}' from client {msg.sender} during BitTorrent wait")
+                        
+                        # 处理BitTorrent相关消息
+                        if msg.msg_type in self.msg_handlers:
+                            self.msg_handlers[msg.msg_type](msg)
+                        else:
+                            logger.warning(f"[BT] Unknown message type during BitTorrent wait: {msg.msg_type}")
+                else:
+                    # 没有消息，短暂休眠
+                    time.sleep(check_interval)
+                        
+            except Exception as e:
+                logger.debug(f"[BT] Message handling error during BitTorrent wait: {e}")
+                time.sleep(check_interval)
+        
+        # 记录最终结果
+        if self.bt_state == 'COMPLETED':
+            total_chunks = sum(self.bittorrent_completion_status.values())
+            logger.info(f"[BT] 🎉 BitTorrent exchange completed successfully! Total chunks collected: {total_chunks}")
+        elif self.bt_state == 'TIMEOUT':
+            logger.warning(f"[BT] ⚠️ BitTorrent exchange incomplete due to timeout")
 
     def callback_funcs_for_bittorrent_complete(self, message):
         """
-        🔧 修复：非阻塞处理BitTorrent完成消息
+        🔧 修改：简化的BitTorrent完成消息处理（配合同步等待机制）
         """
         sender_id = message.sender
         chunks_collected = message.content.get('chunks_collected', 0)
@@ -1418,14 +1492,18 @@ class Server(BaseServer, ConnectionHandlerMixin):
             self.bittorrent_completion_status[sender_id] = chunks_collected
             
             if status == 'failed':
-                logger.error(f"[BT] Client {sender_id} failed BitTorrent exchange")
+                logger.error(f"[BT] ❌ Client {sender_id} failed BitTorrent exchange")
             else:
-                logger.info(f"[BT] Client {sender_id} completed: {chunks_collected} chunks in {exchange_time:.2f}s")
+                logger.info(f"[BT] ✅ Client {sender_id} completed: {chunks_collected} chunks in {exchange_time:.2f}s")
+                
+            # 打印当前进度
+            completed_count = len(self.bittorrent_completion_status)
+            logger.info(f"[BT] Progress: {completed_count}/{self.client_num} clients completed BitTorrent exchange")
             
-            # 检查状态机（非阻塞）
-            self.check_bittorrent_state()
         else:
             logger.warning(f"[BT] Received unexpected bittorrent_complete from client {sender_id}")
+            
+        # 不再需要check_bittorrent_state()，因为同步等待会处理完成检查
 
     def check_bittorrent_state(self):
         """
@@ -1506,6 +1584,43 @@ class Server(BaseServer, ConnectionHandlerMixin):
                 return False
                 
         return True
+
+    # ================== BitTorrent Protocol Message Handlers ==================
+    
+    def callback_funcs_for_bitfield(self, message):
+        """Handle BitTorrent bitfield messages - server just logs and ignores"""
+        logger.debug(f"[BT] Server received bitfield from client {message.sender}")
+        return False  # Don't stop the message processing loop
+    
+    def callback_funcs_for_interested(self, message):
+        """Handle BitTorrent interested messages - server just logs and ignores"""
+        logger.debug(f"[BT] Server received interested from client {message.sender}")
+        return False
+    
+    def callback_funcs_for_unchoke(self, message):
+        """Handle BitTorrent unchoke messages - server just logs and ignores"""
+        logger.debug(f"[BT] Server received unchoke from client {message.sender}")
+        return False
+    
+    def callback_funcs_for_choke(self, message):
+        """Handle BitTorrent choke messages - server just logs and ignores"""
+        logger.debug(f"[BT] Server received choke from client {message.sender}")
+        return False
+    
+    def callback_funcs_for_have(self, message):
+        """Handle BitTorrent have messages - server just logs and ignores"""
+        logger.debug(f"[BT] Server received have from client {message.sender}")
+        return False
+    
+    def callback_funcs_for_request(self, message):
+        """Handle BitTorrent request messages - server just logs and ignores"""
+        logger.debug(f"[BT] Server received request from client {message.sender}")
+        return False
+    
+    def callback_funcs_for_piece(self, message):
+        """Handle BitTorrent piece messages - server just logs and ignores"""
+        logger.debug(f"[BT] Server received piece from client {message.sender}")
+        return False
 
     @classmethod
     def get_msg_handler_dict(cls):
