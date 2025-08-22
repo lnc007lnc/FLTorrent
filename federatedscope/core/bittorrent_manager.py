@@ -152,20 +152,23 @@ class BitTorrentManager:
             logger.warning(f"[BT-PIECE] Client {self.client_id}: Rejecting piece due to round mismatch")
             return False
             
-        # 🔧 Bug修复5: chunk完整性校验
-        # Convert chunk_data to bytes if it's a numpy array or other format
-        if hasattr(chunk_data, 'tobytes'):
-            chunk_bytes = chunk_data.tobytes()
-        elif isinstance(chunk_data, bytes):
-            chunk_bytes = chunk_data
-        elif isinstance(chunk_data, (list, tuple)) and all(isinstance(x, int) and 0 <= x <= 255 for x in chunk_data):
-            # Only convert to bytes if it's a valid byte sequence
-            chunk_bytes = bytes(chunk_data)
-        else:
-            # For single values (float, int, etc.) or other formats, convert to string then encode
-            chunk_bytes = str(chunk_data).encode('utf-8')
-        calculated_checksum = hashlib.sha256(chunk_bytes).hexdigest()
-        logger.info(f"[BT-PIECE] Client {self.client_id}: Checksum verification - calculated={calculated_checksum[:8]}..., received={checksum[:8]}..., size={len(chunk_bytes)}")
+        # 🔧 修复：chunk_data现在是base64编码的字符串，需要解码后校验
+        logger.info(f"[BT-PIECE] Client {self.client_id}: Received encoded chunk data, type={type(chunk_data)}, size={len(chunk_data)}")
+        
+        # 解码base64数据
+        try:
+            import base64
+            import pickle
+            decoded_data = base64.b64decode(chunk_data.encode('utf-8'))
+            logger.info(f"[BT-PIECE] Client {self.client_id}: Decoded base64 data, size={len(decoded_data)}")
+        except Exception as e:
+            logger.error(f"[BT-PIECE] Client {self.client_id}: Failed to decode base64 data: {e}")
+            return False
+        
+        # 对解码后的序列化数据计算哈希
+        calculated_checksum = hashlib.sha256(decoded_data).hexdigest()
+        logger.info(f"[BT-PIECE] Client {self.client_id}: Checksum verification - calculated={calculated_checksum[:8]}..., received={checksum[:8]}..., size={len(decoded_data)}")
+        
         if calculated_checksum != checksum:
             logger.error(f"[BT-PIECE] Client {self.client_id}: Chunk integrity check failed for {source_client_id}:{chunk_id}")
             logger.error(f"[BT-PIECE] Client {self.client_id}: Expected={checksum}, Got={calculated_checksum}")
@@ -175,10 +178,18 @@ class BitTorrentManager:
             logger.warning(f"[BT-PIECE] Client {self.client_id}: Retry count for chunk {chunk_key}: {self.retry_count[chunk_key]}")
             return False
         
+        # 🔧 反序列化得到原始chunk数据
+        try:
+            deserialized_data = pickle.loads(decoded_data)
+            logger.info(f"[BT-PIECE] Client {self.client_id}: Successfully deserialized chunk data, type={type(deserialized_data)}")
+        except Exception as e:
+            logger.error(f"[BT-PIECE] Client {self.client_id}: Failed to deserialize chunk data: {e}")
+            return False
+        
         # 保存到本地数据库
-        # 🔴 传递round_num到save方法
+        # 🔴 传递round_num到save方法，使用反序列化后的数据
         logger.info(f"[BT-PIECE] Client {self.client_id}: Saving chunk {source_client_id}:{chunk_id} to database (round={round_num})")
-        self.chunk_manager.save_remote_chunk(round_num, source_client_id, chunk_id, chunk_data)
+        self.chunk_manager.save_remote_chunk(round_num, source_client_id, chunk_id, deserialized_data)
         
         # 清除pending请求
         chunk_key = (round_num, source_client_id, chunk_id)
@@ -194,9 +205,9 @@ class BitTorrentManager:
         self._broadcast_have(round_num, source_client_id, chunk_id)
         
         # 更新下载速率和活动时间
-        self._update_download_rate(sender_id, len(chunk_data))
+        self._update_download_rate(sender_id, len(decoded_data))
         self.last_activity[sender_id] = time.time()
-        self.total_downloaded += len(chunk_data)
+        self.total_downloaded += len(decoded_data)
         
         logger.info(f"[BT] Client {self.client_id}: Received chunk {source_client_id}:{chunk_id} from peer {sender_id}")
         return True
@@ -487,10 +498,16 @@ class BitTorrentManager:
                    })
         )
     
-    def _send_piece(self, peer_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data: bytes):
+    def _send_piece(self, peer_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data):
         """发送chunk数据"""
-        # 🎯 计算checksum以确保完整性
-        checksum = hashlib.sha256(chunk_data).hexdigest()
+        # 🔧 修复：预序列化chunk_data并base64编码避免网络传输中的数据类型变化
+        import pickle
+        import base64
+        serialized_data = pickle.dumps(chunk_data)
+        encoded_data = base64.b64encode(serialized_data).decode('utf-8')
+        checksum = hashlib.sha256(serialized_data).hexdigest()
+        
+        logger.info(f"[BT-SEND] Client {self.client_id}: Serializing chunk {source_client_id}:{chunk_id}, original_type={type(chunk_data)}, serialized_size={len(serialized_data)}, encoded_size={len(encoded_data)}")
         
         # 🔴 消息包含轮次信息
         from federatedscope.core.message import Message
@@ -502,13 +519,13 @@ class BitTorrentManager:
                        'round_num': round_num,  # 🔴 chunk所属轮次
                        'source_client_id': source_client_id,
                        'chunk_id': chunk_id,
-                       'data': chunk_data,
+                       'data': encoded_data,  # 🔧 发送base64编码的字符串
                        'checksum': checksum
                    })
         )
         
         # 更新上传统计
-        self.total_uploaded += len(chunk_data)
+        self.total_uploaded += len(serialized_data)
         
     def _has_interesting_chunks(self, peer_id: int) -> bool:
         """检查peer是否有我需要的chunks"""

@@ -831,8 +831,17 @@ class ChunkManager:
         
         # 触发变化回调
         if self.change_callback:
-            self.change_callback('remote_chunk_saved', 
-                               {'round': round_num, 'source': source_client_id, 'chunk': chunk_id})
+            # 创建ChunkInfo对象来报告远程chunk保存事件
+            chunk_info = ChunkInfo(
+                client_id=self.client_id,
+                round_num=round_num,
+                chunk_id=chunk_id,
+                action='remote_chunk_saved',
+                chunk_hash=chunk_hash,
+                chunk_size=len(chunk_data) if hasattr(chunk_data, '__len__') else 0,
+                timestamp=time.time()
+            )
+            self.change_callback(chunk_info)
     
     def get_chunk_data(self, round_num, source_client_id, chunk_id):
         """
