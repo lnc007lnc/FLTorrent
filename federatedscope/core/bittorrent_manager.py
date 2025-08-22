@@ -66,9 +66,11 @@ class BitTorrentManager:
     def start_exchange(self):
         """启动BitTorrent chunk交换流程（无需Tracker）"""
         logger.info(f"[BT] Client {self.client_id}: Starting BitTorrent exchange")
+        logger.info(f"[BT] Client {self.client_id}: Neighbors: {self.neighbors}")
         
         # 1. 直接向所有拓扑邻居发送bitfield
         for neighbor_id in self.neighbors:
+            logger.info(f"[BT] Client {self.client_id}: Sending bitfield to neighbor {neighbor_id}")
             self._send_bitfield(neighbor_id)
         
         # 2. 启动定期unchoke算法（每10秒）
@@ -80,11 +82,23 @@ class BitTorrentManager:
     def handle_bitfield(self, sender_id: int, bitfield: Dict):
         """处理接收到的bitfield消息"""
         self.peer_bitfields[sender_id] = bitfield
-        logger.debug(f"[BT] Client {self.client_id}: Received bitfield from peer {sender_id}")
+        logger.info(f"[BT] Client {self.client_id}: Received bitfield from peer {sender_id} with {len(bitfield)} chunks")
+        
+        # 🔧 调试：输出详细的bitfield分析
+        logger.info(f"[BT] Client {self.client_id}: BitTorrent Manager received bitfield from peer {sender_id}:")
+        if bitfield:
+            for chunk_key, has_chunk in bitfield.items():
+                round_num, source_id, chunk_id = chunk_key
+                logger.info(f"[BT] Client {self.client_id}: - Round {round_num}, Source {source_id}, Chunk {chunk_id}: {has_chunk}")
+        else:
+            logger.warning(f"[BT] Client {self.client_id}: ⚠️ BitTorrent Manager got EMPTY bitfield from peer {sender_id}!")
         
         # 检查是否有我需要的chunks
         if self._has_interesting_chunks(sender_id):
+            logger.info(f"[BT] Client {self.client_id}: Peer {sender_id} has interesting chunks, sending interested")
             self._send_interested(sender_id)
+        else:
+            logger.info(f"[BT] Client {self.client_id}: Peer {sender_id} has no interesting chunks")
             
     def handle_interested(self, sender_id: int):
         """处理interested消息"""
@@ -95,20 +109,26 @@ class BitTorrentManager:
         
     def handle_request(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int):
         """处理chunk请求"""
+        logger.info(f"[BT] Client {self.client_id}: Handling request from {sender_id} for chunk {source_client_id}:{chunk_id} (round {round_num})")
+        
         # 🔴 验证轮次匹配
         if round_num != self.round_num:
-            logger.warning(f"[BT] Request for wrong round: {round_num} vs {self.round_num}")
+            logger.warning(f"[BT] Client {self.client_id}: Request for wrong round: {round_num} vs {self.round_num}")
             return
             
         if sender_id not in self.choked_peers:
+            logger.info(f"[BT] Client {self.client_id}: Peer {sender_id} is not choked, processing request")
             # 发送chunk数据
             # 🔴 添加round_num参数到get_chunk_data
             chunk_data = self.chunk_manager.get_chunk_data(round_num, source_client_id, chunk_id)
             if chunk_data:
+                logger.info(f"[BT] Client {self.client_id}: Found chunk data, sending piece to {sender_id}")
                 self._send_piece(sender_id, round_num, source_client_id, chunk_id, chunk_data)
-                logger.debug(f"[BT] Client {self.client_id}: Sent chunk {source_client_id}:{chunk_id} to peer {sender_id}")
+                logger.info(f"[BT] Client {self.client_id}: Sent chunk {source_client_id}:{chunk_id} to peer {sender_id}")
             else:
                 logger.warning(f"[BT] Client {self.client_id}: Chunk {source_client_id}:{chunk_id} not found")
+        else:
+            logger.info(f"[BT] Client {self.client_id}: Peer {sender_id} is choked, ignoring request")
             
     def handle_piece(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data: bytes, checksum: str):
         """
@@ -187,6 +207,20 @@ class BitTorrentManager:
         my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
         needed_chunks = [(k, v) for k, v in chunk_availability.items() 
                         if k not in my_bitfield]
+        
+        # 添加调试信息
+        if not chunk_availability:
+            # 第一次调用时记录调试信息
+            if not hasattr(self, '_logged_no_chunks'):
+                logger.info(f"[BT] Client {self.client_id}: No chunks available from peers. Peer count: {len(self.peer_bitfields)}")
+                for peer_id, bitfield in self.peer_bitfields.items():
+                    logger.info(f"[BT] Client {self.client_id}: Peer {peer_id} bitfield size: {len(bitfield)}")
+                self._logged_no_chunks = True
+        elif not needed_chunks:
+            # 第一次调用时记录调试信息
+            if not hasattr(self, '_logged_all_chunks'):
+                logger.info(f"[BT] Client {self.client_id}: Already have all available chunks. My chunks: {len(my_bitfield)}, Available: {len(chunk_availability)}")
+                self._logged_all_chunks = True
         
         if needed_chunks:
             # 按稀有度排序（拥有peer数最少的优先）
@@ -276,6 +310,17 @@ class BitTorrentManager:
         
         # 🔧 修复：将bitfield转换为可序列化的格式
         my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+        logger.info(f"[BT] Client {self.client_id}: My bitfield for round {self.round_num}: {len(my_bitfield)} chunks")
+        
+        # 🔧 调试：详细输出我拥有的chunks
+        if my_bitfield:
+            logger.info(f"[BT] Client {self.client_id}: My chunks for round {self.round_num}:")
+            for chunk_key, has_chunk in my_bitfield.items():
+                if has_chunk:
+                    round_num, source_id, chunk_id = chunk_key
+                    logger.info(f"[BT] Client {self.client_id}: - I have chunk: Round {round_num}, Source {source_id}, Chunk {chunk_id}")
+        else:
+            logger.warning(f"[BT] Client {self.client_id}: ⚠️ I have NO chunks for round {self.round_num}!")
         
         # 转换为列表格式
         bitfield_list = []
@@ -286,6 +331,8 @@ class BitTorrentManager:
                     'source': source_id,
                     'chunk': chunk_id
                 })
+        
+        logger.info(f"[BT] Client {self.client_id}: Sending {len(bitfield_list)} chunks in bitfield to peer {peer_id}")
         
         self.comm_manager.send(
             Message(msg_type='bitfield',
@@ -393,6 +440,8 @@ class BitTorrentManager:
         # 🔴 chunk_key包含轮次信息
         chunk_key = (self.round_num, source_id, chunk_id)
         self.pending_requests[chunk_key] = (peer_id, time.time())
+        
+        logger.info(f"[BT] Client {self.client_id}: Sending request to peer {peer_id} for chunk {source_id}:{chunk_id} (round {self.round_num})")
         
         from federatedscope.core.message import Message
         self.comm_manager.send(

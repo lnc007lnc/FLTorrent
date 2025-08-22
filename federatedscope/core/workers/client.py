@@ -2,6 +2,7 @@ import copy
 import logging
 import sys
 import pickle
+import time
 
 from federatedscope.core.message import Message
 from federatedscope.core.communication import StandaloneCommManager, \
@@ -660,6 +661,7 @@ class Client(BaseClient):
         try:
             content = message.content
             neighbors_to_connect = content.get('neighbors_to_connect', [])
+            neighbor_addresses = content.get('neighbor_addresses', {})  # 🔧 获取真实地址信息
             topology_type = content.get('topology_type', 'unknown')
             max_attempts = content.get('max_attempts', 3)
             retry_delay = content.get('retry_delay', 2.0)
@@ -667,14 +669,25 @@ class Client(BaseClient):
             logger.info(f"🌐 Client {self.ID}: Received topology instruction")
             logger.info(f"   Topology type: {topology_type}")
             logger.info(f"   Neighbors to connect: {neighbors_to_connect}")
+            logger.info(f"   Neighbor addresses: {neighbor_addresses}")
+            
+            # 🔧 BitTorrent修复：保存拓扑邻居信息供BitTorrent使用
+            self.topology_neighbors = neighbors_to_connect
+            self.neighbor_addresses = neighbor_addresses  # 🔧 保存地址信息
+            logger.info(f"[BT] Client {self.ID}: Saved topology neighbors for BitTorrent: {self.topology_neighbors}")
             
             if not neighbors_to_connect:
                 logger.info(f"   No neighbors to connect for Client {self.ID}")
                 return
             
-            # Establish connections to each neighbor
+            # Establish connections to each neighbor using real addresses
             for neighbor_id in neighbors_to_connect:
-                self._connect_to_neighbor(neighbor_id, max_attempts, retry_delay)
+                neighbor_addr = neighbor_addresses.get(neighbor_id)
+                if neighbor_addr:
+                    self._connect_to_neighbor_with_address(neighbor_id, neighbor_addr, max_attempts, retry_delay)
+                else:
+                    logger.error(f"❌ Client {self.ID}: No address provided for neighbor {neighbor_id}")
+                    logger.error(f"❌ Client {self.ID}: Cannot establish connection without proper address")
                 
         except Exception as e:
             logger.error(f"❌ Client {self.ID}: Error processing topology instruction: {e}")
@@ -696,95 +709,101 @@ class Client(BaseClient):
         except Exception as e:
             logger.warning(f"⚠️ Client {self.ID}: Error processing connection ack: {e}")
 
-    def _connect_to_neighbor(self, neighbor_id, max_attempts=3, retry_delay=2.0):
+    def _connect_to_neighbor_with_address(self, neighbor_id, neighbor_address, max_attempts=3, retry_delay=2.0):
         """
-        Attempt to connect to a specific neighbor client
+        Attempt to connect to a specific neighbor client using provided address
         
         Args:
             neighbor_id: ID of the neighbor to connect to
+            neighbor_address: Dict with 'host' and 'port' keys for the neighbor's address
             max_attempts: Maximum connection attempts
             retry_delay: Delay between attempts
         """
         import time
         
-        logger.info(f"🔗 Client {self.ID}: Attempting to connect to Client {neighbor_id}")
+        logger.info(f"🔗 Client {self.ID}: Attempting to connect to Client {neighbor_id} at {neighbor_address}")
         
         for attempt in range(1, max_attempts + 1):
             try:
-                # For simulation purposes, we'll assume the connection is successful
-                # In a real implementation, this would involve actual network connections
-                
-                # Simulate connection establishment
-                success = self._simulate_connection_to_peer(neighbor_id)
+                # 🔧 关键修复：使用server提供的真实地址而不是计算地址
+                success = self._add_peer_to_comm_manager(neighbor_id, neighbor_address)
                 
                 if success:
-                    logger.info(f"✅ Client {self.ID}: Successfully connected to Client {neighbor_id}")
-                    
-                    # Report successful connection to server via connection monitor
-                    if hasattr(self, 'connection_monitor') and self.connection_monitor:
-                        self.connection_monitor.report_connection_established(
-                            peer_id=neighbor_id,
-                            details={
-                                'topology_connection': True,
-                                'attempt': attempt,
-                                'peer_address': f'simulated_address_{neighbor_id}'
-                            }
-                        )
-                    break
+                    # Send connection confirmation to server
+                    self._send_connection_established_message(neighbor_id)
+                    logger.info(f"✅ Client {self.ID}: Successfully connected to Client {neighbor_id} (attempt {attempt})")
+                    return
                 else:
-                    logger.warning(f"⚠️ Client {self.ID}: Connection to Client {neighbor_id} failed "
-                                 f"(attempt {attempt}/{max_attempts})")
-                    if attempt < max_attempts:
-                        time.sleep(retry_delay)
+                    logger.warning(f"⚠️ Client {self.ID}: Connection attempt {attempt} to Client {neighbor_id} failed")
                     
             except Exception as e:
-                logger.error(f"❌ Client {self.ID}: Error connecting to Client {neighbor_id} "
-                           f"(attempt {attempt}/{max_attempts}): {e}")
-                if attempt < max_attempts:
-                    time.sleep(retry_delay)
-        
-        # If all attempts failed
-        if attempt == max_attempts:
-            logger.error(f"❌ Client {self.ID}: Failed to connect to Client {neighbor_id} "
-                        f"after {max_attempts} attempts")
+                logger.error(f"❌ Client {self.ID}: Exception during connection attempt {attempt} to Client {neighbor_id}: {e}")
             
-            # Report failed connection to server
-            if hasattr(self, 'connection_monitor') and self.connection_monitor:
-                self.connection_monitor.report_connection_lost(
-                    peer_id=neighbor_id,
-                    details={
-                        'topology_connection': True,
-                        'error_message': f'Failed after {max_attempts} attempts',
-                        'final_attempt': attempt
-                    }
-                )
+            if attempt < max_attempts:
+                logger.info(f"🔄 Client {self.ID}: Retrying connection to Client {neighbor_id} in {retry_delay}s...")
+                time.sleep(retry_delay)
+        
+        logger.error(f"❌ Client {self.ID}: Failed to connect to Client {neighbor_id} after {max_attempts} attempts")
 
-    def _simulate_connection_to_peer(self, peer_id):
+
+    def _add_peer_to_comm_manager(self, peer_id, peer_address):
         """
-        Simulate connection establishment to another peer client
-        In a real implementation, this would involve actual network protocols
+        Add peer to communication manager using provided address
         
         Args:
-            peer_id: ID of the peer to connect to
+            peer_id: ID of the peer to add
+            peer_address: Dict with 'host' and 'port' keys
             
         Returns:
-            bool: True if connection successful, False otherwise
+            bool: True if successful, False otherwise
         """
-        # For simulation purposes, randomly succeed most of the time
-        import random
-        success_rate = 0.8  # 80% success rate for simulation
-        success = random.random() < success_rate
-        
-        if success:
-            # In real implementation, this would:
-            # 1. Establish TCP/gRPC connection to peer
-            # 2. Exchange handshake messages
-            # 3. Add peer to communication manager
-            logger.debug(f"🔗 Simulated connection: Client {self.ID} -> Client {peer_id}")
-        else:
-            logger.debug(f"❌ Simulated connection failed: Client {self.ID} -> Client {peer_id}")
+        try:
+            # 🔧 关键修复：直接使用server提供的真实地址
+            self.comm_manager.add_neighbors(neighbor_id=peer_id, address=peer_address)
             
-        return success
+            logger.info(f"🔗 Client {self.ID}: Added peer {peer_id} to comm_manager (address: {peer_address})")
+            logger.info(f"🔗 Client {self.ID}: Current neighbors: {list(self.comm_manager.neighbors.keys())}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Client {self.ID}: Failed to add peer {peer_id} to comm_manager: {e}")
+            return False
+
+    def _send_connection_established_message(self, peer_id, peer_address=None):
+        """
+        Send connection established message to server for topology tracking
+        
+        Args:
+            peer_id: ID of the connected peer
+            peer_address: Address of the connected peer (optional)
+        """
+        try:
+            # Send connection confirmation to server using correct format
+            from federatedscope.core.connection_monitor import ConnectionEvent
+            message = Message(
+                msg_type='connect_msg',
+                sender=self.ID,
+                receiver=[0],  # Server ID
+                state=self.state,
+                timestamp=0,  # Use dummy timestamp
+                content={
+                    'event_type': ConnectionEvent.CONNECT.value,
+                    'peer_id': peer_id,  # 🔧 修复：使用正确的字段名
+                    'source_client_id': self.ID,
+                    'target_client_id': peer_id,
+                    'details': {
+                        'topology_connection': True,
+                        'peer_address': f"{peer_address['host']}:{peer_address['port']}" if peer_address else f"peer_{peer_id}"
+                    }
+                }
+            )
+            self.comm_manager.send(message)
+            logger.info(f"📡 Client {self.ID}: Sent connection established message for peer {peer_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Client {self.ID}: Failed to send connection established message: {e}")
+
 
     def _save_local_model_after_training(self):
         """
@@ -926,18 +945,25 @@ class Client(BaseClient):
         expected_chunks = message.content['expected_chunks']
         round_num = message.content['round']  # 🔴 获取当前轮次
         
-        # 🔧 修复：正确获取邻居列表
-        # FederatedScope中邻居信息存储在comm_manager.neighbors
-        if hasattr(self.comm_manager, 'neighbors'):
-            neighbors = list(self.comm_manager.neighbors.keys())
+        # 🔧 修复：BitTorrent需要使用拓扑邻居，而不是通信管理器邻居
+        # comm_manager.neighbors包含服务器ID，不是我们要的peer客户端ID
+        neighbors = []
+        
+        # 优先使用拓扑信息（如果存在）
+        if hasattr(self, 'topology_neighbors') and self.topology_neighbors:
+            # 使用存储的拓扑邻居列表
+            neighbors = list(self.topology_neighbors)
+            logger.info(f"[BT] Client {self.ID}: Found neighbors from stored topology: {neighbors}")
         elif hasattr(self, 'topology_manager') and hasattr(self.topology_manager, 'topology'):
-            # 从拓扑结构中获取
+            # 从拓扑管理器中获取
             topology = self.topology_manager.topology
             neighbors = topology.get(self.ID, [])
+            logger.info(f"[BT] Client {self.ID}: Found neighbors from topology_manager: {neighbors}")
         else:
-            # 降级策略：使用所有clients作为邻居
-            logger.warning(f"[BT] Client {self.ID}: Using all clients as neighbors")
+            # 降级策略：过滤掉服务器ID，使用所有其他clients作为邻居
+            logger.warning(f"[BT] Client {self.ID}: No topology info, using all other clients as neighbors")
             neighbors = [i for i in range(1, self._cfg.federate.client_num + 1) if i != self.ID]
+            logger.info(f"[BT] Client {self.ID}: Fallback neighbors: {neighbors}")
         
         # 2. 启动BitTorrent交换
         # 🐛 Bug修复19: 确保chunk_manager存在
@@ -946,14 +972,22 @@ class Client(BaseClient):
             self._report_bittorrent_completion_failure()
             return
             
-        # 🔴 传递round_num到start_bittorrent_exchange
-        self._start_bittorrent_exchange(neighbors, round_num)
+        # 🔧 关键修复：BitTorrent应该交换clients刚训练完成的轮次的chunks
+        # 时序分析：Client.state在接收模型时更新，Server.state在聚合后+1
+        # 当Server发送start_bittorrent(state=N+1)时，clients只有第N轮的chunks
+        bt_round = round_num - 1 if round_num > 0 else 0
+        logger.info(f"[BT] Client {self.ID}: BitTorrent will exchange chunks from round {bt_round} (server state: {round_num})")
+        
+        # 传递修正的轮次到BitTorrent
+        self._start_bittorrent_exchange(neighbors, bt_round)
         
         # 3. 启动交换循环（在后台进行）
+        logger.info(f"[BT] Client {self.ID}: Starting BitTorrent exchange loop with expected_chunks={expected_chunks}")
         import threading
         bt_thread = threading.Thread(target=self._run_bittorrent_exchange_loop, 
                                      args=(expected_chunks,), daemon=True)
         bt_thread.start()
+        logger.info(f"[BT] Client {self.ID}: BitTorrent exchange thread started")
 
     def _start_bittorrent_exchange(self, neighbors, round_num):
         """
@@ -990,6 +1024,7 @@ class Client(BaseClient):
         
     def _run_bittorrent_exchange_loop(self, expected_chunks):
         """运行BitTorrent交换主循环"""
+        logger.info(f"[BT] Client {self.ID}: Exchange loop started, expected_chunks={expected_chunks}")
         try:
             import time
             # 🐛 Bug修复20: 添加安全的循环终止条件
@@ -998,6 +1033,12 @@ class Client(BaseClient):
             
             while not self._has_all_chunks(expected_chunks) and iteration < max_iterations:
                 iteration += 1
+                
+                # 每100次迭代输出进度
+                if iteration % 100 == 1:
+                    current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
+                    peer_count = len(self.bt_manager.peer_bitfields)
+                    logger.info(f"[BT] Client {self.ID}: Iteration {iteration}, current chunks: {current_chunks}/{expected_chunks}, peers: {peer_count}")
                 
                 # 选择要下载的chunk（Rarest First）
                 target_chunk = self.bt_manager._rarest_first_selection()
@@ -1009,7 +1050,14 @@ class Client(BaseClient):
                     if peer_with_chunk and peer_with_chunk not in self.bt_manager.choked_peers:
                         # 发送请求
                         round_num, source_id, chunk_id = target_chunk
+                        logger.info(f"[BT] Client {self.ID}: Sending request for chunk {source_id}:{chunk_id} to peer {peer_with_chunk}")
                         self.bt_manager._send_request(peer_with_chunk, source_id, chunk_id)
+                    else:
+                        if iteration % 50 == 1:  # 避免日志过多
+                            logger.info(f"[BT] Client {self.ID}: Found chunk {target_chunk} but peer {peer_with_chunk} is choked or unavailable")
+                else:
+                    if iteration == 1:  # 只在开始时记录一次
+                        logger.info(f"[BT] Client {self.ID}: No target chunks found in iteration {iteration}")
                         
                 # 定期更新choke/unchoke（每10次迭代）
                 if iteration % 10 == 0:
@@ -1021,6 +1069,10 @@ class Client(BaseClient):
                 # 短暂休眠避免CPU占用过高
                 time.sleep(0.01)
                 
+            # 记录完成原因
+            final_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
+            logger.info(f"[BT] Client {self.ID}: Exchange loop completed after {iteration} iterations. Final chunks: {final_chunks}/{expected_chunks}")
+            
             # 4. 完成后报告给Server
             self._report_bittorrent_completion()
             
@@ -1030,13 +1082,18 @@ class Client(BaseClient):
 
     def callback_funcs_for_bitfield(self, message):
         """处理bitfield消息"""
+        logger.info(f"[BT] Client {self.ID}: Received bitfield message from peer {message.sender}")
+        
         if not hasattr(self, 'bt_manager'):
+            logger.warning(f"[BT] Client {self.ID}: No bt_manager when receiving bitfield from {message.sender}")
             return
             
         # 🔴 验证轮次匹配
         if message.content['round_num'] != self.bt_manager.round_num:
-            logger.warning(f"[BT] Received bitfield from wrong round: {message.content['round_num']}")
+            logger.warning(f"[BT] Client {self.ID}: Received bitfield from wrong round: {message.content['round_num']} vs {self.bt_manager.round_num}")
             return
+        
+        logger.info(f"[BT] Client {self.ID}: Processing bitfield from peer {message.sender}, round {message.content['round_num']}")
         
         # 🔧 修复：将列表转换回字典格式
         bitfield_dict = {}
@@ -1044,6 +1101,16 @@ class Client(BaseClient):
             key = (item['round'], item['source'], item['chunk'])
             bitfield_dict[key] = True
         
+        logger.info(f"[BT] Client {self.ID}: Converted bitfield from peer {message.sender}: {len(bitfield_dict)} chunks")
+        
+        # 🔧 调试：详细输出bitfield内容
+        if bitfield_dict:
+            logger.info(f"[BT] Client {self.ID}: Bitfield from peer {message.sender} contains:")
+            for chunk_key, has_chunk in bitfield_dict.items():
+                logger.info(f"[BT] Client {self.ID}: - Chunk {chunk_key}: {has_chunk}")
+        else:
+            logger.warning(f"[BT] Client {self.ID}: ⚠️ Received EMPTY bitfield from peer {message.sender}!")
+            
         self.bt_manager.handle_bitfield(message.sender, bitfield_dict)
         
     def callback_funcs_for_have(self, message):
@@ -1079,6 +1146,8 @@ class Client(BaseClient):
         
     def callback_funcs_for_request(self, message):
         """处理chunk请求"""
+        logger.info(f"[BT] Client {self.ID}: Received request from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
+        
         if hasattr(self, 'bt_manager'):
             # 🔴 传递round_num到handle_request
             self.bt_manager.handle_request(
@@ -1087,9 +1156,13 @@ class Client(BaseClient):
                 message.content['source_client_id'],
                 message.content['chunk_id']
             )
+        else:
+            logger.warning(f"[BT] Client {self.ID}: No bt_manager when handling request from {message.sender}")
         
     def callback_funcs_for_piece(self, message):
         """处理chunk数据"""
+        logger.info(f"[BT] Client {self.ID}: Received piece from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
+        
         if hasattr(self, 'bt_manager'):
             self.bt_manager.handle_piece(
                 message.sender,
@@ -1099,6 +1172,8 @@ class Client(BaseClient):
                 message.content['data'],
                 message.content['checksum']
             )
+        else:
+            logger.warning(f"[BT] Client {self.ID}: No bt_manager when handling piece from {message.sender}")
         
     def callback_funcs_for_cancel(self, message):
         """处理cancel消息"""

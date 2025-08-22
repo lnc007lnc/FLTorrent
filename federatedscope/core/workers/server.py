@@ -489,6 +489,23 @@ class Server(BaseServer, ConnectionHandlerMixin):
         
         for client_id, neighbors in topology_graph.items():
             if neighbors:  # Only send if client has neighbors to connect to
+                # 🔧 关键修复：添加neighbor地址信息
+                neighbor_addresses = {}
+                for neighbor_id in neighbors:
+                    if neighbor_id in self.comm_manager.neighbors:
+                        neighbor_addr = self.comm_manager.neighbors[neighbor_id]
+                        # 解析地址字符串为字典格式
+                        if ':' in neighbor_addr:
+                            host, port = neighbor_addr.split(':')
+                            neighbor_addresses[neighbor_id] = {
+                                'host': host,
+                                'port': int(port)
+                            }
+                        else:
+                            logger.warning(f"Invalid neighbor address format: {neighbor_addr}")
+                    else:
+                        logger.error(f"Neighbor {neighbor_id} address not found in comm_manager.neighbors")
+                
                 message = Message(
                     msg_type='topology_instruction',
                     sender=self.ID,
@@ -497,6 +514,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                     timestamp=self.cur_timestamp,
                     content={
                         'neighbors_to_connect': neighbors,
+                        'neighbor_addresses': neighbor_addresses,  # 🔧 添加真实地址信息
                         'topology_type': self.topology_manager.topology_type.value,
                         'max_attempts': self._cfg.topology.max_connection_attempts,
                         'retry_delay': self._cfg.topology.connection_retry_delay
@@ -505,6 +523,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                 
                 self.comm_manager.send(message)
                 logger.info(f"📨 Sent topology instruction to Client {client_id}: connect to {neighbors}")
+                logger.info(f"📍 With addresses: {neighbor_addresses}")
             else:
                 logger.info(f"📭 Client {client_id} has no connections required")
 
@@ -688,7 +707,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
         The behaviors for starting a new training round
         """
         # 🔥 关键修改：在广播新模型前，先等待BitTorrent完成
-        if hasattr(self._cfg, 'bittorrent') and self._cfg.bittorrent.enable and self.state > 1:
+        if hasattr(self._cfg, 'bittorrent') and self._cfg.bittorrent.enable:
             self.trigger_bittorrent()
         
         if self._cfg.asyn.use:  # for asynchronous training

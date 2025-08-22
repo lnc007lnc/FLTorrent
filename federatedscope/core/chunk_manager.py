@@ -762,9 +762,13 @@ class ChunkManager:
                 WHERE round_num = ?
             ''', (round_num,))
             
-            for (chunk_id,) in cursor.fetchall():
+            local_chunks = cursor.fetchall()
+            logger.info(f"[ChunkManager] Client {self.client_id}: Found {len(local_chunks)} local chunks for round {round_num}")
+            
+            for (chunk_id,) in local_chunks:
                 # 本地chunks
                 bitfield[(round_num, self.client_id, chunk_id)] = True
+                logger.info(f"[ChunkManager] Client {self.client_id}: Added local chunk ({round_num}, {self.client_id}, {chunk_id}) to bitfield")
             
             # 查询BitTorrent交换的chunks（新表）
             cursor.execute('''

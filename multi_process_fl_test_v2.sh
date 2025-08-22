@@ -58,6 +58,13 @@ topology:
   timeout: 60.0
   verbose: True
 
+bittorrent:
+  enable: True
+  timeout: 60.0
+  verbose: True
+  chunk_selection: 'rarest_first'
+  min_completion_ratio: 0.8
+
 outdir: '$TEST_DIR/server_output'
 EOF
 
@@ -100,6 +107,13 @@ train:
 
 criterion:
   type: MSELoss
+
+bittorrent:
+  enable: True
+  timeout: 60.0
+  verbose: True
+  chunk_selection: 'rarest_first'
+  min_completion_ratio: 0.8
 
 outdir: '$TEST_DIR/client_${i}_output'
 EOF
