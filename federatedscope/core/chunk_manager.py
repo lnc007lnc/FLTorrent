@@ -859,12 +859,31 @@ class ChunkManager:
                 ''', (round_num, source_client_id, chunk_id, self.client_id))
             
             result = cursor.fetchone()
+            logger.debug(f"[ChunkManager] Client {self.client_id}: Query result for chunk ({round_num}, {source_client_id}, {chunk_id}): {result is not None}")
             if result:
-                return pickle.loads(result[0])
-            return None
+                try:
+                    chunk_data = pickle.loads(result[0])
+                    logger.debug(f"[ChunkManager] Client {self.client_id}: Successfully unpickled chunk data, size: {len(result[0])} bytes")
+                    return chunk_data
+                except Exception as pickle_error:
+                    logger.error(f"[ChunkManager] Client {self.client_id}: Failed to unpickle chunk data: {pickle_error}")
+                    return None
+            else:
+                logger.debug(f"[ChunkManager] Client {self.client_id}: No result found for chunk ({round_num}, {source_client_id}, {chunk_id})")
+                return None
             
-        except sqlite3.OperationalError:
-            # 表不存在，返回None
+        except sqlite3.OperationalError as e:
+            # 数据库操作错误，记录详细信息
+            logger.error(f"[ChunkManager] Client {self.client_id}: SQLite OperationalError in get_chunk_data: {e}")
+            logger.error(f"[ChunkManager] Client {self.client_id}: Query params: round_num={round_num}, source_client_id={source_client_id}, chunk_id={chunk_id}")
+            return None
+        except sqlite3.DatabaseError as e:
+            # 数据库错误
+            logger.error(f"[ChunkManager] Client {self.client_id}: SQLite DatabaseError in get_chunk_data: {e}")
+            return None
+        except Exception as e:
+            # 其他异常
+            logger.error(f"[ChunkManager] Client {self.client_id}: Unexpected error in get_chunk_data: {e}")
             return None
         finally:
             conn.close()
