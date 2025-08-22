@@ -150,7 +150,10 @@ class Message(object):
 
     def create_by_type(self, value, nested=False):
         if isinstance(value, dict):
-            if isinstance(list(value.keys())[0], str):
+            if not value:  # Handle empty dict
+                m_dict = gRPC_comm_manager_pb2.mDict_keyIsString()
+                key_type = 'string'
+            elif isinstance(list(value.keys())[0], str):
                 m_dict = gRPC_comm_manager_pb2.mDict_keyIsString()
                 key_type = 'string'
             else:
@@ -209,7 +212,7 @@ class Message(object):
         if isinstance(value, list) or isinstance(value, tuple):
             msg_value.list_msg.MergeFrom(self.create_by_type(value))
         elif isinstance(value, dict):
-            if isinstance(list(value.keys())[0], str):
+            if not value or isinstance(list(value.keys())[0], str):
                 msg_value.dict_msg_stringkey.MergeFrom(
                     self.create_by_type(value))
             else:

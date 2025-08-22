@@ -121,6 +121,17 @@ done
 
 echo "✅ 配置文件创建完成"
 
+# 🔧 在启动新实例前停止和清理旧实例
+echo "🧹 快速清理旧实例..."
+pkill -9 -f "python.*federatedscope" 2>/dev/null || true
+rm -rf tmp/client_*/client_*_chunks.db 2>/dev/null || true
+rm -rf connection_logs/ 2>/dev/null || true
+rm -rf topology_logs/ 2>/dev/null || true
+rm -rf bittorrent_logs/ 2>/dev/null || true
+sleep 1
+
+echo "✅ 旧实例清理完成"
+
 # 启动服务器和客户端 - 模仿官方脚本方式
 echo "🚀 启动分布式FL..."
 
@@ -218,10 +229,29 @@ done
 # 清理进程
 echo ""
 echo "🧹 清理进程..."
+echo "   优雅停止已知进程..."
 kill $SERVER_PID 2>/dev/null || true
 for pid in "${CLIENT_PIDS[@]}"; do
     kill $pid 2>/dev/null || true
 done
+
+echo "   等待进程退出..."
+sleep 3
+
+echo "   强制清理所有相关进程..."
+pkill -f "python.*federatedscope" 2>/dev/null || true
+pkill -f "multi_process.*test" 2>/dev/null || true
+sleep 2
+
+echo "   最终检查和强制清理..."
+remaining_processes=$(ps aux | grep -E "python.*federatedscope|multi_process.*test" | grep -v grep | wc -l)
+if [ $remaining_processes -gt 0 ]; then
+    echo "   🔪 强制结束 $remaining_processes 个残留进程..."
+    pkill -9 -f "python.*federatedscope" 2>/dev/null || true
+    pkill -9 -f "multi_process.*test" 2>/dev/null || true
+fi
+
+echo "✅ 进程清理完成"
 
 echo ""
 echo "📁 日志文件位置:"

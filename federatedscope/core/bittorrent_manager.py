@@ -121,7 +121,7 @@ class BitTorrentManager:
             # 发送chunk数据
             # 🔴 添加round_num参数到get_chunk_data
             chunk_data = self.chunk_manager.get_chunk_data(round_num, source_client_id, chunk_id)
-            if chunk_data:
+            if chunk_data is not None and len(chunk_data) > 0:
                 logger.info(f"[BT] Client {self.client_id}: Found chunk data, sending piece to {sender_id}")
                 self._send_piece(sender_id, round_num, source_client_id, chunk_id, chunk_data)
                 logger.info(f"[BT] Client {self.client_id}: Sent chunk {source_client_id}:{chunk_id} to peer {sender_id}")
@@ -141,7 +141,18 @@ class BitTorrentManager:
             return False
             
         # 🔧 Bug修复5: chunk完整性校验
-        calculated_checksum = hashlib.sha256(chunk_data).hexdigest()
+        # Convert chunk_data to bytes if it's a numpy array or other format
+        if hasattr(chunk_data, 'tobytes'):
+            chunk_bytes = chunk_data.tobytes()
+        elif isinstance(chunk_data, bytes):
+            chunk_bytes = chunk_data
+        elif isinstance(chunk_data, (list, tuple)) and all(isinstance(x, int) and 0 <= x <= 255 for x in chunk_data):
+            # Only convert to bytes if it's a valid byte sequence
+            chunk_bytes = bytes(chunk_data)
+        else:
+            # For single values (float, int, etc.) or other formats, convert to string then encode
+            chunk_bytes = str(chunk_data).encode('utf-8')
+        calculated_checksum = hashlib.sha256(chunk_bytes).hexdigest()
         if calculated_checksum != checksum:
             logger.error(f"[BT] Chunk integrity check failed for {source_client_id}:{chunk_id}")
             # 重新请求这个chunk
