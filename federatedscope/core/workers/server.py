@@ -401,10 +401,6 @@ class Server(BaseServer, ConnectionHandlerMixin):
                     self.eval()
 
                 if self.state < self.total_round_num:
-                    # 🔥 关键修改：在开始新训练轮次前，先等待BitTorrent完成
-                    if hasattr(self._cfg, 'bittorrent') and self._cfg.bittorrent.enable and self.state > 1:
-                        self.trigger_bittorrent()
-                    
                     # Move to next round of training
                     logger.info(
                         f'----------- Starting a new training round (Round '
@@ -691,6 +687,10 @@ class Server(BaseServer, ConnectionHandlerMixin):
         """
         The behaviors for starting a new training round
         """
+        # 🔥 关键修改：在广播新模型前，先等待BitTorrent完成
+        if hasattr(self._cfg, 'bittorrent') and self._cfg.bittorrent.enable and self.state > 1:
+            self.trigger_bittorrent()
+        
         if self._cfg.asyn.use:  # for asynchronous training
             if self._cfg.asyn.aggregator == "time_up":
                 # Update the deadline according to the time budget
