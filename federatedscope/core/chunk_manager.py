@@ -675,3 +675,271 @@ class ChunkManager:
             logger.error(f"❌ 节点 {self.client_id}: 获取所有chunk信息失败: {e}")
             
         return chunk_infos
+    
+    # =================== BitTorrent扩展方法 ===================
+    
+    def _init_bittorrent_tables(self):
+        """初始化BitTorrent相关的数据库表"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # 创建BitTorrent chunks表（独立于原有表，避免冲突）
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bt_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                round_num INTEGER NOT NULL,
+                source_client_id INTEGER NOT NULL,
+                chunk_id INTEGER NOT NULL,
+                chunk_hash TEXT NOT NULL,
+                holder_client_id INTEGER NOT NULL,
+                received_time REAL DEFAULT (strftime('%s', 'now')),
+                is_verified INTEGER DEFAULT 0,
+                UNIQUE(round_num, source_client_id, chunk_id, holder_client_id)
+            )
+        ''')
+        
+        # 创建BitTorrent交换状态表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bt_exchange_status (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                round_num INTEGER NOT NULL,
+                peer_id INTEGER NOT NULL,
+                chunk_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                request_time REAL,
+                complete_time REAL,
+                retry_count INTEGER DEFAULT 0,
+                error_msg TEXT,
+                size INTEGER,
+                UNIQUE(round_num, peer_id, chunk_key)
+            )
+        ''')
+        
+        # 创建BitTorrent会话表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bt_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                round_num INTEGER NOT NULL,
+                start_time REAL NOT NULL,
+                end_time REAL,
+                status TEXT NOT NULL,
+                total_chunks_expected INTEGER,
+                total_chunks_received INTEGER DEFAULT 0,
+                bytes_uploaded INTEGER DEFAULT 0,
+                bytes_downloaded INTEGER DEFAULT 0,
+                UNIQUE(round_num)
+            )
+        ''')
+        
+        # 创建索引
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_round_holder ON bt_chunks(round_num, holder_client_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_source ON bt_chunks(round_num, source_client_id, chunk_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_hash ON bt_chunks(chunk_hash)')
+        
+        conn.commit()
+        conn.close()
+        logger.debug(f"[ChunkManager] BitTorrent tables initialized for client {self.client_id}")
+    
+    def get_global_bitfield(self, round_num=None):
+        """
+        🔧 修复：兼容旧代码，支持可选round_num参数
+        获取指定轮次的全局chunk拥有情况的bitfield
+        """
+        # 如果没有传入round_num，使用当前轮次
+        if round_num is None:
+            round_num = getattr(self, 'current_round', 0)
+            
+        bitfield = {}
+        
+        # 查询本地chunks（原有表）
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # 查询本地保存的chunks
+            cursor.execute('''
+                SELECT chunk_id FROM chunk_metadata
+                WHERE round_num = ?
+            ''', (round_num,))
+            
+            for (chunk_id,) in cursor.fetchall():
+                # 本地chunks
+                bitfield[(round_num, self.client_id, chunk_id)] = True
+            
+            # 查询BitTorrent交换的chunks（新表）
+            cursor.execute('''
+                SELECT source_client_id, chunk_id FROM bt_chunks
+                WHERE round_num = ? AND holder_client_id = ?
+            ''', (round_num, self.client_id))
+            
+            for source_id, chunk_id in cursor.fetchall():
+                bitfield[(round_num, source_id, chunk_id)] = True
+                
+        except sqlite3.OperationalError:
+            # 如果bt_chunks表不存在，初始化它
+            logger.warning(f"[ChunkManager] BitTorrent tables not found, initializing...")
+            conn.close()
+            self._init_bittorrent_tables()
+            return self.get_global_bitfield(round_num)
+        
+        conn.close()
+        return bitfield
+    
+    def save_remote_chunk(self, round_num, source_client_id, chunk_id, chunk_data):
+        """
+        🔧 修复：保存BitTorrent交换的chunk到新表，避免schema冲突
+        """
+        import hashlib
+        chunk_hash = hashlib.sha256(chunk_data).hexdigest()
+        
+        # 确保BitTorrent表存在
+        try:
+            # 直接写入bt_chunks表（避免与现有chunk_metadata表冲突）
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 写入bt_chunks表
+            cursor.execute('''
+                INSERT OR REPLACE INTO bt_chunks 
+                (round_num, source_client_id, chunk_id, chunk_hash, holder_client_id, is_verified)
+                VALUES (?, ?, ?, ?, ?, 1)
+            ''', (round_num, source_client_id, chunk_id, chunk_hash, self.client_id))
+            
+            # 写入chunk_data表（共享存储）
+            cursor.execute('''
+                INSERT OR IGNORE INTO chunk_data (chunk_hash, data)
+                VALUES (?, ?)
+            ''', (chunk_hash, pickle.dumps(chunk_data)))
+            
+            conn.commit()
+            conn.close()
+            
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e):
+                # 初始化BitTorrent表
+                self._init_bittorrent_tables()
+                # 重试
+                return self.save_remote_chunk(round_num, source_client_id, chunk_id, chunk_data)
+            else:
+                raise e
+        
+        logger.debug(f"[ChunkManager] Saved remote chunk from client {source_client_id}, chunk {chunk_id}")
+        
+        # 触发变化回调
+        if self.change_callback:
+            self.change_callback('remote_chunk_saved', 
+                               {'round': round_num, 'source': source_client_id, 'chunk': chunk_id})
+    
+    def get_chunk_data(self, round_num, source_client_id, chunk_id):
+        """
+        🆕 新增：获取chunk数据（用于发送给其他peers）
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # 先查询本地chunks
+            if source_client_id == self.client_id:
+                cursor.execute('''
+                    SELECT cd.data FROM chunk_metadata cm
+                    JOIN chunk_data cd ON cm.chunk_hash = cd.chunk_hash
+                    WHERE cm.round_num = ? AND cm.chunk_id = ?
+                ''', (round_num, chunk_id))
+            else:
+                # 查询BitTorrent交换的chunks
+                cursor.execute('''
+                    SELECT cd.data FROM bt_chunks bc
+                    JOIN chunk_data cd ON bc.chunk_hash = cd.chunk_hash
+                    WHERE bc.round_num = ? AND bc.source_client_id = ? 
+                    AND bc.chunk_id = ? AND bc.holder_client_id = ?
+                ''', (round_num, source_client_id, chunk_id, self.client_id))
+            
+            result = cursor.fetchone()
+            if result:
+                return pickle.loads(result[0])
+            return None
+            
+        except sqlite3.OperationalError:
+            # 表不存在，返回None
+            return None
+        finally:
+            conn.close()
+    
+    def start_bittorrent_session(self, round_num, expected_chunks):
+        """开始BitTorrent交换会话"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO bt_sessions 
+                (round_num, start_time, status, total_chunks_expected)
+                VALUES (?, ?, 'active', ?)
+            ''', (round_num, time.time(), expected_chunks))
+            
+            conn.commit()
+            conn.close()
+            
+        except sqlite3.OperationalError:
+            # 初始化表并重试
+            self._init_bittorrent_tables()
+            return self.start_bittorrent_session(round_num, expected_chunks)
+        
+        logger.info(f"[ChunkManager] Started BitTorrent session for round {round_num}")
+    
+    def finish_bittorrent_session(self, round_num, status='completed'):
+        """结束BitTorrent交换会话"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 统计接收到的chunks数量
+            cursor.execute('''
+                SELECT COUNT(*) FROM bt_chunks
+                WHERE round_num = ? AND holder_client_id = ?
+            ''', (round_num, self.client_id))
+            
+            chunks_received = cursor.fetchone()[0]
+            
+            # 更新会话状态
+            cursor.execute('''
+                UPDATE bt_sessions 
+                SET end_time = ?, status = ?, total_chunks_received = ?
+                WHERE round_num = ?
+            ''', (time.time(), status, chunks_received, round_num))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"[ChunkManager] Finished BitTorrent session for round {round_num}, status: {status}")
+            
+        except sqlite3.OperationalError:
+            # 表不存在，忽略
+            pass
+    
+    def cleanup_bittorrent_data(self, keep_rounds=5):
+        """清理旧的BitTorrent数据"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 找到要保留的最小轮次
+            cursor.execute("SELECT MAX(round_num) FROM bt_sessions")
+            max_round = cursor.fetchone()[0]
+            
+            if max_round is not None:
+                min_keep_round = max_round - keep_rounds + 1
+                
+                # 删除旧的BitTorrent数据
+                cursor.execute("DELETE FROM bt_chunks WHERE round_num < ?", (min_keep_round,))
+                cursor.execute("DELETE FROM bt_exchange_status WHERE round_num < ?", (min_keep_round,))
+                cursor.execute("DELETE FROM bt_sessions WHERE round_num < ?", (min_keep_round,))
+                
+                conn.commit()
+                logger.info(f"[ChunkManager] Cleaned BitTorrent data before round {min_keep_round}")
+                
+            conn.close()
+            
+        except sqlite3.OperationalError:
+            # 表不存在，忽略
+            pass
