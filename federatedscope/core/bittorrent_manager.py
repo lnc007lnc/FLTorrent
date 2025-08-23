@@ -188,7 +188,6 @@ class BitTorrentManager:
         
         # 保存到本地数据库
         # 🔴 传递round_num到save方法，使用反序列化后的数据
-        logger.debug(f"[BT-PIECE] Client {self.client_id}: Saving chunk {source_client_id}:{chunk_id} to database (round={round_num})")
         self.chunk_manager.save_remote_chunk(round_num, source_client_id, chunk_id, deserialized_data)
         
         # 清除pending请求

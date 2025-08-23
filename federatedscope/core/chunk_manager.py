@@ -434,10 +434,13 @@ class ChunkManager:
                 )
                 
                 # 删除不再被引用的chunk数据
+                # 🔧 修复：保留本地生成的chunk_metadata和BitTorrent接收的bt_chunks中引用的数据
                 cursor.execute('''
                     DELETE FROM chunk_data 
                     WHERE chunk_hash NOT IN (
                         SELECT DISTINCT chunk_hash FROM chunk_metadata
+                        UNION
+                        SELECT DISTINCT chunk_hash FROM bt_chunks
                     )
                 ''')
                 
@@ -810,9 +813,9 @@ class ChunkManager:
                 VALUES (?, ?, ?, ?, ?, 1)
             ''', (round_num, source_client_id, chunk_id, chunk_hash, self.client_id))
             
-            # 写入chunk_data表（共享存储）
+            # 写入chunk_data表（共享存储）- 使用REPLACE处理重复哈希
             cursor.execute('''
-                INSERT OR IGNORE INTO chunk_data (chunk_hash, data)
+                INSERT OR REPLACE INTO chunk_data (chunk_hash, data)
                 VALUES (?, ?)
             ''', (chunk_hash, pickle.dumps(chunk_data)))
             
@@ -828,7 +831,6 @@ class ChunkManager:
             else:
                 raise e
         
-        logger.debug(f"[ChunkManager] Saved remote chunk from client {source_client_id}, chunk {chunk_id}")
         
         # 触发变化回调
         if self.change_callback:
