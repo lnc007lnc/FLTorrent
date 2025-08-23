@@ -1423,6 +1423,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
         """
         start_time = time.time()
         check_interval = 2.0  # 每2秒检查一次
+        last_completed_clients = -1  # 跟踪上次完成的客户端数量
         
         logger.info(f"[BT] Starting synchronous wait for all {self.client_num} clients to complete BitTorrent exchange")
         
@@ -1443,9 +1444,10 @@ class Server(BaseServer, ConnectionHandlerMixin):
                 self.bt_state = 'TIMEOUT'
                 break
             
-            # 打印进度
-            if int(elapsed_time) % 10 == 0:  # 每10秒打印一次进度
+            # 只在完成客户端数量有变化时打印进度
+            if completed_clients != last_completed_clients:
                 logger.info(f"[BT] 🕰️ BitTorrent progress: {completed_clients}/{self.client_num} clients completed, {elapsed_time:.1f}s elapsed")
+                last_completed_clients = completed_clients
             
             # 在等待期间处理消息
             try:
