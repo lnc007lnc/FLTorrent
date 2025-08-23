@@ -656,8 +656,21 @@ class Server(BaseServer, ConnectionHandlerMixin):
         train_msg_buffer = self.msg_buffer['train'][self.state]
         
         # Check if this is BitTorrent mode by examining message content
-        sample_client_data = next(iter(train_msg_buffer.values())) if train_msg_buffer else None
-        is_bittorrent_mode = isinstance(sample_client_data, dict) and sample_client_data.get('skip_weights', False)
+        # Need to check ALL messages, not just the first one
+        is_bittorrent_mode = False
+        if train_msg_buffer:
+            # Check if all messages are in BitTorrent format (dict with skip_weights=True)
+            bittorrent_messages = 0
+            total_messages = len(train_msg_buffer)
+            
+            for client_id, msg_content in train_msg_buffer.items():
+                if isinstance(msg_content, dict) and msg_content.get('skip_weights', False):
+                    bittorrent_messages += 1
+            
+            # Consider it BitTorrent mode if ALL messages are in the correct format
+            is_bittorrent_mode = (bittorrent_messages == total_messages)
+            
+            logger.debug(f"[BT-FL] Server: BitTorrent message check - {bittorrent_messages}/{total_messages} messages in BT format")
         
         if is_bittorrent_mode:
             logger.info(f"[BT-FL] Server: BitTorrent mode detected - skipping server-side aggregation")
