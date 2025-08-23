@@ -61,6 +61,9 @@ class BitTorrentManager:
         self.total_uploaded = 0
         self.chunks_per_client = 10  # 默认值，可配置
         
+        # 🔧 CRITICAL FIX: Exchange state management
+        self.is_stopped = False  # Stop flag for exchange termination
+        
         logger.info(f"[BT] BitTorrentManager initialized for client {client_id}, round {round_num}")
         
     def start_exchange(self):
@@ -81,6 +84,11 @@ class BitTorrentManager:
         
     def handle_bitfield(self, sender_id: int, bitfield: Dict):
         """处理接收到的bitfield消息"""
+        # 🔧 CRITICAL FIX: Check if exchange is stopped
+        if self.is_stopped:
+            logger.debug(f"[BT] Client {self.client_id}: Ignoring bitfield from peer {sender_id} - exchange stopped")
+            return
+            
         self.peer_bitfields[sender_id] = bitfield
         logger.debug(f"[BT] Client {self.client_id}: Received bitfield from peer {sender_id} with {len(bitfield)} chunks")
         
@@ -109,6 +117,10 @@ class BitTorrentManager:
         
     def handle_request(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int):
         """处理chunk请求"""
+        # 🔧 CRITICAL FIX: Check if exchange is stopped
+        if self.is_stopped:
+            logger.debug(f"[BT] Client {self.client_id}: Ignoring request from peer {sender_id} - exchange stopped")
+            return
         logger.debug(f"[BT-HANDLE] Client {self.client_id}: Handling request from {sender_id} for chunk {source_client_id}:{chunk_id}")
         
         # 🔴 验证轮次匹配
@@ -144,6 +156,10 @@ class BitTorrentManager:
         处理接收到的chunk数据（包含完整性校验）
         🔴 关键修改：验证round_num匹配
         """
+        # 🔧 CRITICAL FIX: Check if exchange is stopped
+        if self.is_stopped:
+            logger.debug(f"[BT] Client {self.client_id}: Ignoring piece from peer {sender_id} - exchange stopped")
+            return
         logger.debug(f"[BT-PIECE] Client {self.client_id}: Received piece from {sender_id} for chunk {source_client_id}:{chunk_id} (piece_round={round_num}, bt_round={self.round_num}, timestamp={time.time():.3f})")
         
         # 🔴 验证轮次是否匹配
@@ -246,8 +262,14 @@ class BitTorrentManager:
         # 选择最稀有但可获得的chunk
         # 🔴 传递round_num参数到get_global_bitfield
         my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+        
+        # 🔧 CRITICAL FIX: Exclude chunks that are already pending to prevent duplicate requests
         needed_chunks = [(k, v) for k, v in chunk_availability.items() 
-                        if k not in my_bitfield]
+                        if k not in my_bitfield and k not in self.pending_requests]
+        
+        # 🔧 ENHANCED DEBUGGING: Track duplicate prevention effectiveness
+        pending_chunks = [k for k, v in chunk_availability.items() if k in self.pending_requests]
+        already_have = [k for k, v in chunk_availability.items() if k in my_bitfield]
         
         # 添加调试信息
         if not chunk_availability:
@@ -258,9 +280,15 @@ class BitTorrentManager:
                     logger.info(f"[BT] Client {self.client_id}: Peer {peer_id} bitfield size: {len(bitfield)}")
                 self._logged_no_chunks = True
         elif not needed_chunks:
+            # Log detailed reason why no chunks are needed
+            total_available = len(chunk_availability)
+            pending_count = len(pending_chunks)
+            have_count = len(already_have)
+            logger.debug(f"[BT] Client {self.client_id}: No needed chunks - Total: {total_available}, Already have: {have_count}, Pending: {pending_count}")
+            
             # 第一次调用时记录调试信息
             if not hasattr(self, '_logged_all_chunks'):
-                logger.info(f"[BT] Client {self.client_id}: Already have all available chunks. My chunks: {len(my_bitfield)}, Available: {len(chunk_availability)}")
+                logger.info(f"[BT] Client {self.client_id}: All chunks handled - My chunks: {len(my_bitfield)}, Pending requests: {len(self.pending_requests)}")
                 self._logged_all_chunks = True
         
         if needed_chunks:
@@ -486,6 +514,13 @@ class BitTorrentManager:
         """发送chunk请求（记录pending状态）"""
         # 🔴 chunk_key包含轮次信息
         chunk_key = (self.round_num, source_id, chunk_id)
+        
+        # 🔧 CRITICAL FIX: Check for duplicate requests to prevent network flooding
+        if chunk_key in self.pending_requests:
+            existing_peer, existing_time = self.pending_requests[chunk_key]
+            logger.debug(f"[BT-REQ] Client {self.client_id}: DUPLICATE REQUEST PREVENTED for chunk {source_id}:{chunk_id} - already pending from peer {existing_peer} for {time.time() - existing_time:.1f}s")
+            return
+        
         self.pending_requests[chunk_key] = (peer_id, time.time())
         
         logger.debug(f"[BT-REQ] Client {self.client_id}: Sending request to peer {peer_id} for chunk {source_id}:{chunk_id}")
@@ -596,3 +631,34 @@ class BitTorrentManager:
             'bytes_downloaded': self.total_downloaded,
             'bytes_uploaded': self.total_uploaded
         }
+    
+    def stop_exchange(self):
+        """
+        🔧 CRITICAL FIX: Stop BitTorrent exchange immediately
+        This method is called when server timeout occurs or new round begins
+        to prevent interference with next round BitTorrent operations
+        """
+        logger.info(f"[BT] Client {self.client_id}: Stopping BitTorrent exchange for round {self.round_num}")
+        
+        # Set stop flag
+        self.is_stopped = True
+        
+        # Clear all pending operations
+        self.pending_requests.clear()
+        self.retry_count.clear()
+        
+        # Clear peer state
+        self.peer_bitfields.clear()
+        self.interested_in.clear()
+        self.interested_by.clear()
+        self.choked_peers.clear()
+        self.unchoked_peers.clear()
+        self.ever_unchoked.clear()
+        self.last_activity.clear()
+        
+        # Clear rate tracking
+        self.download_rate.clear()
+        self.upload_rate.clear()
+        
+        logger.info(f"[BT] Client {self.client_id}: BitTorrent exchange stopped successfully")
+        logger.info(f"[BT] Client {self.client_id}: Final stats - Downloaded: {self.total_downloaded} bytes, Uploaded: {self.total_uploaded} bytes")

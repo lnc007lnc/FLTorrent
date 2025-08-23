@@ -360,6 +360,13 @@ class Client(BaseClient):
             
             logger.info(f"[BT-FL] Client {self.ID}: Received training signal for round {round}")
             
+            # 🔧 CRITICAL FIX: Stop BitTorrent exchange when receiving new model_para message
+            # This prevents interference with next round BitTorrent exchange
+            if hasattr(self, 'bt_manager') and self.bt_manager is not None:
+                logger.info(f"[BT-FL] Client {self.ID}: Stopping previous BitTorrent exchange before processing new round {round}")
+                self.bt_manager.stop_exchange()
+                self.bt_manager = None
+            
             # Check if this is a BitTorrent-enabled message
             if isinstance(content, dict) and content.get('skip_weights', False):
                 logger.info(f"[BT-FL] Client {self.ID}: Aggregating from chunk database for round {round} (using previous round {round-1} data)")
@@ -1175,6 +1182,11 @@ class Client(BaseClient):
             
             while not self._has_all_chunks(expected_chunks) and iteration < max_iterations:
                 iteration += 1
+                
+                # 🔧 CRITICAL FIX: Check if BitTorrent exchange was stopped
+                if hasattr(self.bt_manager, 'is_stopped') and self.bt_manager.is_stopped:
+                    logger.info(f"[BT] Client {self.ID}: BitTorrent exchange was stopped, breaking from loop at iteration {iteration}")
+                    break
                 
                 # 每100次迭代输出进度
                 if iteration % 100 == 1:
