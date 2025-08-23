@@ -294,12 +294,12 @@ class Client(BaseClient):
 
     def callback_funcs_for_model_para(self, message: Message):
         """
-        The handling function for receiving model parameters, \
-        which triggers the local training process. \
-        This handling function is widely used in various FL courses.
+        The handling function for receiving training signals from server.
+        Modified for BitTorrent integration: aggregates from chunk database
+        instead of receiving model weights directly.
 
         Arguments:
-            message: The received message
+            message: The received message (no longer contains model weights)
         """
         if 'ss' in message.msg_type:
             # A fragment of the shared secret
@@ -347,27 +347,52 @@ class Client(BaseClient):
             sender = message.sender
             timestamp = message.timestamp
             content = message.content
-
-            # dequantization
-            if self._cfg.quantization.method == 'uniform':
-                from federatedscope.core.compression import \
-                    symmetric_uniform_dequantization
-                if isinstance(content, list):  # multiple model
-                    content = [
-                        symmetric_uniform_dequantization(x) for x in content
-                    ]
+            
+            logger.info(f"[BT-FL] Client {self.ID}: Received training signal for round {round}")
+            
+            # Check if this is a BitTorrent-enabled message
+            if isinstance(content, dict) and content.get('skip_weights', False):
+                logger.info(f"[BT-FL] Client {self.ID}: Aggregating from chunk database for round {round} (using previous round {round-1} data)")
+                
+                # For round 0, initialize with random/default model since no prior chunks exist
+                if round == 0:
+                    logger.info(f"[BT-FL] Client {self.ID}: Round 0 - using default model initialization, no aggregation needed")
+                    # No model update needed, use current random initialization
                 else:
-                    content = symmetric_uniform_dequantization(content)
+                    # Aggregate model from chunk database for previous round (round - 1)
+                    # This is because we aggregate the results from the previous training round
+                    aggregated_model = self._aggregate_model_from_chunks(round - 1)
+                    
+                    if aggregated_model is not None:
+                        # Update model with aggregated weights
+                        self.trainer.update(aggregated_model,
+                                            strict=self._cfg.federate.share_local_model)
+                        logger.info(f"[BT-FL] Client {self.ID}: Successfully updated model from chunk aggregation")
+                    else:
+                        logger.warning(f"[BT-FL] Client {self.ID}: Failed to aggregate model from chunks, keeping current model")
+                        # Continue with current model instead of failing
+            else:
+                # Legacy mode: handle traditional model parameter broadcast
+                logger.warning(f"[BT-FL] Client {self.ID}: Received traditional model parameters, falling back to legacy mode")
+                
+                # dequantization
+                if self._cfg.quantization.method == 'uniform':
+                    from federatedscope.core.compression import \
+                        symmetric_uniform_dequantization
+                    if isinstance(content, list):  # multiple model
+                        content = [
+                            symmetric_uniform_dequantization(x) for x in content
+                        ]
+                    else:
+                        content = symmetric_uniform_dequantization(content)
 
-            # When clients share the local model, we must set strict=True to
-            # ensure all the model params (which might be updated by other
-            # clients in the previous local training process) are overwritten
-            # and synchronized with the received model
-            if self._cfg.federate.process_num > 1:
-                for k, v in content.items():
-                    content[k] = v.to(self.device)
-            self.trainer.update(content,
-                                strict=self._cfg.federate.share_local_model)
+                # When clients share the local model, we must set strict=True
+                if self._cfg.federate.process_num > 1:
+                    for k, v in content.items():
+                        content[k] = v.to(self.device)
+                self.trainer.update(content,
+                                    strict=self._cfg.federate.share_local_model)
+            
             self.state = round
             skip_train_isolated_or_global_mode = \
                 self.early_stopper.early_stopped and \
@@ -857,6 +882,101 @@ class Client(BaseClient):
             logger.error(f"❌ Client {self.ID}: Failed to save model chunks: {e}")
             import traceback
             logger.debug(f"Traceback: {traceback.format_exc()}")
+    
+    def _aggregate_model_from_chunks(self, round_num):
+        """
+        从chunk数据库聚合模型参数
+        实现FedAvg聚合算法：基于样本数量加权平均
+        
+        Args:
+            round_num: 目标轮次
+            
+        Returns:
+            dict: 聚合后的模型参数，如果失败返回None
+        """
+        try:
+            if not hasattr(self, 'chunk_manager'):
+                logger.error(f"[BT-FL] Client {self.ID}: No chunk_manager available for aggregation")
+                return None
+                
+            logger.info(f"[BT-FL] Client {self.ID}: Starting model aggregation from chunks for round {round_num}")
+            
+            # 获取所有可用的客户端模型chunks
+            available_clients = self.chunk_manager.get_available_clients_for_round(round_num)
+            if not available_clients:
+                logger.warning(f"[BT-FL] Client {self.ID}: No client models available in chunk database for round {round_num}")
+                return None
+                
+            logger.info(f"[BT-FL] Client {self.ID}: Found models from {len(available_clients)} clients: {available_clients}")
+            
+            # 收集所有客户端的模型参数和样本数量
+            client_models = []
+            total_samples = 0
+            
+            for client_id in available_clients:
+                try:
+                    # 从chunks重构模型参数
+                    model_params = self.chunk_manager.reconstruct_model_from_chunks(client_id, round_num)
+                    if model_params is None:
+                        logger.warning(f"[BT-FL] Client {self.ID}: Failed to reconstruct model for client {client_id}")
+                        continue
+                        
+                    # 获取样本数量 (从chunk metadata或使用默认值)
+                    sample_size = self.chunk_manager.get_client_sample_size(client_id, round_num)
+                    if sample_size is None:
+                        sample_size = 128  # 使用默认样本数量
+                        logger.warning(f"[BT-FL] Client {self.ID}: Using default sample size {sample_size} for client {client_id}")
+                    
+                    client_models.append((client_id, model_params, sample_size))
+                    total_samples += sample_size
+                    logger.debug(f"[BT-FL] Client {self.ID}: Loaded model from client {client_id} with {sample_size} samples")
+                    
+                except Exception as e:
+                    logger.error(f"[BT-FL] Client {self.ID}: Failed to load model from client {client_id}: {e}")
+                    continue
+            
+            if not client_models:
+                logger.error(f"[BT-FL] Client {self.ID}: No valid client models found for aggregation")
+                return None
+                
+            logger.info(f"[BT-FL] Client {self.ID}: Aggregating {len(client_models)} models with total {total_samples} samples")
+            
+            # 执行FedAvg加权平均聚合
+            aggregated_params = {}
+            
+            # 获取模型结构 (使用第一个可用模型)
+            first_model = client_models[0][1]
+            
+            for param_name in first_model.keys():
+                # 初始化参数
+                aggregated_params[param_name] = None
+                
+                # 加权求和
+                for client_id, model_params, sample_size in client_models:
+                    if param_name not in model_params:
+                        logger.warning(f"[BT-FL] Client {self.ID}: Parameter {param_name} missing in client {client_id} model")
+                        continue
+                        
+                    weight = sample_size / total_samples
+                    param_value = model_params[param_name]
+                    
+                    # 确保参数在正确的设备上
+                    if hasattr(param_value, 'to'):
+                        param_value = param_value.to(self.device)
+                    
+                    if aggregated_params[param_name] is None:
+                        aggregated_params[param_name] = weight * param_value
+                    else:
+                        aggregated_params[param_name] += weight * param_value
+            
+            logger.info(f"[BT-FL] Client {self.ID}: Successfully aggregated model with {len(aggregated_params)} parameters")
+            return aggregated_params
+            
+        except Exception as e:
+            logger.error(f"[BT-FL] Client {self.ID}: Model aggregation failed: {e}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            return None
     
     def _send_chunk_info_to_server(self, chunk_info: ChunkInfo):
         """

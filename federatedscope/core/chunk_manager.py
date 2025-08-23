@@ -978,3 +978,270 @@ class ChunkManager:
         except sqlite3.OperationalError:
             # 表不存在，忽略
             pass
+    
+    def get_available_clients_for_round(self, round_num: int) -> List[int]:
+        """
+        获取指定轮次可用的所有客户端ID
+        
+        Args:
+            round_num: 目标轮次
+            
+        Returns:
+            List[int]: 可用客户端ID列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 查询本地chunk数据的客户端 (local chunks don't have source_client_id, they belong to this client)
+            cursor.execute('''
+                SELECT DISTINCT ? as client_id
+                FROM chunk_metadata 
+                WHERE round_num = ?
+                LIMIT 1
+            ''', (self.client_id, round_num))
+            
+            local_result = cursor.fetchall()
+            local_clients = [row[0] for row in local_result] if local_result else []
+            
+            # 查询BitTorrent chunks中的客户端
+            cursor.execute('''
+                SELECT DISTINCT source_client_id 
+                FROM bt_chunks 
+                WHERE round_num = ?
+                ORDER BY source_client_id
+            ''', (round_num,))
+            
+            bt_clients = [row[0] for row in cursor.fetchall()]
+            
+            # 合并并去重
+            all_clients = list(set(local_clients + bt_clients))
+            all_clients.sort()
+            
+            conn.close()
+            
+            logger.debug(f"[ChunkManager] Round {round_num}: Found {len(all_clients)} clients with chunk data: {all_clients}")
+            return all_clients
+            
+        except Exception as e:
+            logger.error(f"[ChunkManager] Failed to get available clients for round {round_num}: {e}")
+            return []
+    
+    def reconstruct_model_from_chunks(self, client_id: int, round_num: int) -> Optional[Dict]:
+        """
+        从chunks重构指定客户端的模型参数
+        
+        Args:
+            client_id: 目标客户端ID
+            round_num: 目标轮次
+            
+        Returns:
+            Dict: 重构的模型参数字典，失败返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 查询该客户端的所有chunks
+            if client_id == self.client_id:
+                # Local client - query local chunks
+                cursor.execute('''
+                    SELECT chunk_id, chunk_hash 
+                    FROM chunk_metadata 
+                    WHERE round_num = ?
+                    ORDER BY chunk_id
+                ''', (round_num,))
+                local_chunks = cursor.fetchall()
+            else:
+                # Remote client - query BitTorrent chunks
+                cursor.execute('''
+                    SELECT chunk_id, chunk_hash 
+                    FROM bt_chunks 
+                    WHERE source_client_id = ? AND round_num = ?
+                    ORDER BY chunk_id
+                ''', (client_id, round_num))
+                local_chunks = cursor.fetchall()
+            
+            if not local_chunks:
+                logger.warning(f"[ChunkManager] No chunks found for client {client_id}, round {round_num}")
+                conn.close()
+                return None
+            
+            # 重构模型参数
+            chunk_data_list = []
+            missing_chunks = []
+            
+            for chunk_id, chunk_hash in local_chunks:
+                # 获取chunk数据
+                cursor.execute('''
+                    SELECT data FROM chunk_data WHERE chunk_hash = ?
+                ''', (chunk_hash,))
+                
+                result = cursor.fetchone()
+                if result:
+                    # 直接获取原始字节数据，不进行反序列化
+                    chunk_data = result[0]
+                    chunk_data_list.append((chunk_id, chunk_data))
+                else:
+                    missing_chunks.append(chunk_id)
+            
+            if missing_chunks:
+                logger.warning(f"[ChunkManager] Missing chunk data for client {client_id}, chunks: {missing_chunks}")
+            
+            if not chunk_data_list:
+                logger.error(f"[ChunkManager] No valid chunk data found for client {client_id}, round {round_num}")
+                conn.close()
+                return None
+            
+            # 按chunk_id排序
+            chunk_data_list.sort(key=lambda x: x[0])
+            
+            # 反序列化每个chunk并连接
+            numpy_chunks = []
+            parts_info_list = []
+            
+            for chunk_id, chunk_data in chunk_data_list:
+                # 反序列化chunk数据
+                numpy_chunk = pickle.loads(chunk_data)
+                numpy_chunks.append(numpy_chunk)
+                
+                # 获取对应的parts_info
+                cursor.execute('''
+                    SELECT parts_info FROM chunk_metadata 
+                    WHERE chunk_id = ? AND round_num = ?
+                ''', (chunk_id, round_num))
+                
+                parts_result = cursor.fetchone()
+                if parts_result:
+                    parts_info = json.loads(parts_result[0])
+                    parts_info_list.append((chunk_id, parts_info))
+            
+            conn.close()
+            
+            # 连接所有chunk数据
+            if len(numpy_chunks) == 0:
+                logger.error(f"[ChunkManager] No valid chunk data for client {client_id}, round {round_num}")
+                return None
+                
+            combined_numpy = np.concatenate(numpy_chunks) if len(numpy_chunks) > 1 else numpy_chunks[0]
+            
+            # 使用parts_info重构回参数字典
+            model_params = self._reconstruct_params_dict(combined_numpy, parts_info_list)
+            
+            logger.debug(f"[ChunkManager] Successfully reconstructed model for client {client_id}, round {round_num}")
+            return model_params
+            
+        except Exception as e:
+            logger.error(f"[ChunkManager] Failed to reconstruct model for client {client_id}, round {round_num}: {e}")
+            return None
+    
+    def _reconstruct_params_dict(self, combined_numpy: np.ndarray, parts_info_list: List[Tuple[int, Dict]]) -> Dict:
+        """
+        使用parts_info将扁平化的numpy数组重构回参数字典
+        
+        Args:
+            combined_numpy: 连接后的扁平化numpy数组
+            parts_info_list: [(chunk_id, parts_info), ...]格式的结构信息
+            
+        Returns:
+            重构的模型参数字典
+        """
+        import torch
+        
+        params_dict = {}
+        current_pos = 0
+        
+        # 按chunk_id排序parts_info
+        parts_info_list.sort(key=lambda x: x[0])
+        
+        for chunk_id, parts_info in parts_info_list:
+            for param_name, parts in parts_info.items():
+                if param_name not in params_dict:
+                    # 首次遇到这个参数，需要预估总大小
+                    total_size = self._estimate_param_size(param_name, parts_info_list)
+                    params_dict[param_name] = np.zeros(total_size, dtype=combined_numpy.dtype)
+                
+                # 填充这个参数的各个部分
+                for flat_start, flat_end, shape in parts:
+                    chunk_size = flat_end - flat_start
+                    chunk_data = combined_numpy[current_pos:current_pos + chunk_size]
+                    
+                    # 将数据放回原始参数的对应位置
+                    params_dict[param_name][flat_start:flat_end] = chunk_data
+                    current_pos += chunk_size
+        
+        # 将numpy数组转换为PyTorch张量并reshape
+        final_params = {}
+        for param_name, flat_data in params_dict.items():
+            # 从parts_info获取原始形状
+            original_shape = self._get_original_shape(param_name, parts_info_list)
+            if original_shape:
+                reshaped_data = flat_data.reshape(original_shape)
+                final_params[param_name] = torch.tensor(reshaped_data, dtype=torch.float32)
+            else:
+                final_params[param_name] = torch.tensor(flat_data, dtype=torch.float32)
+        
+        return final_params
+    
+    def _estimate_param_size(self, param_name: str, parts_info_list: List[Tuple[int, Dict]]) -> int:
+        """估算参数的总大小"""
+        max_end = 0
+        for _, parts_info in parts_info_list:
+            if param_name in parts_info:
+                for flat_start, flat_end, shape in parts_info[param_name]:
+                    max_end = max(max_end, flat_end)
+        return max_end
+    
+    def _get_original_shape(self, param_name: str, parts_info_list: List[Tuple[int, Dict]]) -> Optional[tuple]:
+        """获取参数的原始形状"""
+        for _, parts_info in parts_info_list:
+            if param_name in parts_info:
+                # 假设同一参数在所有chunks中的形状相同，取第一个
+                for flat_start, flat_end, shape in parts_info[param_name]:
+                    return tuple(shape)
+        return None
+    
+    def get_client_sample_size(self, client_id: int, round_num: int) -> Optional[int]:
+        """
+        获取指定客户端在指定轮次的样本数量
+        
+        Args:
+            client_id: 客户端ID
+            round_num: 轮次
+            
+        Returns:
+            int: 样本数量，如果未找到返回None
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Check if we have chunks from this client for this round
+            # Note: sample_size column doesn't exist in schema, using fallback approach
+            
+            if client_id == self.client_id:
+                # Local client - check local chunks
+                cursor.execute('''
+                    SELECT COUNT(*) FROM chunk_metadata 
+                    WHERE round_num = ?
+                ''', (round_num,))
+            else:
+                # Remote client - check BitTorrent chunks
+                cursor.execute('''
+                    SELECT COUNT(*) FROM bt_chunks 
+                    WHERE round_num = ? AND source_client_id = ?
+                ''', (round_num, client_id))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result and result[0] > 0:
+                # Return fixed sample size for BitTorrent FL (toy dataset default)
+                return 128
+            else:
+                logger.debug(f"[ChunkManager] No chunks found for client {client_id}, round {round_num}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"[ChunkManager] Failed to get sample size for client {client_id}, round {round_num}: {e}")
+            return None

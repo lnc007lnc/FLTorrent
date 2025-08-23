@@ -855,7 +855,9 @@ class Server(BaseServer, ConnectionHandlerMixin):
                              sample_client_num=-1,
                              filter_unseen_clients=True):
         """
-        To broadcast the message to all clients or sampled clients
+        To broadcast the training signal to all clients or sampled clients.
+        NOTE: Modified for BitTorrent integration - no longer sends model weights.
+        Clients will aggregate from their local chunk databases instead.
 
         Arguments:
             msg_type: 'model_para' or other user defined msg_type
@@ -864,10 +866,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                 broadcast to all the clients.
             filter_unseen_clients: whether filter out the unseen clients that \
                 do not contribute to FL process by training on their local \
-                data and uploading their local model update. The splitting is \
-                useful to check participation generalization gap in [ICLR'22, \
-                What Do We Mean by Generalization in Federated Learning?] \
-                You may want to set it to be False when in evaluation stage
+                data and uploading their local model update.
         """
         if filter_unseen_clients:
             # to filter out the unseen clients when sampling
@@ -881,35 +880,23 @@ class Server(BaseServer, ConnectionHandlerMixin):
             if msg_type == 'model_para':
                 self.sampler.change_state(receiver, 'working')
 
-        if self._noise_injector is not None and msg_type == 'model_para':
-            # Inject noise only when broadcast parameters
-            for model_idx_i in range(len(self.models)):
-                num_sample_clients = [
-                    v["num_sample"] for v in self.join_in_info.values()
-                ]
-                self._noise_injector(self._cfg, num_sample_clients,
-                                     self.models[model_idx_i])
-
+        # Skip model weight processing for BitTorrent-enabled FL
+        # Clients will aggregate from their chunk databases instead
         skip_broadcast = self._cfg.federate.method in ["local", "global"]
-        if self.model_num > 1:
-            model_para = [{} if skip_broadcast else model.state_dict()
-                          for model in self.models]
+        
+        # Prepare lightweight message content (no model weights)
+        if msg_type == 'model_para':
+            # Send training signal with metadata only
+            message_content = {
+                'round_num': self.state,
+                'total_round_num': self.total_round_num,
+                'aggregation_method': getattr(self._cfg.federate, 'method', 'FedAvg'),
+                'sample_client_num': len(receiver) if 'receiver' in locals() else self.client_num,
+                'skip_weights': True  # Signal that weights should come from chunk aggregation
+            }
         else:
-            model_para = {} if skip_broadcast else self.models[0].state_dict()
-
-        # quantization
-        if msg_type == 'model_para' and not skip_broadcast and \
-                self._cfg.quantization.method == 'uniform':
-            from federatedscope.core.compression import \
-                symmetric_uniform_quantization
-            nbits = self._cfg.quantization.nbits
-            if self.model_num > 1:
-                model_para = [
-                    symmetric_uniform_quantization(x, nbits)
-                    for x in model_para
-                ]
-            else:
-                model_para = symmetric_uniform_quantization(model_para, nbits)
+            # For non-model_para messages, use empty content
+            message_content = {}
 
         # We define the evaluation happens at the end of an epoch
         rnd = self.state - 1 if msg_type == 'evaluate' else self.state
@@ -920,7 +907,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                     receiver=receiver,
                     state=min(rnd, self.total_round_num),
                     timestamp=self.cur_timestamp,
-                    content=model_para))
+                    content=message_content))
         if self._cfg.federate.online_aggr:
             for idx in range(self.model_num):
                 self.aggregators[idx].reset()
