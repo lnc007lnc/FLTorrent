@@ -80,10 +80,27 @@ class ChunkManager:
                 chunk_hash TEXT NOT NULL,
                 parts_info TEXT NOT NULL,
                 flat_size INTEGER NOT NULL,
+                importance_score REAL DEFAULT 0.0,
+                pruning_method TEXT DEFAULT 'magnitude',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(round_num, chunk_id)
             )
         ''')
+        
+        # 升级现有表结构（如果需要）
+        try:
+            cursor.execute("ALTER TABLE chunk_metadata ADD COLUMN importance_score REAL DEFAULT 0.0")
+            logger.info("[ChunkManager] Added importance_score column to chunk_metadata table")
+        except sqlite3.OperationalError:
+            # 列已存在，忽略
+            pass
+            
+        try:
+            cursor.execute("ALTER TABLE chunk_metadata ADD COLUMN pruning_method TEXT DEFAULT 'magnitude'")
+            logger.info("[ChunkManager] Added pruning_method column to chunk_metadata table")
+        except sqlite3.OperationalError:
+            # 列已存在，忽略
+            pass
         
         # 创建chunk数据表
         cursor.execute('''
@@ -124,6 +141,176 @@ class ChunkManager:
             if name in params:
                 param.data = torch.from_numpy(params[name]).to(param.device)
     
+    def compute_chunk_importance(self, params: Dict[str, np.ndarray], chunks_info: List[Dict], 
+                                method: str = 'magnitude') -> List[float]:
+        """
+        计算每个chunk的重要度分数
+        
+        Args:
+            params: 模型参数字典
+            chunks_info: chunk信息列表
+            method: 重要度计算方法 ('magnitude', 'l2_norm', 'gradient_norm', 'snip')
+            
+        Returns:
+            List[float]: 每个chunk的重要度分数
+        """
+        importance_scores = []
+        
+        for chunk_info in chunks_info:
+            if method == 'magnitude':
+                score = self._compute_magnitude_importance(params, chunk_info)
+            elif method == 'l2_norm':
+                score = self._compute_l2_norm_importance(params, chunk_info)
+            elif method == 'gradient_norm':
+                score = self._compute_gradient_norm_importance(params, chunk_info)
+            elif method == 'snip':
+                score = self._compute_snip_importance(params, chunk_info)
+            elif method == 'fisher':
+                score = self._compute_fisher_importance(params, chunk_info)
+            else:
+                logger.warning(f"[ChunkManager] Unknown importance method: {method}, using magnitude")
+                score = self._compute_magnitude_importance(params, chunk_info)
+                
+            importance_scores.append(float(score))
+            
+        # 使用L1归一化（总和归一化），保持原始比例关系
+        if importance_scores:
+            total_score = sum(importance_scores)
+            if total_score > 0:
+                importance_scores = [s / total_score for s in importance_scores]
+            else:
+                importance_scores = [1.0 / len(importance_scores)] * len(importance_scores)  # 平均分配
+                
+        logger.info(f"[ChunkManager] Computed chunk importance scores: {[f'{s:.4f}' for s in importance_scores]}")
+        return importance_scores
+    
+    def _compute_magnitude_importance(self, params: Dict[str, np.ndarray], chunk_info: Dict) -> float:
+        """基于参数幅度的重要度计算"""
+        total_magnitude = 0.0
+        total_elements = 0
+        
+        for param_name, parts in chunk_info['parts'].items():
+            if param_name in params:
+                param_array = params[param_name].flatten()
+                for flat_start, flat_end, _ in parts:
+                    chunk_slice = param_array[flat_start:flat_end]
+                    total_magnitude += np.sum(np.abs(chunk_slice))
+                    total_elements += len(chunk_slice)
+        
+        return total_magnitude / max(total_elements, 1)
+    
+    def _compute_l2_norm_importance(self, params: Dict[str, np.ndarray], chunk_info: Dict) -> float:
+        """基于L2范数的重要度计算"""
+        total_l2_norm = 0.0
+        
+        for param_name, parts in chunk_info['parts'].items():
+            if param_name in params:
+                param_array = params[param_name].flatten()
+                for flat_start, flat_end, _ in parts:
+                    chunk_slice = param_array[flat_start:flat_end]
+                    total_l2_norm += np.linalg.norm(chunk_slice) ** 2
+        
+        return np.sqrt(total_l2_norm)
+    
+    def _compute_gradient_norm_importance(self, params: Dict[str, np.ndarray], chunk_info: Dict) -> float:
+        """基于梯度范数的重要度计算（需要梯度信息）"""
+        # 注意：这里简化实现，实际应用中需要梯度信息
+        # 作为fallback使用magnitude方法
+        return self._compute_magnitude_importance(params, chunk_info)
+    
+    def _compute_snip_importance(self, params: Dict[str, np.ndarray], chunk_info: Dict) -> float:
+        """基于SNIP (Single-shot Network Pruning)的重要度计算"""
+        # 改进的SNIP实现：考虑参数层级重要性
+        total_snip_score = 0.0
+        
+        for param_name, parts in chunk_info['parts'].items():
+            if param_name in params:
+                param_array = params[param_name].flatten()
+                
+                # 根据参数类型设置权重因子
+                layer_weight = 1.0
+                if 'weight' in param_name:
+                    layer_weight = 2.0  # 权重比偏置更重要
+                if 'fc' in param_name or '4.' in param_name:  # 输出层
+                    layer_weight *= 1.5  # 输出层更重要
+                
+                for flat_start, flat_end, _ in parts:
+                    chunk_slice = param_array[flat_start:flat_end]
+                    if len(chunk_slice) > 0:
+                        # 计算参数的敏感度指标
+                        abs_values = np.abs(chunk_slice)
+                        
+                        # 1. 大幅度参数的重要性
+                        magnitude_score = np.sum(abs_values)
+                        
+                        # 2. 参数分散程度（方差）
+                        variance_score = np.var(abs_values) + 1e-8
+                        
+                        # 3. 非零参数比例（稀疏性考虑）
+                        non_zero_ratio = np.count_nonzero(abs_values) / len(abs_values)
+                        
+                        # SNIP综合评分：结合幅度、方差和稀疏性
+                        chunk_score = magnitude_score * (1 + np.sqrt(variance_score)) * (0.5 + non_zero_ratio)
+                        total_snip_score += chunk_score * layer_weight
+        
+        return total_snip_score
+    
+    def _compute_fisher_importance(self, params: Dict[str, np.ndarray], chunk_info: Dict) -> float:
+        """基于Fisher信息矩阵的重要度计算"""
+        # Fisher信息矩阵的简化版本：使用参数方差作为重要性指标
+        total_variance = 0.0
+        total_chunks = 0
+        
+        for param_name, parts in chunk_info['parts'].items():
+            if param_name in params:
+                param_array = params[param_name].flatten()
+                for flat_start, flat_end, _ in parts:
+                    chunk_slice = param_array[flat_start:flat_end]
+                    if len(chunk_slice) > 1:
+                        total_variance += np.var(chunk_slice)
+                        total_chunks += 1
+        
+        return total_variance / max(total_chunks, 1)
+    
+    def get_chunk_importance_scores(self, round_num: int) -> Dict[int, Dict]:
+        """
+        获取指定轮次所有chunk的重要度分数
+        
+        Args:
+            round_num: 目标轮次
+            
+        Returns:
+            Dict[chunk_id, {'importance_score': float, 'pruning_method': str, 'flat_size': int}]
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT chunk_id, importance_score, pruning_method, flat_size, chunk_hash
+                FROM chunk_metadata 
+                WHERE round_num = ?
+                ORDER BY chunk_id
+            ''', (round_num,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            chunk_scores = {}
+            for chunk_id, importance_score, pruning_method, flat_size, chunk_hash in results:
+                chunk_scores[chunk_id] = {
+                    'importance_score': float(importance_score) if importance_score is not None else 0.0,
+                    'pruning_method': pruning_method or 'unknown',
+                    'flat_size': flat_size,
+                    'chunk_hash': chunk_hash[:8] + '...'  # 显示简短hash
+                }
+            
+            return chunk_scores
+            
+        except Exception as e:
+            logger.error(f"[ChunkManager] Failed to get chunk importance scores for round {round_num}: {e}")
+            return {}
+
     @staticmethod
     def split_model(params: Dict[str, np.ndarray], num_chunks: int) -> List[Dict]:
         """
@@ -200,7 +387,8 @@ class ChunkManager:
         else:
             return np.array([])
     
-    def save_model_chunks(self, model: nn.Module, round_num: int, num_chunks: int = 10, keep_rounds: int = 2) -> List[str]:
+    def save_model_chunks(self, model: nn.Module, round_num: int, num_chunks: int = 10, keep_rounds: int = 2, 
+                         importance_method: str = 'magnitude') -> List[str]:
         """
         将模型分割成chunks并保存到节点特定的数据库
         
@@ -209,6 +397,7 @@ class ChunkManager:
             round_num: 训练轮次
             num_chunks: 分割的chunk数量
             keep_rounds: 保留最近几轮的数据，默认2轮
+            importance_method: chunk重要度计算方法 ('magnitude', 'l2_norm', 'snip', 'fisher')
             
         Returns:
             保存的chunk哈希列表
@@ -220,12 +409,16 @@ class ChunkManager:
             # 分割模型
             chunks_info = self.split_model(params, num_chunks)
             
+            # 🧠 计算chunk重要度分数
+            logger.info(f"[ChunkManager] Computing chunk importance using method: {importance_method}")
+            importance_scores = self.compute_chunk_importance(params, chunks_info, importance_method)
+            
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
             saved_hashes = []
             
-            for chunk_info in chunks_info:
+            for i, chunk_info in enumerate(chunks_info):
                 # 提取chunk数据
                 chunk_data = self.extract_chunk_data(params, chunk_info)
                 
@@ -239,14 +432,16 @@ class ChunkManager:
                     (chunk_hash, chunk_bytes)
                 )
                 
-                # 保存chunk元数据
+                # 保存chunk元数据（包含重要度分数）
                 parts_json = json.dumps(chunk_info['parts'])
+                importance_score = importance_scores[i] if i < len(importance_scores) else 0.0
+                
                 cursor.execute('''
                     INSERT OR REPLACE INTO chunk_metadata 
-                    (round_num, chunk_id, chunk_hash, parts_info, flat_size)
-                    VALUES (?, ?, ?, ?, ?)
+                    (round_num, chunk_id, chunk_hash, parts_info, flat_size, importance_score, pruning_method)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (round_num, chunk_info['chunk_id'], chunk_hash, 
-                     parts_json, chunk_info['flat_size']))
+                     parts_json, chunk_info['flat_size'], importance_score, importance_method))
                 
                 saved_hashes.append(chunk_hash)
                 
@@ -420,32 +615,52 @@ class ChunkManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # 找到要保留的最小轮次
+            # 找到要保留的最小轮次（同时考虑本地和接收的chunk）
             cursor.execute("SELECT MAX(round_num) FROM chunk_metadata")
-            max_round = cursor.fetchone()[0]
+            max_local_round = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT MAX(round_num) FROM bt_chunks")
+            max_bt_round = cursor.fetchone()[0]
+            
+            # 使用两个表中较大的轮次作为基准
+            max_round = max_local_round
+            if max_bt_round is not None:
+                if max_round is None:
+                    max_round = max_bt_round
+                else:
+                    max_round = max(max_round, max_bt_round)
             
             if max_round is not None:
                 min_keep_round = max_round - keep_rounds + 1
                 
-                # 删除旧的元数据
-                cursor.execute(
+                # 删除旧的本地chunk元数据
+                deleted_local = cursor.execute(
                     "DELETE FROM chunk_metadata WHERE round_num < ?",
                     (min_keep_round,)
-                )
+                ).rowcount
+                
+                # 🔧 新增：删除旧的BitTorrent chunk记录
+                deleted_bt = cursor.execute(
+                    "DELETE FROM bt_chunks WHERE round_num < ?",
+                    (min_keep_round,)
+                ).rowcount
                 
                 # 删除不再被引用的chunk数据
-                # 🔧 修复：保留本地生成的chunk_metadata和BitTorrent接收的bt_chunks中引用的数据
-                cursor.execute('''
+                # 现在bt_chunks表也会被清理，所以不会有永久引用的问题
+                deleted_data = cursor.execute('''
                     DELETE FROM chunk_data 
                     WHERE chunk_hash NOT IN (
                         SELECT DISTINCT chunk_hash FROM chunk_metadata
                         UNION
                         SELECT DISTINCT chunk_hash FROM bt_chunks
                     )
-                ''')
+                ''').rowcount
                 
                 conn.commit()
-                logger.info(f"🧹 节点 {self.client_id}: 清理了第{min_keep_round}轮之前的chunks")
+                logger.info(f"🧹 节点 {self.client_id}: 清理了第{min_keep_round}轮之前的数据")
+                logger.info(f"   - 删除本地chunk元数据: {deleted_local}条")
+                logger.info(f"   - 删除接收chunk记录: {deleted_bt}条") 
+                logger.info(f"   - 删除无引用chunk数据: {deleted_data}条")
                 
             conn.close()
             

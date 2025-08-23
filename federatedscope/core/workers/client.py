@@ -889,11 +889,15 @@ class Client(BaseClient):
             # Save model as chunks (default: 10 chunks)
             num_chunks = getattr(self._cfg, 'chunk_num', 10) if hasattr(self, '_cfg') else 10
             keep_rounds = getattr(self._cfg, 'chunk_keep_rounds', 2) if hasattr(self, '_cfg') else 2
+            importance_method = getattr(self._cfg, 'chunk_importance_method', 'magnitude') if hasattr(self, '_cfg') else 'magnitude'
+            
+            logger.info(f"[Client {self.ID}] Saving model chunks with importance scoring using '{importance_method}' method")
             saved_hashes = self.chunk_manager.save_model_chunks(
                 model=model,
                 round_num=self.state,
                 num_chunks=num_chunks,
-                keep_rounds=keep_rounds
+                keep_rounds=keep_rounds,
+                importance_method=importance_method
             )
             
             if saved_hashes:

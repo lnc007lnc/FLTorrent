@@ -1,24 +1,32 @@
 #!/bin/bash
 
-# 多进程联邦学习测试脚本（模仿官方分布式脚本）
+# 多进程联邦学习测试脚本 - 真实CIFAR-10+ConvNet2测试
 set -e
 
-echo "🧪 多进程联邦学习 + 拓扑测试（官方模式）"
-echo "=============================================================="
+echo "🧪 真实数据集P2P联邦学习测试（CIFAR-10 + ConvNet2 + GPU加速）"
+echo "======================================================================"
 
 # 配置参数
 CLIENT_NUM=3
-TOTAL_ROUNDS=5
+TOTAL_ROUNDS=3
 TEST_DIR="multi_process_test_v2"
+CHUNK_NUM=10  # 每个客户端模型分割的chunk数量
+IMPORTANCE_METHOD="snip"  # chunk重要度计算方法: magnitude, l2_norm, snip, fisher
+
+# 修复SSL证书问题 
+echo "🔧 修复SSL证书问题..."
+export PYTHONHTTPSVERIFY=0
+export SSL_VERIFY=False
+export CURL_CA_BUNDLE=""
 
 # 清理和创建目录
 echo "📁 设置测试目录..."
 rm -rf $TEST_DIR
 mkdir -p $TEST_DIR/{configs,logs}
 
-# 创建服务器配置 - 模仿官方femnist server配置
+# 创建服务器配置 - 启用GPU加速
 cat > "$TEST_DIR/configs/server.yaml" << EOF
-use_gpu: False
+use_gpu: True
 device: 0
 seed: 12345
 
@@ -36,46 +44,80 @@ distribute:
   data_idx: 0
 
 data:
-  type: 'toy'
-  sizes: [10, 5]
+  root: data/
+  type: 'CIFAR10@torchvision'
+  splits: [0.8, 0.1, 0.1]
+  num_workers: 0
+  transform: [['ToTensor'], ['Normalize', {'mean': [0.4914, 0.4822, 0.4465], 'std': [0.2470, 0.2435, 0.2616]}]]
+  test_transform: [['ToTensor'], ['Normalize', {'mean': [0.4914, 0.4822, 0.4465], 'std': [0.2470, 0.2435, 0.2616]}]]
+  args: [{'download': True}]
+  splitter: 'lda'
+  splitter_args: [{'alpha': 0.1}]
+
+dataloader:
+  batch_size: 32
 
 model:
-  type: 'lr'
-  input_shape: [10]
+  type: convnet2
+  hidden: 512
+  out_channels: 10
+  dropout: 0.0
 
 train:
-  local_update_steps: 2
+  local_update_steps: 5
+  batch_or_epoch: epoch
   optimizer:
     lr: 0.01
     type: SGD
+    weight_decay: 0.0001
+
+grad:
+  grad_clip: 5.0
 
 criterion:
-  type: MSELoss
+  type: CrossEntropyLoss
+
+trainer:
+  type: cvtrainer
+
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_acc
 
 topology:
   use: True
   type: 'star'
-  timeout: 60.0
+  timeout: 600.0
   verbose: True
 
 bittorrent:
   enable: True
-  timeout: 60.0
+  timeout: 600.0
   verbose: True
   chunk_selection: 'rarest_first'
   min_completion_ratio: 0.8
 
+chunk:
+  num_chunks: $CHUNK_NUM
+  importance_method: '$IMPORTANCE_METHOD'
+
+chunk_num: $CHUNK_NUM
+chunk_importance_method: '$IMPORTANCE_METHOD'
+
 outdir: '$TEST_DIR/server_output'
 EOF
 
-# 创建客户端配置 - 模仿官方femnist client配置
+# 创建客户端配置 - 启用GPU加速并分配不同GPU设备
 for i in $(seq 1 $CLIENT_NUM); do
     client_port=$((50051 + i))
     seed=$((12345 + i))
+    # 为不同客户端分配不同GPU设备以并行训练
+    device_id=$(((i - 1) % 2))  # 在GPU 0和1之间轮换
     
     cat > "$TEST_DIR/configs/client_${i}.yaml" << EOF
-use_gpu: False
-device: 0
+use_gpu: True
+device: $device_id
 seed: $seed
 
 federate:
@@ -92,34 +134,72 @@ distribute:
   data_idx: $i
 
 data:
-  type: 'toy'
-  sizes: [10, 5]
+  root: data/
+  type: 'CIFAR10@torchvision'
+  splits: [0.8, 0.1, 0.1]
+  num_workers: 0
+  transform: [['ToTensor'], ['Normalize', {'mean': [0.4914, 0.4822, 0.4465], 'std': [0.2470, 0.2435, 0.2616]}]]
+  test_transform: [['ToTensor'], ['Normalize', {'mean': [0.4914, 0.4822, 0.4465], 'std': [0.2470, 0.2435, 0.2616]}]]
+  args: [{'download': True}]
+  splitter: 'lda'
+  splitter_args: [{'alpha': 0.1}]
+
+dataloader:
+  batch_size: 32
 
 model:
-  type: 'lr'
-  input_shape: [10]
+  type: convnet2
+  hidden: 512
+  out_channels: 10
+  dropout: 0.0
 
 train:
-  local_update_steps: 2
+  local_update_steps: 5
+  batch_or_epoch: epoch
   optimizer:
     lr: 0.01
     type: SGD
+    weight_decay: 0.0001
+
+grad:
+  grad_clip: 5.0
 
 criterion:
-  type: MSELoss
+  type: CrossEntropyLoss
+
+trainer:
+  type: cvtrainer
+
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_acc
 
 bittorrent:
   enable: True
-  timeout: 60.0
+  timeout: 600.0
   verbose: True
   chunk_selection: 'rarest_first'
   min_completion_ratio: 0.8
+
+chunk:
+  num_chunks: $CHUNK_NUM
+  importance_method: '$IMPORTANCE_METHOD'
+
+chunk_num: $CHUNK_NUM
+chunk_importance_method: '$IMPORTANCE_METHOD'
 
 outdir: '$TEST_DIR/client_${i}_output'
 EOF
 done
 
 echo "✅ 配置文件创建完成"
+echo "📊 测试配置："
+echo "   - 客户端数量: $CLIENT_NUM"
+echo "   - 训练轮数: $TOTAL_ROUNDS"
+echo "   - 每客户端chunk数: $CHUNK_NUM"
+echo "   - 总预期chunk数: $((CLIENT_NUM * CHUNK_NUM))"
+echo "   - chunk重要度方法: $IMPORTANCE_METHOD"
 
 # 🔧 在启动新实例前停止和清理旧实例
 echo "🧹 快速清理旧实例..."
@@ -136,7 +216,7 @@ echo "✅ 旧实例清理完成"
 echo "🚀 启动分布式FL..."
 
 echo "📡 启动服务器..."
-PYTHONPATH=. python federatedscope/main.py --cfg "$TEST_DIR/configs/server.yaml" \
+PYTHONPATH=. python run_with_ssl_fix.py federatedscope/main.py --cfg "$TEST_DIR/configs/server.yaml" \
     > "$TEST_DIR/logs/server.log" 2>&1 &
 SERVER_PID=$!
 echo "   服务器 PID: $SERVER_PID"
@@ -146,7 +226,7 @@ echo "👥 启动客户端..."
 CLIENT_PIDS=()
 for i in $(seq 1 $CLIENT_NUM); do
     echo "   启动客户端 $i..."
-    PYTHONPATH=. python federatedscope/main.py --cfg "$TEST_DIR/configs/client_${i}.yaml" \
+    PYTHONPATH=. python run_with_ssl_fix.py federatedscope/main.py --cfg "$TEST_DIR/configs/client_${i}.yaml" \
         > "$TEST_DIR/logs/client_${i}.log" 2>&1 &
     client_pid=$!
     CLIENT_PIDS+=($client_pid)
@@ -157,8 +237,8 @@ done
 echo "✅ 所有参与者已启动！"
 echo "📊 监控训练进度..."
 
-# 简单监控
-monitor_duration=120  # 监控2分钟
+# 简单监控 - CIFAR-10训练需要更长时间
+monitor_duration=600  # 监控10分钟
 start_time=$(date +%s)
 
 while true; do
@@ -201,8 +281,11 @@ if [ -f "$TEST_DIR/logs/server.log" ]; then
     echo "最后10行服务器日志:"
     tail -10 "$TEST_DIR/logs/server.log" | head -5
     echo ""
-    echo "拓扑相关日志:"
-    grep -i "topology\|star\|connect" "$TEST_DIR/logs/server.log" | tail -5 || echo "未找到拓扑日志"
+    echo "P2P BitTorrent日志:"
+    grep -i "BT-FL\|BitTorrent\|chunks" "$TEST_DIR/logs/server.log" | tail -5 || echo "未找到BitTorrent日志"
+    echo ""
+    echo "模型性能日志:"
+    grep -E "acc.*|test_acc" "$TEST_DIR/logs/server.log" | tail -3 || echo "未找到性能日志"
 else
     echo "❌ 服务器日志文件不存在"
 fi
@@ -219,7 +302,7 @@ for i in $(seq 1 $CLIENT_NUM); do
         else
             echo "  ✅ 运行正常"
             # 显示最后一条重要信息
-            grep -E "(assigned|train|round)" "$log_file" | tail -1 | sed 's/^/    /' || echo "    无训练日志"
+            grep -E "(assigned|train|round|acc)" "$log_file" | tail -1 | sed 's/^/    /' || echo "    无训练日志"
         fi
     else
         echo "客户端 $i: ❌ 日志文件不存在"
@@ -261,4 +344,4 @@ for i in $(seq 1 $CLIENT_NUM); do
 done
 
 echo ""
-echo "🎉 测试完成！"
+echo "🎉 CIFAR-10 P2P联邦学习测试完成！"
