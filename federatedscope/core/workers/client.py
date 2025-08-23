@@ -332,15 +332,25 @@ class Client(BaseClient):
                             aggregate_single_model_para[key] += model_list[i][
                                 sub_model_idx][key]
 
+                # Send training completion signal instead of model weights
+                # BitTorrent P2P system handles model parameter exchange
+                sync_message_content = {
+                    'client_id': self.ID,
+                    'round_num': self.state,
+                    'sample_size': sample_size,
+                    'training_completed': True,
+                    'skip_weights': True  # Signal that weights are handled by BitTorrent
+                }
+                
+                logger.info(f"[BT-FL] Client {self.ID}: Sending training completion signal for round {self.state} with {sample_size} samples")
+                
                 self.comm_manager.send(
                     Message(msg_type='model_para',
                             sender=self.ID,
                             receiver=[self.server_id],
                             state=self.state,
                             timestamp=timestamp,
-                            content=(sample_size, first_aggregate_model_para[0]
-                                     if single_model_case else
-                                     first_aggregate_model_para)))
+                            content=sync_message_content))
 
         else:
             round = message.state
@@ -504,6 +514,18 @@ class Client(BaseClient):
                 # Save local model after training completion
                 self._save_local_model_after_training()
                 
+                # Send training completion signal instead of model weights
+                # BitTorrent P2P system handles model parameter exchange  
+                sync_message_content = {
+                    'client_id': self.ID,
+                    'round_num': self.state,
+                    'sample_size': sample_size,
+                    'training_completed': True,
+                    'skip_weights': True  # Signal that weights are handled by BitTorrent
+                }
+                
+                logger.info(f"[BT-FL] Client {self.ID}: Sending training completion signal for round {self.state} with {sample_size} samples")
+                
                 self.comm_manager.send(
                     Message(msg_type='model_para',
                             sender=self.ID,
@@ -512,7 +534,7 @@ class Client(BaseClient):
                             timestamp=self._gen_timestamp(
                                 init_timestamp=timestamp,
                                 instance_number=sample_size),
-                            content=(sample_size, shared_model_para)))
+                            content=sync_message_content))
 
     def callback_funcs_for_assign_id(self, message: Message):
         """

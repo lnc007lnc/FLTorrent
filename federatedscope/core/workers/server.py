@@ -649,56 +649,108 @@ class Server(BaseServer, ConnectionHandlerMixin):
 
     def _perform_federated_aggregation(self):
         """
-        Perform federated aggregation and update the global model
+        Track client training completion for synchronization purposes.
+        NOTE: Modified for BitTorrent integration - no longer performs model aggregation.
+        Clients handle model aggregation locally from P2P chunks.
         """
         train_msg_buffer = self.msg_buffer['train'][self.state]
-        for model_idx in range(self.model_num):
-            model = self.models[model_idx]
-            aggregator = self.aggregators[model_idx]
-            msg_list = list()
-            staleness = list()
-
-            for client_id in train_msg_buffer.keys():
-                if self.model_num == 1:
-                    msg_list.append(train_msg_buffer[client_id])
-                else:
-                    train_data_size, model_para_multiple = \
-                        train_msg_buffer[client_id]
-                    msg_list.append(
-                        (train_data_size, model_para_multiple[model_idx]))
-
-                # The staleness of the messages in train_msg_buffer
-                # should be 0
-                staleness.append((client_id, 0))
-
+        
+        # Check if this is BitTorrent mode by examining message content
+        sample_client_data = next(iter(train_msg_buffer.values())) if train_msg_buffer else None
+        is_bittorrent_mode = isinstance(sample_client_data, dict) and sample_client_data.get('skip_weights', False)
+        
+        if is_bittorrent_mode:
+            logger.info(f"[BT-FL] Server: BitTorrent mode detected - skipping server-side aggregation")
+            
+            # Track client completion information for synchronization
+            completed_clients = []
+            total_samples = 0
+            
+            for client_id, sync_info in train_msg_buffer.items():
+                if sync_info.get('training_completed', False):
+                    completed_clients.append(client_id)
+                    total_samples += sync_info.get('sample_size', 0)
+                    logger.debug(f"[BT-FL] Server: Client {client_id} completed training with {sync_info.get('sample_size', 0)} samples")
+            
+            # Include stale message tracking for consistency
             for staled_message in self.staled_msg_buffer:
-                state, client_id, content = staled_message
-                if self.model_num == 1:
-                    msg_list.append(content)
-                else:
-                    train_data_size, model_para_multiple = content
-                    msg_list.append(
-                        (train_data_size, model_para_multiple[model_idx]))
+                state, client_id, sync_info = staled_message
+                if isinstance(sync_info, dict) and sync_info.get('training_completed', False):
+                    completed_clients.append(client_id)
+                    total_samples += sync_info.get('sample_size', 0)
+            
+            aggregated_num = len(completed_clients)
+            logger.info(f"[BT-FL] Server: Round {self.state} completion tracking - {aggregated_num} clients completed training with {total_samples} total samples")
+            
+            # No model parameter aggregation in BitTorrent mode
+            # Clients aggregate locally from P2P chunks
+            
+        else:
+            # Legacy mode: perform traditional server-side aggregation
+            logger.warning(f"[BT-FL] Server: Legacy mode detected - performing traditional server-side aggregation")
+            
+            # First verify all messages are in legacy format (tuple with model params)
+            legacy_compatible = True
+            for client_id, msg_content in train_msg_buffer.items():
+                if isinstance(msg_content, dict):
+                    logger.error(f"[BT-FL] Server: Mixed message formats detected! Client {client_id} sent dict format in legacy mode")
+                    legacy_compatible = False
+                    break
+                elif not isinstance(msg_content, tuple) or len(msg_content) != 2:
+                    logger.error(f"[BT-FL] Server: Invalid legacy message format from client {client_id}: {type(msg_content)}")
+                    legacy_compatible = False
+                    break
+            
+            if not legacy_compatible:
+                logger.error("[BT-FL] Server: Cannot perform legacy aggregation due to incompatible message formats")
+                aggregated_num = len(train_msg_buffer)
+                return aggregated_num
+            
+            for model_idx in range(self.model_num):
+                model = self.models[model_idx]
+                aggregator = self.aggregators[model_idx]
+                msg_list = list()
+                staleness = list()
 
-                staleness.append((client_id, self.state - state))
+                for client_id in train_msg_buffer.keys():
+                    if self.model_num == 1:
+                        msg_list.append(train_msg_buffer[client_id])
+                    else:
+                        train_data_size, model_para_multiple = \
+                            train_msg_buffer[client_id]
+                        msg_list.append(
+                            (train_data_size, model_para_multiple[model_idx]))
 
-            # Trigger the monitor here (for training)
-            self._monitor.calc_model_metric(self.models[0].state_dict(),
-                                            msg_list,
-                                            rnd=self.state)
+                    # The staleness of the messages in train_msg_buffer should be 0
+                    staleness.append((client_id, 0))
 
-            # Aggregate
-            aggregated_num = len(msg_list)
-            agg_info = {
-                'client_feedback': msg_list,
-                'recover_fun': self.recover_fun,
-                'staleness': staleness,
-            }
-            # logger.info(f'The staleness is {staleness}')
-            result = aggregator.aggregate(agg_info)
-            # Due to lazy load, we merge two state dict
-            merged_param = merge_param_dict(model.state_dict().copy(), result)
-            model.load_state_dict(merged_param, strict=False)
+                for staled_message in self.staled_msg_buffer:
+                    state, client_id, content = staled_message
+                    if self.model_num == 1:
+                        msg_list.append(content)
+                    else:
+                        train_data_size, model_para_multiple = content
+                        msg_list.append(
+                            (train_data_size, model_para_multiple[model_idx]))
+
+                    staleness.append((client_id, self.state - state))
+
+                # Trigger the monitor here (for training)
+                self._monitor.calc_model_metric(self.models[0].state_dict(),
+                                                msg_list,
+                                                rnd=self.state)
+
+                # Aggregate
+                aggregated_num = len(msg_list)
+                agg_info = {
+                    'client_feedback': msg_list,
+                    'recover_fun': self.recover_fun,
+                    'staleness': staleness,
+                }
+                result = aggregator.aggregate(agg_info)
+                # Due to lazy load, we merge two state dict
+                merged_param = merge_param_dict(model.state_dict().copy(), result)
+                model.load_state_dict(merged_param, strict=False)
 
         return aggregated_num
 
@@ -1137,13 +1189,12 @@ class Server(BaseServer, ConnectionHandlerMixin):
 
     def callback_funcs_model_para(self, message: Message):
         """
-        The handling function for receiving model parameters, which triggers \
-        ``check_and_move_on`` (perform aggregation when enough feedback has \
-        been received). This handling function is widely used in various FL \
-        courses.
+        The handling function for receiving training completion signals from clients.
+        NOTE: Modified for BitTorrent integration - no longer processes model weights.
+        Only tracks client training completion for synchronization.
 
         Arguments:
-            message: The received message.
+            message: The received message containing training completion signal.
         """
         if self.is_finish:
             return 'finish'
@@ -1154,39 +1205,66 @@ class Server(BaseServer, ConnectionHandlerMixin):
         content = message.content
         self.sampler.change_state(sender, 'idle')
 
-        # dequantization
-        if self._cfg.quantization.method == 'uniform':
-            from federatedscope.core.compression import \
-                symmetric_uniform_dequantization
-            if isinstance(content[1], list):  # multiple model
-                sample_size = content[0]
-                quant_model = [
-                    symmetric_uniform_dequantization(x) for x in content[1]
-                ]
-            else:
-                sample_size = content[0]
-                quant_model = symmetric_uniform_dequantization(content[1])
-            content = (sample_size, quant_model)
+        # Check if this is a BitTorrent training completion signal
+        if isinstance(content, dict) and content.get('skip_weights', False):
+            logger.info(f"[BT-FL] Server: Received training completion signal from client {sender} for round {round}")
+            
+            # Extract synchronization information (no model weights)
+            sync_info = {
+                'client_id': content.get('client_id', sender),
+                'sample_size': content.get('sample_size', 0),
+                'training_completed': content.get('training_completed', True),
+                'round_num': content.get('round_num', round)
+            }
+            
+            logger.debug(f"[BT-FL] Server: Client {sender} completed training with {sync_info['sample_size']} samples")
+        else:
+            # Legacy mode: handle traditional model parameter messages
+            logger.warning(f"[BT-FL] Server: Received legacy model parameters from client {sender}, processing for compatibility")
+            
+            # Legacy dequantization for backward compatibility
+            if self._cfg.quantization.method == 'uniform':
+                from federatedscope.core.compression import \
+                    symmetric_uniform_dequantization
+                if isinstance(content[1], list):  # multiple model
+                    sample_size = content[0]
+                    quant_model = [
+                        symmetric_uniform_dequantization(x) for x in content[1]
+                    ]
+                else:
+                    sample_size = content[0]
+                    quant_model = symmetric_uniform_dequantization(content[1])
+                content = (sample_size, quant_model)
+            
+            # For legacy compatibility, create sync_info from old format
+            sync_info = {
+                'client_id': sender,
+                'sample_size': content[0] if isinstance(content, tuple) else 0,
+                'training_completed': True,
+                'round_num': round
+            }
 
-        # update the currency timestamp according to the received message
+        # Update the currency timestamp according to the received message
         assert timestamp >= self.cur_timestamp  # for test
         self.cur_timestamp = timestamp
 
+        # Store synchronization info instead of model weights
         if round == self.state:
             if round not in self.msg_buffer['train']:
                 self.msg_buffer['train'][round] = dict()
-            # Save the messages in this round
-            self.msg_buffer['train'][round][sender] = content
+            # Save the sync info in this round (no model weights)
+            self.msg_buffer['train'][round][sender] = sync_info
         elif round >= self.state - self.staleness_toleration:
-            # Save the staled messages
-            self.staled_msg_buffer.append((round, sender, content))
+            # Save the staled sync messages
+            self.staled_msg_buffer.append((round, sender, sync_info))
         else:
             # Drop the out-of-date messages
             logger.info(f'Drop a out-of-date message from round #{round}')
             self.dropout_num += 1
 
-        if self._cfg.federate.online_aggr:
-            self.aggregator.inc(content)
+        # Skip online aggregation for BitTorrent mode (clients handle aggregation locally)
+        if self._cfg.federate.online_aggr and not (isinstance(content, dict) and content.get('skip_weights', False)):
+            logger.warning("[BT-FL] Server: Online aggregation disabled for BitTorrent mode")
 
         move_on_flag = self.check_and_move_on()
         if self._cfg.asyn.use and self._cfg.asyn.broadcast_manner == \
