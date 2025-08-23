@@ -266,7 +266,7 @@ class ChunkManager:
             # 自动清理旧轮次数据，保留最近几轮
             self.cleanup_old_rounds(keep_rounds=keep_rounds)
             
-            logger.info(f"💾 节点 {self.client_id}: 第{round_num}轮保存了 {len(saved_hashes)} 个chunks")
+            logger.debug(f"💾 节点 {self.client_id}: 第{round_num}轮保存了 {len(saved_hashes)} 个chunks")
             return saved_hashes
             
         except Exception as e:
@@ -763,12 +763,13 @@ class ChunkManager:
             ''', (round_num,))
             
             local_chunks = cursor.fetchall()
-            logger.info(f"[ChunkManager] Client {self.client_id}: Found {len(local_chunks)} local chunks for round {round_num}")
+            logger.debug(f"[ChunkManager] Client {self.client_id}: Found {len(local_chunks)} local chunks for round {round_num}")
             
             for (chunk_id,) in local_chunks:
                 # 本地chunks
                 bitfield[(round_num, self.client_id, chunk_id)] = True
-                logger.info(f"[ChunkManager] Client {self.client_id}: Added local chunk ({round_num}, {self.client_id}, {chunk_id}) to bitfield")
+                # 静默添加本地chunk到bitfield
+                pass
             
             # 查询BitTorrent交换的chunks（新表）
             cursor.execute('''

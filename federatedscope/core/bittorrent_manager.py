@@ -82,20 +82,20 @@ class BitTorrentManager:
     def handle_bitfield(self, sender_id: int, bitfield: Dict):
         """处理接收到的bitfield消息"""
         self.peer_bitfields[sender_id] = bitfield
-        logger.info(f"[BT] Client {self.client_id}: Received bitfield from peer {sender_id} with {len(bitfield)} chunks")
+        logger.debug(f"[BT] Client {self.client_id}: Received bitfield from peer {sender_id} with {len(bitfield)} chunks")
         
         # 🔧 调试：输出详细的bitfield分析
-        logger.info(f"[BT] Client {self.client_id}: BitTorrent Manager received bitfield from peer {sender_id}:")
+        logger.debug(f"[BT] Client {self.client_id}: BitTorrent Manager received bitfield from peer {sender_id}:")
         if bitfield:
             for chunk_key, has_chunk in bitfield.items():
                 round_num, source_id, chunk_id = chunk_key
-                logger.info(f"[BT] Client {self.client_id}: - Round {round_num}, Source {source_id}, Chunk {chunk_id}: {has_chunk}")
+                logger.debug(f"[BT] Client {self.client_id}: - Round {round_num}, Source {source_id}, Chunk {chunk_id}: {has_chunk}")
         else:
             logger.warning(f"[BT] Client {self.client_id}: ⚠️ BitTorrent Manager got EMPTY bitfield from peer {sender_id}!")
         
         # 检查是否有我需要的chunks
         if self._has_interesting_chunks(sender_id):
-            logger.info(f"[BT] Client {self.client_id}: Peer {sender_id} has interesting chunks, sending interested")
+            logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has interesting chunks, sending interested")
             self._send_interested(sender_id)
         else:
             logger.info(f"[BT] Client {self.client_id}: Peer {sender_id} has no interesting chunks")
@@ -109,7 +109,7 @@ class BitTorrentManager:
         
     def handle_request(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int):
         """处理chunk请求"""
-        logger.info(f"[BT-HANDLE] Client {self.client_id}: Handling request from {sender_id} for chunk {source_client_id}:{chunk_id} (req_round={round_num}, bt_round={self.round_num}, timestamp={time.time():.3f})")
+        logger.debug(f"[BT-HANDLE] Client {self.client_id}: Handling request from {sender_id} for chunk {source_client_id}:{chunk_id}")
         
         # 🔴 验证轮次匹配
         if round_num != self.round_num:
@@ -118,21 +118,21 @@ class BitTorrentManager:
             return
             
         if sender_id not in self.choked_peers:
-            logger.info(f"[BT-HANDLE] Client {self.client_id}: Peer {sender_id} is not choked, processing request")
+            logger.debug(f"[BT-HANDLE] Client {self.client_id}: Peer {sender_id} is not choked, processing request")
             # 发送chunk数据
             # 🔴 添加round_num参数到get_chunk_data
-            logger.info(f"[BT-HANDLE] Client {self.client_id}: Querying chunk_data with params (round={round_num}, source_client={source_client_id}, chunk_id={chunk_id})")
+            logger.debug(f"[BT-HANDLE] Client {self.client_id}: Querying chunk_data with params (round={round_num}, source_client={source_client_id}, chunk_id={chunk_id})")
             chunk_data = self.chunk_manager.get_chunk_data(round_num, source_client_id, chunk_id)
             if chunk_data is not None:
                 # 发送chunk数据，即使是空的chunk也要发送
                 chunk_size = len(chunk_data) if hasattr(chunk_data, '__len__') else 0
                 if chunk_size > 0:
-                    logger.info(f"[BT-HANDLE] Client {self.client_id}: Found non-empty chunk data (size={chunk_size}), sending piece to {sender_id}")
+                    logger.debug(f"[BT-HANDLE] Client {self.client_id}: Found non-empty chunk data (size={chunk_size}), sending piece to {sender_id}")
                 else:
-                    logger.info(f"[BT-HANDLE] Client {self.client_id}: Found empty chunk data (size={chunk_size}), sending empty piece to {sender_id}")
+                    logger.debug(f"[BT-HANDLE] Client {self.client_id}: Found empty chunk data (size={chunk_size}), sending empty piece to {sender_id}")
                 
                 self._send_piece(sender_id, round_num, source_client_id, chunk_id, chunk_data)
-                logger.info(f"[BT-HANDLE] Client {self.client_id}: Successfully sent chunk {source_client_id}:{chunk_id} to peer {sender_id}")
+                logger.debug(f"[BT-HANDLE] Client {self.client_id}: Successfully sent chunk {source_client_id}:{chunk_id} to peer {sender_id}")
             else:
                 logger.warning(f"[BT-HANDLE] Client {self.client_id}: Chunk {source_client_id}:{chunk_id} not found in database (round={round_num})")
                 logger.warning(f"[BT-HANDLE] Client {self.client_id}: Database query returned: {chunk_data}")
@@ -144,7 +144,7 @@ class BitTorrentManager:
         处理接收到的chunk数据（包含完整性校验）
         🔴 关键修改：验证round_num匹配
         """
-        logger.info(f"[BT-PIECE] Client {self.client_id}: Received piece from {sender_id} for chunk {source_client_id}:{chunk_id} (piece_round={round_num}, bt_round={self.round_num}, timestamp={time.time():.3f})")
+        logger.debug(f"[BT-PIECE] Client {self.client_id}: Received piece from {sender_id} for chunk {source_client_id}:{chunk_id} (piece_round={round_num}, bt_round={self.round_num}, timestamp={time.time():.3f})")
         
         # 🔴 验证轮次是否匹配
         if round_num != self.round_num:
@@ -153,21 +153,21 @@ class BitTorrentManager:
             return False
             
         # 🔧 修复：chunk_data现在是base64编码的字符串，需要解码后校验
-        logger.info(f"[BT-PIECE] Client {self.client_id}: Received encoded chunk data, type={type(chunk_data)}, size={len(chunk_data)}")
+        logger.debug(f"[BT-PIECE] Client {self.client_id}: Received encoded chunk data, type={type(chunk_data)}, size={len(chunk_data)}")
         
         # 解码base64数据
         try:
             import base64
             import pickle
             decoded_data = base64.b64decode(chunk_data.encode('utf-8'))
-            logger.info(f"[BT-PIECE] Client {self.client_id}: Decoded base64 data, size={len(decoded_data)}")
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: Decoded base64 data, size={len(decoded_data)}")
         except Exception as e:
             logger.error(f"[BT-PIECE] Client {self.client_id}: Failed to decode base64 data: {e}")
             return False
         
         # 对解码后的序列化数据计算哈希
         calculated_checksum = hashlib.sha256(decoded_data).hexdigest()
-        logger.info(f"[BT-PIECE] Client {self.client_id}: Checksum verification - calculated={calculated_checksum[:8]}..., received={checksum[:8]}..., size={len(decoded_data)}")
+        logger.debug(f"[BT-PIECE] Client {self.client_id}: Checksum verification - calculated={calculated_checksum[:8]}..., received={checksum[:8]}..., size={len(decoded_data)}")
         
         if calculated_checksum != checksum:
             logger.error(f"[BT-PIECE] Client {self.client_id}: Chunk integrity check failed for {source_client_id}:{chunk_id}")
@@ -181,27 +181,27 @@ class BitTorrentManager:
         # 🔧 反序列化得到原始chunk数据
         try:
             deserialized_data = pickle.loads(decoded_data)
-            logger.info(f"[BT-PIECE] Client {self.client_id}: Successfully deserialized chunk data, type={type(deserialized_data)}")
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: Successfully deserialized chunk data, type={type(deserialized_data)}")
         except Exception as e:
             logger.error(f"[BT-PIECE] Client {self.client_id}: Failed to deserialize chunk data: {e}")
             return False
         
         # 保存到本地数据库
         # 🔴 传递round_num到save方法，使用反序列化后的数据
-        logger.info(f"[BT-PIECE] Client {self.client_id}: Saving chunk {source_client_id}:{chunk_id} to database (round={round_num})")
+        logger.debug(f"[BT-PIECE] Client {self.client_id}: Saving chunk {source_client_id}:{chunk_id} to database (round={round_num})")
         self.chunk_manager.save_remote_chunk(round_num, source_client_id, chunk_id, deserialized_data)
         
         # 清除pending请求
         chunk_key = (round_num, source_client_id, chunk_id)
         if chunk_key in self.pending_requests:
-            logger.info(f"[BT-PIECE] Client {self.client_id}: Clearing pending request for chunk {chunk_key}")
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: Clearing pending request for chunk {chunk_key}")
             del self.pending_requests[chunk_key]
         else:
-            logger.warning(f"[BT-PIECE] Client {self.client_id}: No pending request found for chunk {chunk_key}")
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: No pending request found for chunk {chunk_key}")
         
         # 向所有邻居发送have消息
         # 🔴 传递round_num信息
-        logger.info(f"[BT-PIECE] Client {self.client_id}: Broadcasting have message for chunk {source_client_id}:{chunk_id}")
+        logger.debug(f"[BT-PIECE] Client {self.client_id}: Broadcasting have message for chunk {source_client_id}:{chunk_id}")
         self._broadcast_have(round_num, source_client_id, chunk_id)
         
         # 更新下载速率和活动时间
@@ -209,7 +209,7 @@ class BitTorrentManager:
         self.last_activity[sender_id] = time.time()
         self.total_downloaded += len(decoded_data)
         
-        logger.info(f"[BT] Client {self.client_id}: Received chunk {source_client_id}:{chunk_id} from peer {sender_id}")
+        logger.debug(f"[BT] Client {self.client_id}: Received chunk {source_client_id}:{chunk_id} from peer {sender_id}")
         return True
         
     def handle_have(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int):
@@ -360,7 +360,8 @@ class BitTorrentManager:
             for chunk_key, has_chunk in my_bitfield.items():
                 if has_chunk:
                     round_num, source_id, chunk_id = chunk_key
-                    logger.info(f"[BT] Client {self.client_id}: - I have chunk: Round {round_num}, Source {source_id}, Chunk {chunk_id}")
+                    # 静默记录拥有的chunks
+                    pass
         else:
             logger.warning(f"[BT] Client {self.client_id}: ⚠️ I have NO chunks for round {self.round_num}!")
         
@@ -483,8 +484,8 @@ class BitTorrentManager:
         chunk_key = (self.round_num, source_id, chunk_id)
         self.pending_requests[chunk_key] = (peer_id, time.time())
         
-        logger.info(f"[BT-REQ] Client {self.client_id}: Sending request to peer {peer_id} for chunk {source_id}:{chunk_id} (bt_round={self.round_num}, timestamp={time.time():.3f})")
-        logger.info(f"[BT-REQ] Client {self.client_id}: Request details - chunk_key={chunk_key}, pending_count={len(self.pending_requests)}")
+        logger.debug(f"[BT-REQ] Client {self.client_id}: Sending request to peer {peer_id} for chunk {source_id}:{chunk_id}")
+        logger.debug(f"[BT-REQ] Client {self.client_id}: Request details - chunk_key={chunk_key}, pending_count={len(self.pending_requests)}")
         
         from federatedscope.core.message import Message
         self.comm_manager.send(
@@ -507,7 +508,7 @@ class BitTorrentManager:
         encoded_data = base64.b64encode(serialized_data).decode('utf-8')
         checksum = hashlib.sha256(serialized_data).hexdigest()
         
-        logger.info(f"[BT-SEND] Client {self.client_id}: Serializing chunk {source_client_id}:{chunk_id}, original_type={type(chunk_data)}, serialized_size={len(serialized_data)}, encoded_size={len(encoded_data)}")
+        logger.debug(f"[BT-SEND] Client {self.client_id}: Serializing chunk {source_client_id}:{chunk_id}, original_type={type(chunk_data)}, serialized_size={len(serialized_data)}, encoded_size={len(encoded_data)}")
         
         # 🔴 消息包含轮次信息
         from federatedscope.core.message import Message
