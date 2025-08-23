@@ -1310,7 +1310,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                                 value = value.decode('utf-8').rstrip('\x00')  # 移除null字符
                                 logger.debug(f"🔧 Decoded bytes as string: '{value}'")
                             except:
-                                logger.warning(f"⚠️ Failed to decode bytes: {value}")
+                                logger.debug(f"Failed to decode bytes: {value}")
                                 return 0 if target_type == int else 0.0 if target_type == float else ""
                     else:
                         # 其他长度的bytes尝试解码为字符串
@@ -1329,7 +1329,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                         return str(value)
                     return value
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to convert {field_name} '{value}' to {target_type}: {e}")
+                    logger.debug(f"Failed to convert {field_name} '{value}' to {target_type}: {e}")
                     return 0 if target_type == int else 0.0 if target_type == float else ""
             
             # 从字典创建ChunkInfo对象，确保类型正确
@@ -1347,28 +1347,10 @@ class Server(BaseServer, ConnectionHandlerMixin):
             success = self.chunk_tracker.update_chunk_info(chunk_info)
             
             if success:
-                # 打印详细的chunk信息表
-                logger.info(f"📥 [CHUNK_INFO] Client={chunk_info.client_id:2d} | "
-                           f"Round={chunk_info.round_num:2d} | "
-                           f"Chunk={chunk_info.chunk_id:2d} | "
-                           f"Action={chunk_info.action:6s} | "
-                           f"Size={chunk_info.chunk_size:6d} | "
-                           f"Hash={chunk_info.chunk_hash[:8]}...")
-                
-                # 每处理10个chunk信息后，打印tracker统计
-                if hasattr(self, '_chunk_msg_count'):
-                    self._chunk_msg_count += 1
-                else:
-                    self._chunk_msg_count = 1
-                
-                if self._chunk_msg_count % 20 == 0:
-                    stats = self.chunk_tracker.get_tracker_stats()
-                    logger.info(f"📊 [TRACKER_STATS] Total_Chunks={stats['total_unique_chunks']} | "
-                              f"Active_Clients={stats['total_active_clients']} | "
-                              f"Total_Mappings={stats['total_chunk_mappings']} | "
-                              f"Rounds_Tracked={stats['rounds_tracked']}")
+                # 静默处理成功的chunk信息
+                pass
             else:
-                logger.warning(f"⚠️ Server: 处理客户端{sender}的chunk信息失败")
+                logger.debug(f"Server: 处理客户端{sender}的chunk信息失败")
                 
         except Exception as e:
             logger.error(f"❌ Server: 处理chunk信息消息失败: {e}")

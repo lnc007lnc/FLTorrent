@@ -48,7 +48,7 @@ bittorrent:
   batch_have_interval: 1.0
   chunk_selection: rarest_first
   cleanup_policy: separate
-  enable: false
+  enable: true
   enable_have_suppression: true
   end_game_threshold: 10
   keep_remote_chunks: 5
@@ -62,7 +62,7 @@ bittorrent:
   require_full_completion: true
   save_statistics: true
   timeout: 60.0
-  verbose: false
+  verbose: true
 cfg_file: ''
 check_completeness: false
 criterion:
@@ -134,17 +134,17 @@ dataloader:
   theta: -1
   type: base
   walk_length: 2
-device: -1
+device: 0
 distribute:
-  client_host: 0.0.0.0
-  client_port: 50050
+  client_host: 127.0.0.1
+  client_port: 50053
   data_file: data
-  data_idx: 0
+  data_idx: 2
   grpc_compression: nocompression
   grpc_enable_http_proxy: false
   grpc_max_receive_message_length: 314572800
   grpc_max_send_message_length: 314572800
-  role: server
+  role: client
   server_host: 127.0.0.1
   server_port: 50051
   use: true
@@ -155,7 +155,7 @@ early_stop:
 eval:
   best_res_update_round_wise_key: val_loss
   count_flops: true
-  freq: 10
+  freq: 1
   metrics: []
   monitoring: []
   report:
@@ -165,7 +165,8 @@ eval:
   - raw
   split:
   - test
-expname: real_star_topology_test
+  - val
+expname: FedAvg_lr_on_toy_lr0.01_lstep2
 expname_tag: ''
 feat_engr:
   num_bins: 5
@@ -202,7 +203,7 @@ federate:
   sampler: uniform
   save_to: ''
   share_local_model: false
-  total_round_num: 2
+  total_round_num: 50
   unseen_clients_rate: 0.0
   use_diff: false
   use_ss: false
@@ -315,7 +316,8 @@ model:
   graph_pooling: mean
   hidden: 256
   in_channels: 0
-  input_shape: []
+  input_shape:
+  - 10
   label_smoothing: 0.1
   lambda_: 0.1
   layer: 2
@@ -343,14 +345,14 @@ model:
   use_contrastive_loss: false
 nbafl:
   use: false
-outdir: real_topology_test_exp/real_star_topology_test
+outdir: multi_process_test_v2/client_2_output/FedAvg_lr_on_toy_lr0.01_lstep2
 personalization:
   K: 5
   beta: 1.0
   epoch_feature: 1
   epoch_linear: 2
   local_param: []
-  local_update_steps: 1
+  local_update_steps: 2
   lr: 0.01
   lr_feature: 0.1
   lr_linear: 0.1
@@ -364,24 +366,15 @@ quantization:
 regularizer:
   mu: 0.0
   type: ''
-seed: 2023
+seed: 12347
 sgdmf:
   use: false
 topology:
-  connection_retry_delay: 1.0
-  custom_graph: {}
-  log_dir: topology_logs
-  max_connection_attempts: 3
-  require_full_topology: true
-  save_construction_log: true
-  timeout: 45.0
-  type: star
-  use: true
-  verbose: true
+  use: false
 train:
   batch_or_epoch: batch
   data_para_dids: []
-  local_update_steps: 1
+  local_update_steps: 2
   optimizer:
     lr: 0.01
     type: SGD

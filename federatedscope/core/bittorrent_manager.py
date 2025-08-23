@@ -381,6 +381,7 @@ class BitTorrentManager:
             Message(msg_type='bitfield',
                    sender=self.client_id,
                    receiver=[peer_id],
+                   state=self.round_num,
                    content={
                        'round_num': self.round_num,
                        'bitfield': bitfield_list
@@ -395,6 +396,7 @@ class BitTorrentManager:
             Message(msg_type='interested',
                    sender=self.client_id,
                    receiver=[peer_id],
+                   state=self.round_num,
                    content={})
         )
         
@@ -405,6 +407,7 @@ class BitTorrentManager:
             Message(msg_type='unchoke',
                    sender=self.client_id,
                    receiver=[peer_id],
+                   state=self.round_num,
                    content={})
         )
         
@@ -415,6 +418,7 @@ class BitTorrentManager:
             Message(msg_type='choke',
                    sender=self.client_id,
                    receiver=[peer_id],
+                   state=self.round_num,
                    content={})
         )
     
@@ -427,6 +431,7 @@ class BitTorrentManager:
                 Message(msg_type='have',
                        sender=self.client_id,
                        receiver=[neighbor_id],
+                       state=round_num,
                        content={
                            'round_num': round_num,
                            'source_client_id': source_client_id,
@@ -492,6 +497,7 @@ class BitTorrentManager:
             Message(msg_type='request',
                    sender=self.client_id,
                    receiver=[peer_id],
+                   state=self.round_num,
                    content={
                        'round_num': self.round_num,  # 🔴 请求的轮次
                        'source_client_id': source_id,
@@ -516,6 +522,7 @@ class BitTorrentManager:
             Message(msg_type='piece',
                    sender=self.client_id,
                    receiver=[peer_id],
+                   state=round_num,
                    content={
                        'round_num': round_num,  # 🔴 chunk所属轮次
                        'source_client_id': source_client_id,

@@ -103,7 +103,7 @@ class ChunkTracker:
                     return self._update_chunk(chunk_key, client_id, chunk_hash, chunk_info)
                 
                 else:
-                    logger.warning(f"⚠️  ChunkTracker: 未知的chunk操作类型: {action}")
+                    logger.debug(f"ChunkTracker: 未知的chunk操作类型: {action}")
                     return False
                     
         except Exception as e:

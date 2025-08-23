@@ -1050,7 +1050,7 @@ class Client(BaseClient):
                     if peer_with_chunk and peer_with_chunk not in self.bt_manager.choked_peers:
                         # 发送请求
                         round_num, source_id, chunk_id = target_chunk
-                        logger.info(f"[BT] Client {self.ID}: Sending request for chunk {source_id}:{chunk_id} to peer {peer_with_chunk}")
+                        logger.debug(f"[BT] Client {self.ID}: Sending request for chunk {source_id}:{chunk_id} to peer {peer_with_chunk}")
                         self.bt_manager._send_request(peer_with_chunk, source_id, chunk_id)
                     else:
                         if iteration % 50 == 1:  # 避免日志过多
@@ -1103,13 +1103,9 @@ class Client(BaseClient):
         
         logger.info(f"[BT] Client {self.ID}: Converted bitfield from peer {message.sender}: {len(bitfield_dict)} chunks")
         
-        # 🔧 调试：详细输出bitfield内容
-        if bitfield_dict:
-            logger.info(f"[BT] Client {self.ID}: Bitfield from peer {message.sender} contains:")
-            for chunk_key, has_chunk in bitfield_dict.items():
-                logger.info(f"[BT] Client {self.ID}: - Chunk {chunk_key}: {has_chunk}")
-        else:
-            logger.warning(f"[BT] Client {self.ID}: ⚠️ Received EMPTY bitfield from peer {message.sender}!")
+        # 🔧 调试：检查bitfield内容
+        if not bitfield_dict:
+            logger.debug(f"[BT] Client {self.ID}: Received empty bitfield from peer {message.sender}")
             
         self.bt_manager.handle_bitfield(message.sender, bitfield_dict)
         
@@ -1146,7 +1142,7 @@ class Client(BaseClient):
         
     def callback_funcs_for_request(self, message):
         """处理chunk请求"""
-        logger.info(f"[BT] Client {self.ID}: Received request from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
+        logger.debug(f"[BT] Client {self.ID}: Received request from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
         if hasattr(self, 'bt_manager'):
             # 🔴 传递round_num到handle_request
@@ -1161,7 +1157,7 @@ class Client(BaseClient):
         
     def callback_funcs_for_piece(self, message):
         """处理chunk数据"""
-        logger.info(f"[BT] Client {self.ID}: Received piece from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
+        logger.debug(f"[BT] Client {self.ID}: Received piece from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
         if hasattr(self, 'bt_manager'):
             self.bt_manager.handle_piece(
