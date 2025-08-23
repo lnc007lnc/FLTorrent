@@ -49,8 +49,10 @@ class BitTorrentManager:
         self.max_retries = 3  # 最大重试次数
         self.retry_count: Dict[Tuple, int] = {}  # {(source_id, chunk_id): count}
         
-        # 🆕 简单并发限制配置 - 解决优先级反转问题
-        self.MAX_CONCURRENT_REQUESTS = 5  # 最大同时请求数，避免大量低重要度请求阻塞高重要度chunks
+        # 🆕 双池请求管理系统 - 解决优先级反转和重复选择问题
+        self.MAX_ACTIVE_REQUESTS = 2  # 活跃请求池大小：实际发送的并发请求数量
+        self.MAX_PENDING_QUEUE = 2    # 待发送队列池大小：预选择的chunk队列大小
+        self.pending_queue: List[Tuple] = []  # 待发送队列：按重要性排序的chunk列表
         
         # 🔧 Bug修复4: 确保最小unchoke数量
         self.MIN_UNCHOKE_SLOTS = 1  # 至少保持1个unchoke，防止完全死锁
@@ -241,7 +243,10 @@ class BitTorrentManager:
         if chunk_key in self.pending_requests:
             logger.debug(f"[BT-PIECE] Client {self.client_id}: Clearing pending request for chunk {chunk_key}")
             del self.pending_requests[chunk_key]
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: Remaining pending requests: {len(self.pending_requests)}/{self.MAX_CONCURRENT_REQUESTS}")
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: Active pool: {len(self.pending_requests)}/{self.MAX_ACTIVE_REQUESTS}, Queue: {len(self.pending_queue)}/{self.MAX_PENDING_QUEUE}")
+            
+            # 🆕 双池系统：从队列池转移请求到活跃池
+            self._transfer_from_queue_to_active()
         else:
             logger.debug(f"[BT-PIECE] Client {self.client_id}: No pending request found for chunk {chunk_key}")
         
@@ -375,6 +380,80 @@ class BitTorrentManager:
                 return selected['chunk_key']
         
         return None
+    
+    def _transfer_from_queue_to_active(self):
+        """从待发送队列转移请求到活跃池"""
+        while (len(self.pending_requests) < self.MAX_ACTIVE_REQUESTS and 
+               len(self.pending_queue) > 0):
+            
+            # 从队列头部取出chunk（已按重要性排序）
+            chunk_key = self.pending_queue.pop(0)
+            
+            # 检查chunk是否仍然需要
+            my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+            if chunk_key in my_bitfield or chunk_key in self.pending_requests:
+                continue  # 跳过已拥有或正在请求的chunk
+            
+            # 找到拥有该chunk的peer
+            peer_id = self._find_peer_with_chunk(chunk_key)
+            if peer_id and peer_id not in self.choked_peers:
+                round_num, source_id, chunk_id = chunk_key
+                success = self._send_request(peer_id, source_id, chunk_id)
+                if success:
+                    logger.debug(f"[BT-POOL] Client {self.client_id}: Transferred chunk {chunk_key} from queue to active pool")
+                    break  # 成功转移一个请求
+                else:
+                    logger.debug(f"[BT-POOL] Client {self.client_id}: Failed to transfer chunk {chunk_key} to active pool")
+            else:
+                logger.debug(f"[BT-POOL] Client {self.client_id}: No available peer for chunk {chunk_key}")
+    
+    def _fill_pending_queue(self):
+        """填充待发送队列（只在队列为空时调用）"""
+        if len(self.pending_queue) > 0:
+            return  # 队列不为空，不需要填充
+        
+        logger.debug(f"[BT-POOL] Client {self.client_id}: Filling pending queue...")
+        
+        # 获取所有需要的chunks并按重要性排序
+        needed_chunks = []
+        
+        # 统计每个chunk的稀有度
+        chunk_availability = {}
+        for peer_id, bitfield in self.peer_bitfields.items():
+            for chunk_key, has_chunk in bitfield.items():
+                if has_chunk and chunk_key[0] == self.round_num:
+                    chunk_availability[chunk_key] = chunk_availability.get(chunk_key, 0) + 1
+        
+        my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+        
+        # 选择需要的chunks
+        for chunk_key, availability_count in chunk_availability.items():
+            if (chunk_key not in my_bitfield and 
+                chunk_key not in self.pending_requests and
+                chunk_key not in self.pending_queue):
+                
+                importance_score = self._get_chunk_importance_score(chunk_key)
+                needed_chunks.append({
+                    'chunk_key': chunk_key,
+                    'availability': availability_count,
+                    'importance': importance_score
+                })
+        
+        if needed_chunks:
+            # 按重要性排序，重要性高的在前
+            needed_chunks.sort(key=lambda x: x['importance'], reverse=True)
+            
+            # 填充队列，最多填充到MAX_PENDING_QUEUE大小
+            for i, chunk in enumerate(needed_chunks[:self.MAX_PENDING_QUEUE]):
+                self.pending_queue.append(chunk['chunk_key'])
+            
+            logger.info(f"[BT-POOL] Client {self.client_id}: Filled pending queue with {len(self.pending_queue)} chunks (from {len(needed_chunks)} candidates)")
+            
+            # 输出前几个高重要性chunks的详细信息
+            for i, chunk in enumerate(needed_chunks[:3]):
+                logger.debug(f"[BT-POOL] Client {self.client_id}: Queue #{i+1}: {chunk['chunk_key']} (importance: {chunk['importance']:.4f}, rarity: {chunk['availability']})")
+        else:
+            logger.debug(f"[BT-POOL] Client {self.client_id}: No chunks available to fill queue")
     
     def _get_chunk_importance_score(self, chunk_key: Tuple[int, int, int]) -> float:
         """获取chunk的重要性分数"""
@@ -640,7 +719,7 @@ class BitTorrentManager:
                     del self.retry_count[chunk_key]
                         
     def _send_request(self, peer_id: int, source_id: int, chunk_id: int):
-        """发送chunk请求（记录pending状态）- 添加并发限制"""
+        """发送chunk请求（双池管理系统）"""
         # 🔴 chunk_key包含轮次信息
         chunk_key = (self.round_num, source_id, chunk_id)
         
@@ -650,15 +729,15 @@ class BitTorrentManager:
             logger.debug(f"[BT-REQ] Client {self.client_id}: DUPLICATE REQUEST PREVENTED for chunk {source_id}:{chunk_id} - already pending from peer {existing_peer} for {time.time() - existing_time:.1f}s")
             return False
         
-        # 🆕 检查并发限制 - 解决优先级反转问题
-        if len(self.pending_requests) >= self.MAX_CONCURRENT_REQUESTS:
-            logger.debug(f"[BT-REQ] Client {self.client_id}: CONCURRENT LIMIT REACHED ({len(self.pending_requests)}/{self.MAX_CONCURRENT_REQUESTS}), skipping request for chunk {source_id}:{chunk_id}")
+        # 🆕 检查活跃池是否已满
+        if len(self.pending_requests) >= self.MAX_ACTIVE_REQUESTS:
+            logger.debug(f"[BT-REQ] Client {self.client_id}: ACTIVE POOL FULL ({len(self.pending_requests)}/{self.MAX_ACTIVE_REQUESTS}), skipping request for chunk {source_id}:{chunk_id}")
             return False
         
         self.pending_requests[chunk_key] = (peer_id, time.time())
         
         logger.debug(f"[BT-REQ] Client {self.client_id}: Sending request to peer {peer_id} for chunk {source_id}:{chunk_id}")
-        logger.debug(f"[BT-REQ] Client {self.client_id}: Request details - chunk_key={chunk_key}, pending_count={len(self.pending_requests)}/{self.MAX_CONCURRENT_REQUESTS}")
+        logger.debug(f"[BT-REQ] Client {self.client_id}: Active pool: {len(self.pending_requests)}/{self.MAX_ACTIVE_REQUESTS}, Queue: {len(self.pending_queue)}/{self.MAX_PENDING_QUEUE}")
         
         from federatedscope.core.message import Message
         self.comm_manager.send(

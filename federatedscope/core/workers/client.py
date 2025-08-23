@@ -1198,26 +1198,24 @@ class Client(BaseClient):
                     peer_count = len(self.bt_manager.peer_bitfields)
                     logger.info(f"[BT] Client {self.ID}: Iteration {iteration}, current chunks: {current_chunks}/{expected_chunks}, peers: {peer_count}")
                 
-                # 选择要下载的chunk（Rarest First）
-                target_chunk = self.bt_manager._rarest_first_selection()
+                # 🆕 双池请求管理：只在队列为空时填充，减少选择程序调用频率
+                if len(self.bt_manager.pending_queue) == 0:
+                    logger.debug(f"[BT] Client {self.ID}: Pending queue empty, filling with priority chunks...")
+                    self.bt_manager._fill_pending_queue()
                 
-                if target_chunk:
-                    # 找到拥有该chunk的peer
-                    peer_with_chunk = self.bt_manager._find_peer_with_chunk(target_chunk)
-                    
-                    if peer_with_chunk and peer_with_chunk not in self.bt_manager.choked_peers:
-                        # 发送请求 - 检查并发限制
-                        round_num, source_id, chunk_id = target_chunk
-                        logger.debug(f"[BT] Client {self.ID}: Attempting request for chunk {source_id}:{chunk_id} to peer {peer_with_chunk}")
-                        success = self.bt_manager._send_request(peer_with_chunk, source_id, chunk_id)
-                        if not success:
-                            logger.debug(f"[BT] Client {self.ID}: Request for chunk {source_id}:{chunk_id} was blocked (concurrent limit or duplicate)")
-                    else:
-                        if iteration % 50 == 1:  # 避免日志过多
-                            logger.info(f"[BT] Client {self.ID}: Found chunk {target_chunk} but peer {peer_with_chunk} is choked or unavailable")
+                # 从队列转移请求到活跃池
+                if (len(self.bt_manager.pending_requests) < self.bt_manager.MAX_ACTIVE_REQUESTS and
+                    len(self.bt_manager.pending_queue) > 0):
+                    logger.debug(f"[BT] Client {self.ID}: Transferring requests from queue to active pool...")
+                    self.bt_manager._transfer_from_queue_to_active()
                 else:
-                    if iteration == 1:  # 只在开始时记录一次
-                        logger.info(f"[BT] Client {self.ID}: No target chunks found in iteration {iteration}")
+                    if iteration % 100 == 1:  # 减少日志频率
+                        active_count = len(self.bt_manager.pending_requests)
+                        queue_count = len(self.bt_manager.pending_queue)
+                        if active_count == 0 and queue_count == 0:
+                            logger.info(f"[BT] Client {self.ID}: No chunks to request in iteration {iteration}")
+                        else:
+                            logger.debug(f"[BT] Client {self.ID}: Pool status - Active: {active_count}/{self.bt_manager.MAX_ACTIVE_REQUESTS}, Queue: {queue_count}/{self.bt_manager.MAX_PENDING_QUEUE}")
                         
                 # 定期更新choke/unchoke（每10次迭代）
                 if iteration % 10 == 0:
