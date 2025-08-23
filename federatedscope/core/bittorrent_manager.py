@@ -49,6 +49,9 @@ class BitTorrentManager:
         self.max_retries = 3  # 最大重试次数
         self.retry_count: Dict[Tuple, int] = {}  # {(source_id, chunk_id): count}
         
+        # 🆕 简单并发限制配置 - 解决优先级反转问题
+        self.MAX_CONCURRENT_REQUESTS = 5  # 最大同时请求数，避免大量低重要度请求阻塞高重要度chunks
+        
         # 🔧 Bug修复4: 确保最小unchoke数量
         self.MIN_UNCHOKE_SLOTS = 1  # 至少保持1个unchoke，防止完全死锁
         self.MAX_UPLOAD_SLOTS = 4
@@ -82,13 +85,39 @@ class BitTorrentManager:
         # 3. 启动optimistic unchoke（每30秒）
         self._schedule_optimistic_unchoke()
         
-    def handle_bitfield(self, sender_id: int, bitfield: Dict):
-        """处理接收到的bitfield消息"""
+    def handle_bitfield(self, sender_id: int, bitfield_content: Dict):
+        """处理接收到的bitfield消息（包含重要性分数）"""
         # 🔧 CRITICAL FIX: Check if exchange is stopped
         if self.is_stopped:
             logger.debug(f"[BT] Client {self.client_id}: Ignoring bitfield from peer {sender_id} - exchange stopped")
             return
+        
+        # 🆕 处理新格式的bitfield（包含重要性分数）
+        if isinstance(bitfield_content, dict) and 'bitfield' in bitfield_content:
+            # 新格式：{round_num: x, bitfield: [{round, source, chunk, importance_score}, ...]}
+            bitfield_list = bitfield_content.get('bitfield', [])
             
+            # 转换为内部格式并存储重要性分数
+            bitfield = {}
+            if not hasattr(self, 'peer_importance_scores'):
+                self.peer_importance_scores = {}  # {peer_id: {chunk_key: importance_score}}
+            
+            if sender_id not in self.peer_importance_scores:
+                self.peer_importance_scores[sender_id] = {}
+            
+            for chunk_entry in bitfield_list:
+                chunk_key = (chunk_entry['round'], chunk_entry['source'], chunk_entry['chunk'])
+                bitfield[chunk_key] = True
+                
+                # 🆕 存储重要性分数
+                importance_score = chunk_entry.get('importance_score', 0.0)
+                self.peer_importance_scores[sender_id][chunk_key] = importance_score
+                
+                logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has chunk {chunk_key} with importance {importance_score:.4f}")
+        else:
+            # 兼容旧格式
+            bitfield = bitfield_content
+        
         self.peer_bitfields[sender_id] = bitfield
         logger.debug(f"[BT] Client {self.client_id}: Received bitfield from peer {sender_id} with {len(bitfield)} chunks")
         
@@ -97,7 +126,8 @@ class BitTorrentManager:
         if bitfield:
             for chunk_key, has_chunk in bitfield.items():
                 round_num, source_id, chunk_id = chunk_key
-                logger.debug(f"[BT] Client {self.client_id}: - Round {round_num}, Source {source_id}, Chunk {chunk_id}: {has_chunk}")
+                importance_score = self.peer_importance_scores.get(sender_id, {}).get(chunk_key, 0.0)
+                logger.debug(f"[BT] Client {self.client_id}: - Round {round_num}, Source {source_id}, Chunk {chunk_id}: {has_chunk} (importance: {importance_score:.4f})")
         else:
             logger.warning(f"[BT] Client {self.client_id}: ⚠️ BitTorrent Manager got EMPTY bitfield from peer {sender_id}!")
         
@@ -211,6 +241,7 @@ class BitTorrentManager:
         if chunk_key in self.pending_requests:
             logger.debug(f"[BT-PIECE] Client {self.client_id}: Clearing pending request for chunk {chunk_key}")
             del self.pending_requests[chunk_key]
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: Remaining pending requests: {len(self.pending_requests)}/{self.MAX_CONCURRENT_REQUESTS}")
         else:
             logger.debug(f"[BT-PIECE] Client {self.client_id}: No pending request found for chunk {chunk_key}")
         
@@ -227,8 +258,8 @@ class BitTorrentManager:
         logger.debug(f"[BT] Client {self.client_id}: Received chunk {source_client_id}:{chunk_id} from peer {sender_id}")
         return True
         
-    def handle_have(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int):
-        """处理have消息"""
+    def handle_have(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int, importance_score: float = 0.0):
+        """处理have消息（包含重要性分数）"""
         if round_num != self.round_num:
             return
             
@@ -237,7 +268,15 @@ class BitTorrentManager:
             self.peer_bitfields[sender_id] = {}
         self.peer_bitfields[sender_id][chunk_key] = True
         
-        logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has chunk {source_client_id}:{chunk_id}")
+        # 🆕 存储重要性分数
+        if not hasattr(self, 'peer_importance_scores'):
+            self.peer_importance_scores = {}
+        if sender_id not in self.peer_importance_scores:
+            self.peer_importance_scores[sender_id] = {}
+        
+        self.peer_importance_scores[sender_id][chunk_key] = importance_score
+        
+        logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has chunk {source_client_id}:{chunk_id} with importance {importance_score:.4f}")
         
     def handle_choke(self, sender_id: int):
         """处理choke消息"""
@@ -249,8 +288,11 @@ class BitTorrentManager:
         self.choked_peers.discard(sender_id)
         logger.debug(f"[BT] Client {self.client_id}: Unchoked by peer {sender_id}")
         
-    def _rarest_first_selection(self) -> Optional[Tuple]:
-        """Rarest First chunk选择算法"""
+    def _importance_guided_selection(self) -> Optional[Tuple]:
+        """重要性指导的chunk选择算法（importance-first + rarest-first混合策略）"""
+        # 🆕 重要性分数差异阈值（当两个chunk重要性差异小于该值时认为相似）
+        IMPORTANCE_SIMILARITY_THRESHOLD = 0.01  # 0.01 means chunks with importance difference < 1% are considered similar
+        
         # 统计每个chunk的稀有度
         chunk_availability = {}
         for peer_id, bitfield in self.peer_bitfields.items():
@@ -258,44 +300,106 @@ class BitTorrentManager:
                 # 🔴 只考虑当前轮次的chunks
                 if has_chunk and chunk_key[0] == self.round_num:
                     chunk_availability[chunk_key] = chunk_availability.get(chunk_key, 0) + 1
-                    
-        # 选择最稀有但可获得的chunk
-        # 🔴 传递round_num参数到get_global_bitfield
+        
+        # 选择可获得的chunks
         my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
         
-        # 🔧 CRITICAL FIX: Exclude chunks that are already pending to prevent duplicate requests
-        needed_chunks = [(k, v) for k, v in chunk_availability.items() 
-                        if k not in my_bitfield and k not in self.pending_requests]
+        # 🔧 排除已拥有和正在请求的chunks
+        needed_chunks = []
+        for chunk_key, availability_count in chunk_availability.items():
+            if chunk_key not in my_bitfield and chunk_key not in self.pending_requests:
+                # 🆕 获取chunk重要性分数
+                importance_score = self._get_chunk_importance_score(chunk_key)
+                needed_chunks.append({
+                    'chunk_key': chunk_key,
+                    'availability': availability_count,
+                    'importance': importance_score
+                })
         
-        # 🔧 ENHANCED DEBUGGING: Track duplicate prevention effectiveness
+        # 🔧 调试信息
         pending_chunks = [k for k, v in chunk_availability.items() if k in self.pending_requests]
         already_have = [k for k, v in chunk_availability.items() if k in my_bitfield]
         
-        # 添加调试信息
         if not chunk_availability:
-            # 第一次调用时记录调试信息
             if not hasattr(self, '_logged_no_chunks'):
                 logger.info(f"[BT] Client {self.client_id}: No chunks available from peers. Peer count: {len(self.peer_bitfields)}")
                 for peer_id, bitfield in self.peer_bitfields.items():
                     logger.info(f"[BT] Client {self.client_id}: Peer {peer_id} bitfield size: {len(bitfield)}")
                 self._logged_no_chunks = True
         elif not needed_chunks:
-            # Log detailed reason why no chunks are needed
             total_available = len(chunk_availability)
             pending_count = len(pending_chunks)
             have_count = len(already_have)
             logger.debug(f"[BT] Client {self.client_id}: No needed chunks - Total: {total_available}, Already have: {have_count}, Pending: {pending_count}")
             
-            # 第一次调用时记录调试信息
             if not hasattr(self, '_logged_all_chunks'):
                 logger.info(f"[BT] Client {self.client_id}: All chunks handled - My chunks: {len(my_bitfield)}, Pending requests: {len(self.pending_requests)}")
                 self._logged_all_chunks = True
         
         if needed_chunks:
-            # 按稀有度排序（拥有peer数最少的优先）
-            needed_chunks.sort(key=lambda x: (x[1], random.random()))
-            return needed_chunks[0][0]  # 返回最稀有的chunk
+            # 🆕 重要性指导的选择策略
+            logger.debug(f"[BT] Client {self.client_id}: Evaluating {len(needed_chunks)} candidate chunks for selection")
+            
+            # 1. 按重要性分数降序排序
+            needed_chunks.sort(key=lambda x: x['importance'], reverse=True)
+            
+            if len(needed_chunks) == 1:
+                selected = needed_chunks[0]
+                logger.debug(f"[BT] Client {self.client_id}: Selected only candidate chunk {selected['chunk_key']} (importance: {selected['importance']:.4f}, rarity: {selected['availability']})")
+                return selected['chunk_key']
+            
+            # 2. 找到重要性最高的chunk
+            highest_importance = needed_chunks[0]['importance']
+            
+            # 3. 找到所有与最高重要性相近的chunks
+            similar_importance_chunks = []
+            for chunk in needed_chunks:
+                importance_diff = abs(chunk['importance'] - highest_importance)
+                if importance_diff <= IMPORTANCE_SIMILARITY_THRESHOLD:
+                    similar_importance_chunks.append(chunk)
+                else:
+                    break  # 由于已经排序，后续chunks重要性更低
+            
+            logger.debug(f"[BT] Client {self.client_id}: Found {len(similar_importance_chunks)} chunks with similar high importance (threshold: {IMPORTANCE_SIMILARITY_THRESHOLD})")
+            
+            # 4. 在相似重要性的chunks中按稀有度选择
+            if len(similar_importance_chunks) == 1:
+                selected = similar_importance_chunks[0]
+                logger.info(f"[BT] Client {self.client_id}: Selected chunk {selected['chunk_key']} by importance priority (importance: {selected['importance']:.4f}, rarity: {selected['availability']})")
+                return selected['chunk_key']
+            else:
+                # 按稀有度排序（越少peer拥有越稀有）
+                similar_importance_chunks.sort(key=lambda x: (x['availability'], random.random()))
+                selected = similar_importance_chunks[0]
+                logger.info(f"[BT] Client {self.client_id}: Selected chunk {selected['chunk_key']} by rarity among high-importance chunks (importance: {selected['importance']:.4f}, rarity: {selected['availability']})")
+                return selected['chunk_key']
+        
         return None
+    
+    def _get_chunk_importance_score(self, chunk_key: Tuple[int, int, int]) -> float:
+        """获取chunk的重要性分数"""
+        round_num, source_client_id, chunk_id = chunk_key
+        
+        # 🆕 从所有已知重要性分数中获取
+        # 1. 首先检查是否是自己的chunk
+        if source_client_id == self.client_id:
+            chunk_importance_scores = self.chunk_manager.get_chunk_importance_scores(round_num)
+            if chunk_id in chunk_importance_scores:
+                chunk_data = chunk_importance_scores[chunk_id]
+                return chunk_data.get('importance_score', 0.0)
+        
+        # 2. 从peer的bitfield中获取重要性分数
+        if hasattr(self, 'peer_importance_scores'):
+            for peer_id, peer_scores in self.peer_importance_scores.items():
+                if chunk_key in peer_scores:
+                    return peer_scores[chunk_key]
+        
+        # 3. 默认返回0.0
+        return 0.0
+    
+    def _rarest_first_selection(self) -> Optional[Tuple]:
+        """Rarest First chunk选择算法（兼容性别名）"""
+        return self._importance_guided_selection()
         
     def _regular_unchoke_algorithm(self):
         """经典的Reciprocal Unchoke算法（包含防死锁改进）"""
@@ -374,12 +478,16 @@ class BitTorrentManager:
         return None
         
     def _send_bitfield(self, peer_id: int):
-        """向指定peer发送bitfield"""
+        """向指定peer发送bitfield（包含重要性分数）"""
         from federatedscope.core.message import Message
         
         # 🔧 修复：将bitfield转换为可序列化的格式
         my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
         logger.info(f"[BT] Client {self.client_id}: My bitfield for round {self.round_num}: {len(my_bitfield)} chunks")
+        
+        # 🆕 获取本轮次的chunk重要性分数
+        chunk_importance_scores = self.chunk_manager.get_chunk_importance_scores(self.round_num)
+        logger.debug(f"[BT] Client {self.client_id}: Got {len(chunk_importance_scores)} importance scores for round {self.round_num}")
         
         # 🔧 调试：详细输出我拥有的chunks
         if my_bitfield:
@@ -392,14 +500,23 @@ class BitTorrentManager:
         else:
             logger.warning(f"[BT] Client {self.client_id}: ⚠️ I have NO chunks for round {self.round_num}!")
         
-        # 转换为列表格式
+        # 转换为列表格式，包含重要性分数
         bitfield_list = []
         for (round_num, source_id, chunk_id), has_chunk in my_bitfield.items():
             if has_chunk:
+                # 🆕 获取chunk重要性分数
+                importance_score = 0.0
+                if source_id == self.client_id and chunk_id in chunk_importance_scores:
+                    # 自己的chunk，使用本地保存的重要性分数
+                    chunk_data = chunk_importance_scores[chunk_id]
+                    importance_score = chunk_data.get('importance_score', 0.0)
+                    logger.debug(f"[BT] Client {self.client_id}: Using local importance {importance_score:.4f} for own chunk {chunk_id}")
+                
                 bitfield_list.append({
                     'round': round_num,
                     'source': source_id,
-                    'chunk': chunk_id
+                    'chunk': chunk_id,
+                    'importance_score': importance_score  # 🆕 添加重要性分数
                 })
         
         logger.info(f"[BT] Client {self.client_id}: Sending {len(bitfield_list)} chunks in bitfield to peer {peer_id}")
@@ -450,9 +567,20 @@ class BitTorrentManager:
         )
     
     def _broadcast_have(self, round_num: int, source_client_id: int, chunk_id: int):
-        """向所有邻居发送have消息"""
+        """向所有邻居发送have消息（包含重要性分数）"""
         # 🔴 have消息包含轮次信息
         from federatedscope.core.message import Message
+        
+        # 🆕 获取chunk重要性分数
+        importance_score = 0.0
+        if source_client_id == self.client_id:
+            # 自己的chunk，从数据库获取重要性分数
+            chunk_importance_scores = self.chunk_manager.get_chunk_importance_scores(round_num)
+            if chunk_id in chunk_importance_scores:
+                chunk_data = chunk_importance_scores[chunk_id]
+                importance_score = chunk_data.get('importance_score', 0.0)
+                logger.debug(f"[BT] Client {self.client_id}: Broadcasting have with importance {importance_score:.4f} for own chunk {chunk_id}")
+        
         for neighbor_id in self.neighbors:
             self.comm_manager.send(
                 Message(msg_type='have',
@@ -462,7 +590,8 @@ class BitTorrentManager:
                        content={
                            'round_num': round_num,
                            'source_client_id': source_client_id,
-                           'chunk_id': chunk_id
+                           'chunk_id': chunk_id,
+                           'importance_score': importance_score  # 🆕 添加重要性分数
                        })
             )
                 
@@ -511,7 +640,7 @@ class BitTorrentManager:
                     del self.retry_count[chunk_key]
                         
     def _send_request(self, peer_id: int, source_id: int, chunk_id: int):
-        """发送chunk请求（记录pending状态）"""
+        """发送chunk请求（记录pending状态）- 添加并发限制"""
         # 🔴 chunk_key包含轮次信息
         chunk_key = (self.round_num, source_id, chunk_id)
         
@@ -519,12 +648,17 @@ class BitTorrentManager:
         if chunk_key in self.pending_requests:
             existing_peer, existing_time = self.pending_requests[chunk_key]
             logger.debug(f"[BT-REQ] Client {self.client_id}: DUPLICATE REQUEST PREVENTED for chunk {source_id}:{chunk_id} - already pending from peer {existing_peer} for {time.time() - existing_time:.1f}s")
-            return
+            return False
+        
+        # 🆕 检查并发限制 - 解决优先级反转问题
+        if len(self.pending_requests) >= self.MAX_CONCURRENT_REQUESTS:
+            logger.debug(f"[BT-REQ] Client {self.client_id}: CONCURRENT LIMIT REACHED ({len(self.pending_requests)}/{self.MAX_CONCURRENT_REQUESTS}), skipping request for chunk {source_id}:{chunk_id}")
+            return False
         
         self.pending_requests[chunk_key] = (peer_id, time.time())
         
         logger.debug(f"[BT-REQ] Client {self.client_id}: Sending request to peer {peer_id} for chunk {source_id}:{chunk_id}")
-        logger.debug(f"[BT-REQ] Client {self.client_id}: Request details - chunk_key={chunk_key}, pending_count={len(self.pending_requests)}")
+        logger.debug(f"[BT-REQ] Client {self.client_id}: Request details - chunk_key={chunk_key}, pending_count={len(self.pending_requests)}/{self.MAX_CONCURRENT_REQUESTS}")
         
         from federatedscope.core.message import Message
         self.comm_manager.send(
@@ -538,6 +672,7 @@ class BitTorrentManager:
                        'chunk_id': chunk_id
                    })
         )
+        return True
     
     def _send_piece(self, peer_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data):
         """发送chunk数据"""

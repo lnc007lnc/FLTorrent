@@ -1206,10 +1206,12 @@ class Client(BaseClient):
                     peer_with_chunk = self.bt_manager._find_peer_with_chunk(target_chunk)
                     
                     if peer_with_chunk and peer_with_chunk not in self.bt_manager.choked_peers:
-                        # 发送请求
+                        # 发送请求 - 检查并发限制
                         round_num, source_id, chunk_id = target_chunk
-                        logger.debug(f"[BT] Client {self.ID}: Sending request for chunk {source_id}:{chunk_id} to peer {peer_with_chunk}")
-                        self.bt_manager._send_request(peer_with_chunk, source_id, chunk_id)
+                        logger.debug(f"[BT] Client {self.ID}: Attempting request for chunk {source_id}:{chunk_id} to peer {peer_with_chunk}")
+                        success = self.bt_manager._send_request(peer_with_chunk, source_id, chunk_id)
+                        if not success:
+                            logger.debug(f"[BT] Client {self.ID}: Request for chunk {source_id}:{chunk_id} was blocked (concurrent limit or duplicate)")
                     else:
                         if iteration % 50 == 1:  # 避免日志过多
                             logger.info(f"[BT] Client {self.ID}: Found chunk {target_chunk} but peer {peer_with_chunk} is choked or unavailable")
@@ -1253,19 +1255,14 @@ class Client(BaseClient):
         
         logger.info(f"[BT] Client {self.ID}: Processing bitfield from peer {message.sender}, round {message.content['round_num']}")
         
-        # 🔧 修复：将列表转换回字典格式
-        bitfield_dict = {}
-        for item in message.content['bitfield']:
-            key = (item['round'], item['source'], item['chunk'])
-            bitfield_dict[key] = True
-        
-        logger.info(f"[BT] Client {self.ID}: Converted bitfield from peer {message.sender}: {len(bitfield_dict)} chunks")
+        # 🆕 直接传递消息内容（包含重要性分数），让BitTorrent管理器处理格式转换
+        logger.info(f"[BT] Client {self.ID}: Passing bitfield message content from peer {message.sender}: {len(message.content.get('bitfield', []))} chunks")
         
         # 🔧 调试：检查bitfield内容
-        if not bitfield_dict:
+        if not message.content.get('bitfield'):
             logger.debug(f"[BT] Client {self.ID}: Received empty bitfield from peer {message.sender}")
             
-        self.bt_manager.handle_bitfield(message.sender, bitfield_dict)
+        self.bt_manager.handle_bitfield(message.sender, message.content)
         
     def callback_funcs_for_have(self, message):
         """处理have消息"""
@@ -1278,10 +1275,14 @@ class Client(BaseClient):
             logger.warning(f"[BT] Have message from wrong round: {message.content['round_num']}")
             return
             
+        # 🆕 获取重要性分数（如果有的话）
+        importance_score = message.content.get('importance_score', 0.0)
+        
         self.bt_manager.handle_have(sender_id, 
                                   message.content['round_num'],
                                   message.content['source_client_id'],
-                                  message.content['chunk_id'])
+                                  message.content['chunk_id'],
+                                  importance_score)
         
     def callback_funcs_for_interested(self, message):
         """处理interested消息"""
