@@ -44,6 +44,25 @@ attack:
   trigger_path: trigger/
   trigger_type: edge
 backend: torch
+bittorrent:
+  batch_have_interval: 1.0
+  chunk_selection: rarest_first
+  cleanup_policy: separate
+  enable: false
+  enable_have_suppression: true
+  end_game_threshold: 10
+  keep_remote_chunks: 5
+  log_dir: bittorrent_logs
+  max_retries: 3
+  max_upload_slots: 4
+  min_completion_ratio: 0.8
+  optimistic_unchoke_interval: 30.0
+  regular_unchoke_interval: 10.0
+  request_timeout: 5.0
+  require_full_completion: true
+  save_statistics: true
+  timeout: 60.0
+  verbose: false
 cfg_file: ''
 check_completeness: false
 criterion:
@@ -77,7 +96,7 @@ data:
     dim: 1
     max_curv: 12.5
     min_curv: 0.02
-  root: data
+  root: data/
   save_data: false
   server_holds_all: false
   shuffle: true
@@ -85,9 +104,9 @@ data:
   - 10
   - 5
   splits:
-  - 0.8
-  - 0.1
-  - 0.1
+  - 0.6
+  - 0.2
+  - 0.2
   splitter: ''
   splitter_args: []
   subsample: 1.0
@@ -113,7 +132,7 @@ dataloader:
   - 10
   - 5
   theta: -1
-  type: base
+  type: toy
   walk_length: 2
 device: -1
 distribute:
@@ -153,7 +172,7 @@ feat_engr:
 federate:
   atc_load_from: ''
   atc_vanilla: false
-  client_num: 2
+  client_num: 0
   data_weighted_aggr: false
   ignore_weight: false
   join_in_info: []
@@ -168,12 +187,12 @@ federate:
   process_num: 1
   resource_info_file: ''
   restore_from: ''
-  sample_client_num: 2
+  sample_client_num: -1
   sample_client_rate: -1.0
   sampler: uniform
   save_to: ''
   share_local_model: false
-  total_round_num: 2
+  total_round_num: 1
   unseen_clients_rate: 0.0
   use_diff: false
   use_ss: false
@@ -308,7 +327,7 @@ model:
   out_channels: 1
   pretrain_tasks: []
   stage: ''
-  task: node
+  task: regression
   type: lr
   use_bias: true
   use_contrastive_loss: false
@@ -321,8 +340,8 @@ personalization:
   epoch_feature: 1
   epoch_linear: 2
   local_param: []
-  local_update_steps: 2
-  lr: 0.01
+  local_update_steps: 1
+  lr: 0.1
   lr_feature: 0.1
   lr_linear: 0.1
   regular_weight: 0.1
@@ -335,7 +354,7 @@ quantization:
 regularizer:
   mu: 0.0
   type: ''
-seed: 2023
+seed: 123
 sgdmf:
   use: false
 topology:
@@ -343,9 +362,9 @@ topology:
 train:
   batch_or_epoch: batch
   data_para_dids: []
-  local_update_steps: 2
+  local_update_steps: 1
   optimizer:
-    lr: 0.01
+    lr: 0.1
     type: SGD
   scheduler:
     type: ''
@@ -361,7 +380,7 @@ trainer:
     adaptive: false
     eta: 0.0
     rho: 1.0
-  type: general
+  type: cvtrainer
   val_freq: 100000000
 use_gpu: false
 verbose: 1
