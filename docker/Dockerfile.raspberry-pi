@@ -1,0 +1,89 @@
+# 树莓派设备仿真镜像
+# ARM架构优化，中等资源
+
+FROM python:3.9-slim
+
+LABEL device.type="raspberry_pi"
+LABEL device.capability="medium"
+LABEL device.gpu.support="false"
+LABEL architecture="arm64v8"
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置环境变量
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# 安装系统依赖 (模拟ARM环境)
+RUN apt-get update && apt-get install -y \
+    # ARM优化工具
+    gcc \
+    g++ \
+    make \
+    # 网络工具
+    iproute2 \
+    net-tools \
+    iputils-ping \
+    # 系统工具
+    curl \
+    wget \
+    git \
+    # 数学库优化
+    libblas3 \
+    liblapack3 \
+    libatlas-base-dev \
+    # GPIO和硬件接口库 (模拟)
+    gpiod \
+    # 清理缓存
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# 安装树莓派优化的Python包
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir \
+    torch==2.1.0+cpu \
+    torchvision==0.16.0+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# 安装树莓派常用库
+RUN pip install --no-cache-dir \
+    numpy \
+    pandas \
+    scipy \
+    matplotlib \
+    # 树莓派GPIO模拟
+    gpiozero \
+    # 传感器库
+    adafruit-circuitpython-dht \
+    # 网络优化
+    requests[socks]
+
+# 复制FederatedScope代码
+COPY . /app/
+
+# 设置权限
+RUN chmod +x /app/federatedscope/main.py
+
+# 设置设备特定环境变量
+ENV DEVICE_TYPE="raspberry_pi"
+ENV GPU_AVAILABLE="false"
+ENV MEMORY_LIMIT="4096"  # 4GB (Pi 4)
+ENV CPU_CORES="4"
+ENV NETWORK_TYPE="WiFi/Ethernet"
+ENV ARM_COMPUTE_LIBRARY="1"
+
+# ARM优化设置
+ENV OPENBLAS_NUM_THREADS="4"
+ENV TORCH_NUM_THREADS="4"
+ENV OMP_NUM_THREADS="4"
+
+# 创建必要目录
+RUN mkdir -p /app/data /app/logs /app/output /app/configs /app/gpio
+
+# 健康检查
+HEALTHCHECK --interval=45s --timeout=15s --start-period=10s --retries=3 \
+    CMD python -c "import torch; print('Raspberry Pi ready')" || exit 1
+
+# 入口命令
+CMD ["python", "/app/federatedscope/main.py"]

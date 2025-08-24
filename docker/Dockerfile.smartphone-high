@@ -1,0 +1,40 @@
+# 高端智能手机仿真镜像
+# 具有完整功能和GPU支持
+
+FROM federatedscope:base
+
+LABEL device.type="smartphone"
+LABEL device.capability="high"
+LABEL device.gpu.support="true"
+
+# 安装GPU相关依赖 (PyTorch with CUDA)
+RUN pip install --no-cache-dir \
+    torch==2.1.0+cu118 \
+    torchvision==0.16.0+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118
+
+# 安装高端设备额外依赖
+RUN pip install --no-cache-dir \
+    transformers \
+    scikit-learn \
+    matplotlib \
+    seaborn \
+    pillow
+
+# 设置设备特定环境变量
+ENV DEVICE_TYPE="smartphone_high"
+ENV GPU_AVAILABLE="true"
+ENV MEMORY_LIMIT="4096"  # 4GB
+ENV CPU_CORES="8"
+ENV NETWORK_TYPE="4G/5G"
+
+# 优化设置
+ENV TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6"
+ENV CUDA_VISIBLE_DEVICES="0"
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import torch; print('GPU available:', torch.cuda.is_available())" || exit 1
+
+# 入口命令
+CMD ["python", "/app/federatedscope/main.py"]

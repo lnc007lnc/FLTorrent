@@ -1,0 +1,74 @@
+# IoT设备仿真镜像
+# 极度资源受限，最小化安装
+
+FROM python:3.9-alpine
+
+LABEL device.type="iot"
+LABEL device.capability="minimal"
+LABEL device.gpu.support="false"
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置环境变量
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# 安装系统依赖 (Alpine Linux)
+RUN apk add --no-cache \
+    # 基础工具
+    curl \
+    wget \
+    # 网络工具 (tc for traffic control)
+    iproute2 \
+    iptables \
+    # 编译依赖
+    gcc \
+    g++ \
+    musl-dev \
+    linux-headers \
+    # Python依赖
+    python3-dev \
+    # 清理缓存
+    && rm -rf /var/cache/apk/*
+
+# 安装最小化Python依赖
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir \
+    numpy==1.24.3 \
+    torch==2.1.0+cpu \
+    --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir \
+    pyyaml \
+    requests
+
+# 复制最小化的FederatedScope核心文件
+COPY federatedscope/ /app/federatedscope/
+COPY requirements_minimal.txt /tmp/
+
+# 安装最小依赖
+RUN pip install --no-cache-dir -r /tmp/requirements_minimal.txt \
+    && rm /tmp/requirements_minimal.txt
+
+# 设置设备特定环境变量
+ENV DEVICE_TYPE="iot_minimal"
+ENV GPU_AVAILABLE="false"
+ENV MEMORY_LIMIT="256"   # 256MB
+ENV CPU_CORES="1"
+ENV NETWORK_TYPE="2G/3G"
+
+# 极限资源约束
+ENV TORCH_NUM_THREADS="1"
+ENV OMP_NUM_THREADS="1"
+ENV MKL_NUM_THREADS="1"
+ENV MALLOC_TRIM_THRESHOLD_="100000"
+
+# 创建目录
+RUN mkdir -p /app/data /app/logs /app/output /app/configs
+
+# 健康检查 (简化版)
+HEALTHCHECK --interval=120s --timeout=30s --start-period=15s --retries=1 \
+    CMD python -c "print('IoT device ready')" || exit 1
+
+# 入口命令
+CMD ["python", "/app/federatedscope/main.py"]
