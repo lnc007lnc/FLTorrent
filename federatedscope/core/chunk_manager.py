@@ -9,6 +9,7 @@ import json
 import hashlib
 import pickle
 import sqlite3
+import time
 import threading
 import time
 from typing import Dict, List, Optional, Tuple, Any, Callable
@@ -66,9 +67,23 @@ class ChunkManager:
         if change_callback:
             self.start_monitoring()
         
+    def _get_optimized_connection(self):
+        """获取优化的数据库连接"""
+        conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        cursor = conn.cursor()
+        
+        # 启用优化设置
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL") 
+        cursor.execute("PRAGMA cache_size=10000")
+        cursor.execute("PRAGMA temp_store=MEMORY")
+        cursor.execute("PRAGMA busy_timeout=30000")  # 30秒超时
+        
+        return conn
+        
     def _init_database(self):
         """初始化SQLite数据库表结构"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_optimized_connection()
         cursor = conn.cursor()
         
         # 创建chunk元数据表
@@ -283,7 +298,7 @@ class ChunkManager:
             Dict[chunk_id, {'importance_score': float, 'pruning_method': str, 'flat_size': int}]
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -413,7 +428,7 @@ class ChunkManager:
             logger.info(f"[ChunkManager] Computing chunk importance using method: {importance_method}")
             importance_scores = self.compute_chunk_importance(params, chunks_info, importance_method)
             
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             saved_hashes = []
@@ -479,7 +494,7 @@ class ChunkManager:
             (chunk_info, chunk_data) 元组列表
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # 查询chunk元数据
@@ -529,7 +544,7 @@ class ChunkManager:
             (chunk_info, chunk_data) 元组，如果不存在则返回None
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -569,7 +584,7 @@ class ChunkManager:
     def get_storage_stats(self) -> Dict:
         """获取数据库存储统计信息"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # 统计chunk元数据
@@ -612,7 +627,7 @@ class ChunkManager:
             keep_rounds: 保留最近几轮的数据，默认只保留2轮
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # 找到要保留的最小轮次（同时考虑本地和接收的chunk）
@@ -790,7 +805,7 @@ class ChunkManager:
             return
             
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # 获取最近添加的chunk信息（基于创建时间）
@@ -865,7 +880,7 @@ class ChunkManager:
         chunk_infos = []
         
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -898,7 +913,7 @@ class ChunkManager:
     
     def _init_bittorrent_tables(self):
         """初始化BitTorrent相关的数据库表"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_optimized_connection()
         cursor = conn.cursor()
         
         # 创建BitTorrent chunks表（独立于原有表，避免冲突）
@@ -970,7 +985,7 @@ class ChunkManager:
         bitfield = {}
         
         # 查询本地chunks（原有表）
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_optimized_connection()
         cursor = conn.cursor()
         
         try:
@@ -1018,7 +1033,7 @@ class ChunkManager:
         # 确保BitTorrent表存在
         try:
             # 直接写入bt_chunks表（避免与现有chunk_metadata表冲突）
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # 写入bt_chunks表
@@ -1065,7 +1080,7 @@ class ChunkManager:
         """
         🆕 新增：获取chunk数据（用于发送给其他peers）
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_optimized_connection()
         cursor = conn.cursor()
         
         try:
@@ -1118,7 +1133,7 @@ class ChunkManager:
     def start_bittorrent_session(self, round_num, expected_chunks):
         """开始BitTorrent交换会话"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -1140,7 +1155,7 @@ class ChunkManager:
     def finish_bittorrent_session(self, round_num, status='completed'):
         """结束BitTorrent交换会话"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # 统计接收到的chunks数量
@@ -1170,7 +1185,7 @@ class ChunkManager:
     def cleanup_bittorrent_data(self, keep_rounds=5):
         """清理旧的BitTorrent数据"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # 找到要保留的最小轮次
@@ -1205,7 +1220,7 @@ class ChunkManager:
             List[int]: 可用客户端ID列表
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # 查询本地chunk数据的客户端 (local chunks don't have source_client_id, they belong to this client)
@@ -1254,7 +1269,7 @@ class ChunkManager:
             Dict: 重构的模型参数字典，失败返回None
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # 查询该客户端的所有chunks
@@ -1428,7 +1443,7 @@ class ChunkManager:
             int: 样本数量，如果未找到返回None
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
             # Check if we have chunks from this client for this round
