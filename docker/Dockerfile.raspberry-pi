@@ -1,5 +1,5 @@
-# 树莓派设备仿真镜像
-# ARM架构优化，中等资源
+# Raspberry Pi device simulation image
+# ARM architecture optimization, medium resources
 
 FROM python:3.9-slim
 
@@ -8,64 +8,64 @@ LABEL device.capability="medium"
 LABEL device.gpu.support="false"
 LABEL architecture="arm64v8"
 
-# 设置工作目录
+# Set working directory
 WORKDIR /app
 
-# 设置环境变量
+# Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# 安装系统依赖 (模拟ARM环境)
+# Install system dependencies (simulating ARM environment)
 RUN apt-get update && apt-get install -y \
-    # ARM优化工具
+    # ARM optimization tools
     gcc \
     g++ \
     make \
-    # 网络工具
+    # Network tools
     iproute2 \
     net-tools \
     iputils-ping \
-    # 系统工具
+    # System tools
     curl \
     wget \
     git \
-    # 数学库优化
+    # Math library optimization
     libblas3 \
     liblapack3 \
     libatlas-base-dev \
-    # GPIO和硬件接口库 (模拟)
+    # GPIO and hardware interface libraries (simulated)
     gpiod \
-    # 清理缓存
+    # Clean cache
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# 安装树莓派优化的Python包
+# Install Raspberry Pi optimized Python packages
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
     torch==2.1.0+cpu \
     torchvision==0.16.0+cpu \
     --index-url https://download.pytorch.org/whl/cpu
 
-# 安装树莓派常用库
+# Install commonly used Raspberry Pi libraries
 RUN pip install --no-cache-dir \
     numpy \
     pandas \
     scipy \
     matplotlib \
-    # 树莓派GPIO模拟
+    # Raspberry Pi GPIO simulation
     gpiozero \
-    # 传感器库
+    # Sensor libraries
     adafruit-circuitpython-dht \
-    # 网络优化
+    # Network optimization
     requests[socks]
 
-# 复制FederatedScope代码
+# Copy FederatedScope code
 COPY . /app/
 
-# 设置权限
+# Set permissions
 RUN chmod +x /app/federatedscope/main.py
 
-# 设置设备特定环境变量
+# Set device-specific environment variables
 ENV DEVICE_TYPE="raspberry_pi"
 ENV GPU_AVAILABLE="false"
 ENV MEMORY_LIMIT="4096"  # 4GB (Pi 4)
@@ -73,17 +73,17 @@ ENV CPU_CORES="4"
 ENV NETWORK_TYPE="WiFi/Ethernet"
 ENV ARM_COMPUTE_LIBRARY="1"
 
-# ARM优化设置
+# ARM optimization settings
 ENV OPENBLAS_NUM_THREADS="4"
 ENV TORCH_NUM_THREADS="4"
 ENV OMP_NUM_THREADS="4"
 
-# 创建必要目录
+# Create necessary directories
 RUN mkdir -p /app/data /app/logs /app/output /app/configs /app/gpio
 
-# 健康检查
+# Health check
 HEALTHCHECK --interval=45s --timeout=15s --start-period=10s --retries=3 \
     CMD python -c "import torch; print('Raspberry Pi ready')" || exit 1
 
-# 入口命令
+# Entry command
 CMD ["python", "/app/federatedscope/main.py"]

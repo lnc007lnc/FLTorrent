@@ -1,30 +1,30 @@
 #!/bin/bash
 
-# 多进程联邦学习测试脚本 - 真实CIFAR-10+ConvNet2测试
+# Multi-process federated learning test script - Real CIFAR-10+ConvNet2 test
 set -e
 
-echo "🧪 真实数据集P2P联邦学习测试（CIFAR-10 + ConvNet2 + GPU加速）"
+echo "🧪 Real dataset P2P federated learning test (CIFAR-10 + ConvNet2 + GPU acceleration)"
 echo "======================================================================"
 
-# 配置参数
+# Configuration parameters
 CLIENT_NUM=3
 TOTAL_ROUNDS=3
 TEST_DIR="multi_process_test_v2"
-CHUNK_NUM=10  # 每个客户端模型分割的chunk数量
-IMPORTANCE_METHOD="snip"  # chunk重要度计算方法: magnitude, l2_norm, snip, fisher
+CHUNK_NUM=10  # Number of chunks per client model split
+IMPORTANCE_METHOD="snip"  # Chunk importance calculation method: magnitude, l2_norm, snip, fisher
 
-# 修复SSL证书问题 
-echo "🔧 修复SSL证书问题..."
+# Fix SSL certificate issues 
+echo "🔧 Fixing SSL certificate issues..."
 export PYTHONHTTPSVERIFY=0
 export SSL_VERIFY=False
 export CURL_CA_BUNDLE=""
 
-# 清理和创建目录
-echo "📁 设置测试目录..."
+# Clean and create directories
+echo "📁 Setting up test directories..."
 rm -rf $TEST_DIR
 mkdir -p $TEST_DIR/{configs,logs}
 
-# 创建服务器配置 - 启用GPU加速
+# Create server configuration - Enable GPU acceleration
 cat > "$TEST_DIR/configs/server.yaml" << EOF
 use_gpu: True
 device: 0
@@ -108,12 +108,12 @@ chunk_importance_method: '$IMPORTANCE_METHOD'
 outdir: '$TEST_DIR/server_output'
 EOF
 
-# 创建客户端配置 - 启用GPU加速并分配不同GPU设备
+# Create client configuration - Enable GPU acceleration and allocate different GPU devices
 for i in $(seq 1 $CLIENT_NUM); do
     client_port=$((50051 + i))
     seed=$((12345 + i))
-    # 为不同客户端分配不同GPU设备以并行训练
-    device_id=$(((i - 1) % 2))  # 在GPU 0和1之间轮换
+    # Allocate different GPU devices for different clients for parallel training
+    device_id=$(((i - 1) % 2))  # Rotate between GPU 0 and 1
     
     cat > "$TEST_DIR/configs/client_${i}.yaml" << EOF
 use_gpu: True
@@ -193,16 +193,16 @@ outdir: '$TEST_DIR/client_${i}_output'
 EOF
 done
 
-echo "✅ 配置文件创建完成"
-echo "📊 测试配置："
-echo "   - 客户端数量: $CLIENT_NUM"
-echo "   - 训练轮数: $TOTAL_ROUNDS"
-echo "   - 每客户端chunk数: $CHUNK_NUM"
-echo "   - 总预期chunk数: $((CLIENT_NUM * CHUNK_NUM))"
-echo "   - chunk重要度方法: $IMPORTANCE_METHOD"
+echo "✅ Configuration files created"
+echo "📊 Test configuration:"
+echo "   - Number of clients: $CLIENT_NUM"
+echo "   - Training rounds: $TOTAL_ROUNDS"
+echo "   - Chunks per client: $CHUNK_NUM"
+echo "   - Total expected chunks: $((CLIENT_NUM * CHUNK_NUM))"
+echo "   - Chunk importance method: $IMPORTANCE_METHOD"
 
-# 🔧 在启动新实例前停止和清理旧实例
-echo "🧹 快速清理旧实例..."
+# 🔧 Stop and clean old instances before starting new ones
+echo "🧹 Quick cleanup of old instances..."
 pkill -9 -f "python.*federatedscope" 2>/dev/null || true
 rm -rf tmp/client_*/client_*_chunks.db 2>/dev/null || true
 rm -rf connection_logs/ 2>/dev/null || true
@@ -210,35 +210,35 @@ rm -rf topology_logs/ 2>/dev/null || true
 rm -rf bittorrent_logs/ 2>/dev/null || true
 sleep 1
 
-echo "✅ 旧实例清理完成"
+echo "✅ Old instance cleanup completed"
 
-# 启动服务器和客户端 - 模仿官方脚本方式
-echo "🚀 启动分布式FL..."
+# Start server and clients - Following official script approach
+echo "🚀 Start distributed FL..."
 
-echo "📡 启动服务器..."
+echo "📡 Start server..."
 PYTHONPATH=. python run_with_ssl_fix.py federatedscope/main.py --cfg "$TEST_DIR/configs/server.yaml" \
     > "$TEST_DIR/logs/server.log" 2>&1 &
 SERVER_PID=$!
-echo "   服务器 PID: $SERVER_PID"
+echo "   Server PID: $SERVER_PID"
 sleep 3
 
-echo "👥 启动客户端..."
+echo "👥 Start clients..."
 CLIENT_PIDS=()
 for i in $(seq 1 $CLIENT_NUM); do
-    echo "   启动客户端 $i..."
+    echo "   Start client $i..."
     PYTHONPATH=. python run_with_ssl_fix.py federatedscope/main.py --cfg "$TEST_DIR/configs/client_${i}.yaml" \
         > "$TEST_DIR/logs/client_${i}.log" 2>&1 &
     client_pid=$!
     CLIENT_PIDS+=($client_pid)
-    echo "   客户端 $i PID: $client_pid"
+    echo "   Client $i PID: $client_pid"
     sleep 2
 done
 
-echo "✅ 所有参与者已启动！"
-echo "📊 监控训练进度..."
+echo "✅ All participants started!"
+echo "📊 Monitor training progress..."
 
-# 简单监控 - CIFAR-10训练需要更长时间
-monitor_duration=600  # 监控10分钟
+# Simple monitoring - CIFAR-10 training requires longer time
+monitor_duration=600  # Monitor for 10 minutes
 start_time=$(date +%s)
 
 while true; do
@@ -246,13 +246,13 @@ while true; do
     elapsed=$((current_time - start_time))
     
     if [ $elapsed -gt $monitor_duration ]; then
-        echo "⏰ 监控时间结束"
+        echo "⏰ Monitoring time ended"
         break
     fi
     
-    # 检查进程状态
+    # Check process status
     if ! kill -0 $SERVER_PID 2>/dev/null; then
-        echo "🛑 服务器进程已停止"
+        echo "🛑 Server process stopped"
         break
     fi
     
@@ -263,85 +263,85 @@ while true; do
         fi
     done
     
-    echo "⏰ 运行时间: ${elapsed}s | 服务器: 运行中 | 客户端: $running_clients/$CLIENT_NUM 运行中"
+    echo "⏰ Runtime: ${elapsed}s | Server: running | Clients: $running_clients/$CLIENT_NUM running"
     
     if [ $running_clients -eq 0 ]; then
-        echo "🛑 所有客户端已停止"
+        echo "🛑 All clients stopped"
         break
     fi
     
     sleep 10
 done
 
-# 分析结果
+# Analyze results
 echo ""
-echo "📈 分析结果..."
-echo "=== 服务器日志摘要 ==="
+echo "📈 Analyze results..."
+echo "=== Server log summary ==="
 if [ -f "$TEST_DIR/logs/server.log" ]; then
-    echo "最后10行服务器日志:"
+    echo "Last 10 lines of server log:"
     tail -10 "$TEST_DIR/logs/server.log" | head -5
     echo ""
-    echo "P2P BitTorrent日志:"
-    grep -i "BT-FL\|BitTorrent\|chunks" "$TEST_DIR/logs/server.log" | tail -5 || echo "未找到BitTorrent日志"
+    echo "P2P BitTorrent logs:"
+    grep -i "BT-FL\|BitTorrent\|chunks" "$TEST_DIR/logs/server.log" | tail -5 || echo "BitTorrent logs not found"
     echo ""
-    echo "模型性能日志:"
-    grep -E "acc.*|test_acc" "$TEST_DIR/logs/server.log" | tail -3 || echo "未找到性能日志"
+    echo "Model performance logs:"
+    grep -E "acc.*|test_acc" "$TEST_DIR/logs/server.log" | tail -3 || echo "Performance logs not found"
 else
-    echo "❌ 服务器日志文件不存在"
+    echo "❌ Server log file does not exist"
 fi
 
 echo ""
-echo "=== 客户端状态 ==="
+echo "=== Client status ==="
 for i in $(seq 1 $CLIENT_NUM); do
     log_file="$TEST_DIR/logs/client_${i}.log"
     if [ -f "$log_file" ]; then
-        echo "客户端 $i:"
+        echo "Client $i:"
         if grep -q "ERROR\|Traceback\|Exception" "$log_file"; then
-            echo "  ❌ 发现错误:"
+            echo "  ❌ Found errors:"
             grep -E "ERROR|Traceback|Exception" "$log_file" | tail -2 | sed 's/^/    /'
         else
-            echo "  ✅ 运行正常"
-            # 显示最后一条重要信息
-            grep -E "(assigned|train|round|acc)" "$log_file" | tail -1 | sed 's/^/    /' || echo "    无训练日志"
+            echo "  ✅ Running normally"
+            # Show last important information
+            grep -E "(assigned|train|round|acc)" "$log_file" | tail -1 | sed 's/^/    /' || echo "    No training logs"
         fi
     else
-        echo "客户端 $i: ❌ 日志文件不存在"
+        echo "Client $i: ❌ Log file does not exist"
     fi
 done
 
-# 清理进程
+# Cleanup processes
 echo ""
-echo "🧹 清理进程..."
-echo "   优雅停止已知进程..."
+echo "🧹 Cleanup processes..."
+echo "   Gracefully stop known processes..."
 kill $SERVER_PID 2>/dev/null || true
 for pid in "${CLIENT_PIDS[@]}"; do
     kill $pid 2>/dev/null || true
 done
 
-echo "   等待进程退出..."
+echo "   Wait for processes to exit..."
 sleep 3
 
-echo "   强制清理所有相关进程..."
+echo "   Force cleanup all related processes..."
 pkill -f "python.*federatedscope" 2>/dev/null || true
 pkill -f "multi_process.*test" 2>/dev/null || true
 sleep 2
 
-echo "   最终检查和强制清理..."
+echo "   Final check and force cleanup..."
 remaining_processes=$(ps aux | grep -E "python.*federatedscope|multi_process.*test" | grep -v grep | wc -l)
 if [ $remaining_processes -gt 0 ]; then
-    echo "   🔪 强制结束 $remaining_processes 个残留进程..."
+    echo "   🔪 Force terminate $remaining_processes remaining processes..."
     pkill -9 -f "python.*federatedscope" 2>/dev/null || true
     pkill -9 -f "multi_process.*test" 2>/dev/null || true
 fi
 
-echo "✅ 进程清理完成"
+echo "✅ Process cleanup completed"
 
 echo ""
-echo "📁 日志文件位置:"
-echo "   服务器: $TEST_DIR/logs/server.log"
+echo "📁 Log file locations:"
+echo "   Server: $TEST_DIR/logs/server.log"
 for i in $(seq 1 $CLIENT_NUM); do
-    echo "   客户端 $i: $TEST_DIR/logs/client_${i}.log"
+    echo "   Client $i: $TEST_DIR/logs/client_${i}.log"
 done
 
 echo ""
-echo "🎉 CIFAR-10 P2P联邦学习测试完成！"
+echo "🎉 CIFAR-10 P2P federated learning test completed!"

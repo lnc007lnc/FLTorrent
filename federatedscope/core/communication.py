@@ -106,32 +106,32 @@ class gRPCCommManager(object):
         https://grpc.io/docs/languages/python/
     """
     def __init__(self, host='0.0.0.0', port='50050', client_num=2, cfg=None):
-        # Docker三段地址支持：绑定IP|报告IP|报告端口
-        logger.info(f"🔍 gRPCCommManager初始化 - 原始host: '{host}', port: {port}")
+        # Docker three-segment address support: bind IP|report IP|report port
+        logger.info(f"🔍 gRPCCommManager initialize - original host: '{host}', port: {port}")
         
-        # 处理host地址格式
+        # Handle host address format
         if '|' in host:
-            # Docker三段格式：绑定IP|报告IP|报告端口
+            # Docker three-segment format: bind IP|report IP|report port
             parts = host.split('|')
             bind_host, report_host, report_port_str = parts
-            self.bind_host = bind_host    # 实际绑定地址
-            self.report_host = report_host  # 报告给其他实体的地址
-            self.host = report_host  # local_address使用报告地址
-            self.report_port = int(report_port_str)  # 报告给其他实体的端口
-            self.port = self.report_port  # local_address使用报告端口
-            logger.info(f"🐳 Docker三段模式 - 绑定: '{bind_host}:{port}', 报告: '{report_host}:{self.report_port}'")
+            self.bind_host = bind_host    # Actual bind address
+            self.report_host = report_host  # Address reported to other entities
+            self.host = report_host  # local_address uses report address
+            self.report_port = int(report_port_str)  # Port reported to other entities
+            self.port = self.report_port  # local_address uses report port
+            logger.info(f"🐳 Docker three-segment mode - bind: '{bind_host}:{port}', report: '{report_host}:{self.report_port}'")
         else:
-            # 非Docker单地址模式
+            # Non-Docker single address mode
             self.bind_host = host
             self.report_host = host
             self.host = host
             self.report_port = int(port)
             self.port = int(port)
-            logger.info(f"📡 非Docker模式 - 地址: '{host}:{port}'")
+            logger.info(f"📡 Non-Docker mode - address: '{host}:{port}'")
         
-        # 绑定端口始终使用配置中的port参数
+        # Bind port always uses port parameter from configuration
         self.bind_port = int(port)
-        logger.info(f"✅ 最终设置 - bind: '{self.bind_host}:{self.bind_port}', report: '{self.host}:{self.port}'")
+        logger.info(f"✅ Final settings - bind: '{self.bind_host}:{self.bind_port}', report: '{self.host}:{self.port}'")
         options = [
             ("grpc.max_send_message_length", cfg.grpc_max_send_message_length),
             ("grpc.max_receive_message_length",
@@ -148,8 +148,8 @@ class gRPCCommManager(object):
 
         self.server_funcs = gRPCComServeFunc()
         self.grpc_server = self.serve(max_workers=client_num,
-                                      host=self.bind_host,  # 使用绑定地址启动服务器
-                                      port=self.bind_port,  # 使用绑定端口启动服务器
+                                      host=self.bind_host,  # Use bind address to start server
+                                      port=self.bind_port,  # Use bind port to start server
                                       options=options)
         self.neighbors = dict()
         self.monitor = None  # used to track the communication related metrics
@@ -160,21 +160,21 @@ class gRPCCommManager(object):
         This function is referred to
         https://grpc.io/docs/languages/python/basics/#starting-the-server
         """
-        logger.info(f"🚀 gRPC服务器启动 - 绑定地址: {host}:{port}")
+        logger.info(f"🚀 gRPC server startup - bind address: {host}:{port}")
         server = grpc.server(
             futures.ThreadPoolExecutor(max_workers=max_workers),
             compression=self.comp_method,
             options=options)
         gRPC_comm_manager_pb2_grpc.add_gRPCComServeFuncServicer_to_server(
             self.server_funcs, server)
-        # 确保host不包含端口号
+        # Ensure host does not contain port number
         if ':' in host:
-            logger.error(f"❌ 主机地址包含端口号: {host}")
-            # 如果host已经包含端口号，直接使用
+            logger.error(f"❌ Host address contains port number: {host}")
+            # If host already contains port number, use directly
             bind_address = host
         else:
             bind_address = "{}:{}".format(host, port)
-        logger.info(f"📍 gRPC尝试绑定到: {bind_address}")
+        logger.info(f"📍 gRPC attempting to bind to: {bind_address}")
         server.add_insecure_port(bind_address)
         server.start()
 

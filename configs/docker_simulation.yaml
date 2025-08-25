@@ -1,23 +1,23 @@
-# FederatedScope Docker边缘设备仿真配置
-# 使用Docker容器模拟不同类型的边缘设备进行联邦学习
+# FederatedScope Docker edge device simulation configuration
+# Using Docker containers to simulate different types of edge devices for federated learning
 
-# 基础联邦学习配置
+# Basic federated learning configuration
 federate:
   mode: 'distributed'
   client_num: 5
   total_round_num: 10
   sample_client_num: 5
 
-# Docker仿真配置
+# Docker simulation configuration
 docker_simulation:
-  # 启用Docker仿真
+  # Enable Docker simulation
   use_docker: True
   
-  # Docker网络配置
+  # Docker network configuration
   network_name: "fl_edge_network"
   enable_network_simulation: True
   
-  # 设备配置 - 模拟真实边缘环境
+  # Device configuration - simulating real edge environment
   device_configs:
     - device_id: "client_1"
       device_type: "smartphone_high"
@@ -27,7 +27,7 @@ docker_simulation:
         cpus: "4.0"
         gpu_support: True
       network_profile:
-        bandwidth_up_kbps: 50000    # 5G网络
+        bandwidth_up_kbps: 50000    # 5G network
         bandwidth_down_kbps: 100000
         latency_ms: 15
         packet_loss_rate: 0.001
@@ -40,7 +40,7 @@ docker_simulation:
         cpus: "2.0"
         gpu_support: False
       network_profile:
-        bandwidth_up_kbps: 10000    # 4G网络
+        bandwidth_up_kbps: 10000    # 4G network
         bandwidth_down_kbps: 30000
         latency_ms: 40
         packet_loss_rate: 0.01
@@ -53,7 +53,7 @@ docker_simulation:
         cpus: "4.0"
         gpu_support: False
       network_profile:
-        bandwidth_up_kbps: 25000    # WiFi连接
+        bandwidth_up_kbps: 25000    # WiFi connection
         bandwidth_down_kbps: 50000
         latency_ms: 25
         packet_loss_rate: 0.005
@@ -66,7 +66,7 @@ docker_simulation:
         cpus: "1.0"
         gpu_support: False
       network_profile:
-        bandwidth_up_kbps: 128      # 低带宽IoT
+        bandwidth_up_kbps: 128      # Low bandwidth IoT
         bandwidth_down_kbps: 512
         latency_ms: 200
         packet_loss_rate: 0.05
@@ -79,24 +79,24 @@ docker_simulation:
         cpus: "8.0"
         gpu_support: True
       network_profile:
-        bandwidth_up_kbps: 1000000  # 千兆网络
+        bandwidth_up_kbps: 1000000  # Gigabit network
         bandwidth_down_kbps: 1000000
         latency_ms: 5
         packet_loss_rate: 0.0001
 
-# 数据配置
+# Data configuration
 data:
   root: 'data/'
   type: 'CIFAR10'
   splits: [0.6, 0.2, 0.2]
   
-# 模型配置
+# Model configuration
 model:
   type: 'convnet2'
   hidden: 2048
   dropout: 0.5
 
-# 训练配置
+# Training configuration
 train:
   optimizer:
     lr: 0.01
@@ -104,12 +104,12 @@ train:
   local_update_steps: 5
   batch_size: 32
   
-# 评估配置
+# Evaluation configuration
 eval:
   freq: 1
   metrics: ['acc', 'loss']
   
-# 日志和输出
+# Logging and output
 output:
   use_tensorboard: True
   tensorboard:
@@ -117,8 +117,8 @@ output:
   results:
     save_path: 'exp_out/docker_simulation/results'
     
-# 其他配置
-use_gpu: False  # 将由Docker容器内部决定
+# Other configuration
+use_gpu: False  # Will be determined by Docker container internally
 early_stop:
   patience: 10
   delta: 0.0

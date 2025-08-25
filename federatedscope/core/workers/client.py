@@ -715,7 +715,7 @@ class Client(BaseClient):
         try:
             content = message.content
             neighbors_to_connect = content.get('neighbors_to_connect', [])
-            neighbor_addresses = content.get('neighbor_addresses', {})  # 🔧 获取真实地址信息
+            neighbor_addresses = content.get('neighbor_addresses', {})  # 🔧 Get real address information
             topology_type = content.get('topology_type', 'unknown')
             max_attempts = content.get('max_attempts', 3)
             retry_delay = content.get('retry_delay', 2.0)
@@ -725,9 +725,9 @@ class Client(BaseClient):
             logger.info(f"   Neighbors to connect: {neighbors_to_connect}")
             logger.info(f"   Neighbor addresses: {neighbor_addresses}")
             
-            # 🔧 BitTorrent修复：保存拓扑邻居信息供BitTorrent使用
+            # 🔧 BitTorrent fix: Save topology neighbor information for BitTorrent use
             self.topology_neighbors = neighbors_to_connect
-            self.neighbor_addresses = neighbor_addresses  # 🔧 保存地址信息
+            self.neighbor_addresses = neighbor_addresses  # 🔧 Save address information
             logger.info(f"[BT] Client {self.ID}: Saved topology neighbors for BitTorrent: {self.topology_neighbors}")
             
             if not neighbors_to_connect:
@@ -779,7 +779,7 @@ class Client(BaseClient):
         
         for attempt in range(1, max_attempts + 1):
             try:
-                # 🔧 关键修复：使用server提供的真实地址而不是计算地址
+                # 🔧 Critical fix: Use real address provided by server instead of calculated address
                 success = self._add_peer_to_comm_manager(neighbor_id, neighbor_address)
                 
                 if success:
@@ -812,7 +812,7 @@ class Client(BaseClient):
             bool: True if successful, False otherwise
         """
         try:
-            # 🔧 关键修复：直接使用server提供的真实地址
+            # 🔧 Critical fix: Directly use real address provided by server
             self.comm_manager.add_neighbors(neighbor_id=peer_id, address=peer_address)
             
             logger.info(f"🔗 Client {self.ID}: Added peer {peer_id} to comm_manager (address: {peer_address})")
@@ -843,7 +843,7 @@ class Client(BaseClient):
                 timestamp=0,  # Use dummy timestamp
                 content={
                     'event_type': ConnectionEvent.CONNECT.value,
-                    'peer_id': peer_id,  # 🔧 修复：使用正确的字段名
+                    'peer_id': peer_id,  # 🔧 Fix: Use correct field name
                     'source_client_id': self.ID,
                     'target_client_id': peer_id,
                     'details': {
@@ -918,14 +918,14 @@ class Client(BaseClient):
     
     def _aggregate_model_from_chunks(self, round_num):
         """
-        从chunk数据库聚合模型参数
-        实现FedAvg聚合算法：基于样本数量加权平均
+        Aggregate model parameters from chunk database
+        Implement FedAvg aggregation algorithm: weighted average based on sample count
         
         Args:
-            round_num: 目标轮次
+            round_num: Target round
             
         Returns:
-            dict: 聚合后的模型参数，如果失败返回None
+            dict: Aggregated model parameters, returns None if failed
         """
         try:
             if not hasattr(self, 'chunk_manager'):
@@ -934,7 +934,7 @@ class Client(BaseClient):
                 
             logger.info(f"[BT-FL] Client {self.ID}: Starting model aggregation from chunks for round {round_num}")
             
-            # 获取所有可用的客户端模型chunks
+            # Get all available client model chunks
             available_clients = self.chunk_manager.get_available_clients_for_round(round_num)
             if not available_clients:
                 logger.warning(f"[BT-FL] Client {self.ID}: No client models available in chunk database for round {round_num}")
@@ -942,22 +942,22 @@ class Client(BaseClient):
                 
             logger.info(f"[BT-FL] Client {self.ID}: Found models from {len(available_clients)} clients: {available_clients}")
             
-            # 收集所有客户端的模型参数和样本数量
+            # Collect model parameters and sample counts from all clients
             client_models = []
             total_samples = 0
             
             for client_id in available_clients:
                 try:
-                    # 从chunks重构模型参数
+                    # Reconstruct model parameters from chunks
                     model_params = self.chunk_manager.reconstruct_model_from_chunks(client_id, round_num)
                     if model_params is None:
                         logger.warning(f"[BT-FL] Client {self.ID}: Failed to reconstruct model for client {client_id}")
                         continue
                         
-                    # 获取样本数量 (从chunk metadata或使用默认值)
+                    # Get sample size (from chunk metadata or use default value)
                     sample_size = self.chunk_manager.get_client_sample_size(client_id, round_num)
                     if sample_size is None:
-                        sample_size = 128  # 使用默认样本数量
+                        sample_size = 128  # Use default sample count
                         logger.warning(f"[BT-FL] Client {self.ID}: Using default sample size {sample_size} for client {client_id}")
                     
                     client_models.append((client_id, model_params, sample_size))
@@ -974,17 +974,17 @@ class Client(BaseClient):
                 
             logger.info(f"[BT-FL] Client {self.ID}: Aggregating {len(client_models)} models with total {total_samples} samples")
             
-            # 执行FedAvg加权平均聚合
+            # Execute FedAvg weighted average aggregation
             aggregated_params = {}
             
-            # 获取模型结构 (使用第一个可用模型)
+            # Get model structure (use first available model)
             first_model = client_models[0][1]
             
             for param_name in first_model.keys():
-                # 初始化参数
+                # Initialize parameters
                 aggregated_params[param_name] = None
                 
-                # 加权求和
+                # Weighted summation
                 for client_id, model_params, sample_size in client_models:
                     if param_name not in model_params:
                         logger.warning(f"[BT-FL] Client {self.ID}: Parameter {param_name} missing in client {client_id} model")
@@ -993,7 +993,7 @@ class Client(BaseClient):
                     weight = sample_size / total_samples
                     param_value = model_params[param_name]
                     
-                    # 确保参数在正确的设备上
+                    # Ensure parameters are on correct device
                     if hasattr(param_value, 'to'):
                         param_value = param_value.to(self.device)
                     
@@ -1013,53 +1013,53 @@ class Client(BaseClient):
     
     def _send_chunk_info_to_server(self, chunk_info: ChunkInfo):
         """
-        发送chunk信息到服务器进行追踪
+        Send chunk information to server for tracking
         
         Args:
-            chunk_info: chunk变化信息
+            chunk_info: Chunk change information
         """
         try:
-            # 构造消息发送给服务器
+            # Construct message to send to server
             msg = Message(
                 msg_type='chunk_info',
                 sender=self.ID,
-                receiver=[0],  # 发送给服务器 (ID=0)
+                receiver=[0],  # Send to server (ID=0)
                 state=self.state,
                 timestamp=chunk_info.timestamp,
                 content=chunk_info.to_dict()
             )
             
-            # 发送消息
+            # Send message
             self.comm_manager.send(msg)
-            logger.debug(f"📤 Client {self.ID}: 发送chunk信息到服务器 - "
-                        f"轮次{chunk_info.round_num}, chunk{chunk_info.chunk_id}, 操作{chunk_info.action}")
+            logger.debug(f"📤 Client {self.ID}: Sent chunk info to server - "
+                        f"Round {chunk_info.round_num}, chunk{chunk_info.chunk_id}, action {chunk_info.action}")
             
         except Exception as e:
-            logger.error(f"❌ Client {self.ID}: 发送chunk信息到服务器失败: {e}")
+            logger.error(f"❌ Client {self.ID}: Failed to send chunk info to server: {e}")
     
     def send_initial_chunk_info(self):
         """
-        发送初始的chunk信息到服务器（在首次连接或重连后）
+        Send initial chunk information to server (after first connection or reconnection)
         """
         try:
             if not hasattr(self, 'chunk_manager'):
                 return
                 
-            # 获取所有已存在的chunk信息
+            # Get all existing chunk information
             all_chunk_infos = self.chunk_manager.get_all_chunks_info()
             
             if all_chunk_infos:
-                logger.info(f"📤 Client {self.ID}: 发送初始chunk信息到服务器 ({len(all_chunk_infos)}个chunks)")
+                logger.info(f"📤 Client {self.ID}: Sending initial chunk info to server ({len(all_chunk_infos)} chunks)")
                 
                 for chunk_info in all_chunk_infos:
                     self._send_chunk_info_to_server(chunk_info)
             else:
-                logger.debug(f"📤 Client {self.ID}: 没有chunk信息需要发送")
+                logger.debug(f"📤 Client {self.ID}: No chunk info needs to be sent")
                 
         except Exception as e:
-            logger.error(f"❌ Client {self.ID}: 发送初始chunk信息失败: {e}")
+            logger.error(f"❌ Client {self.ID}: Failed to send initial chunk info: {e}")
 
-    # ==================== BitTorrent支持方法 ====================
+    # ==================== BitTorrent Support Methods ====================
     
     def _register_default_handlers(self):
         """
@@ -1081,9 +1081,9 @@ class Client(BaseClient):
     
     def callback_funcs_for_start_bittorrent(self, message):
         """
-        处理Server的start_bittorrent消息，开始chunk交换
+        Handle Server's start_bittorrent message, start chunk exchange
         """
-        # 🔧 修复：检查Client ID是否已分配
+        # 🔧 Fix: Check if Client ID has been assigned
         if self.ID <= 0:
             logger.error("[BT] Client ID not assigned yet, cannot start BitTorrent")
             self._report_bittorrent_completion_failure()
@@ -1091,50 +1091,50 @@ class Client(BaseClient):
         
         logger.info(f"[BT] Client {self.ID}: Received start_bittorrent signal")
         
-        # 🐛 Bug修复17: 记录开始时间用于统计
+        # 🐛 Bug fix 17: Record start time for statistics
         self.bt_start_time = time.time()
         
-        # 1. 确保模型已保存为chunks（在训练完成时已做）
+        # 1. Ensure model is saved as chunks (done when training completed)
         expected_chunks = message.content['expected_chunks']
-        round_num = message.content['round']  # 🔴 获取当前轮次
+        round_num = message.content['round']  # 🔴 Get current round
         
-        # 🔧 修复：BitTorrent需要使用拓扑邻居，而不是通信管理器邻居
-        # comm_manager.neighbors包含服务器ID，不是我们要的peer客户端ID
+        # 🔧 Fix: BitTorrent needs to use topology neighbors, not communication manager neighbors
+        # comm_manager.neighbors contains server ID, not the peer client IDs we want
         neighbors = []
         
-        # 优先使用拓扑信息（如果存在）
+        # Priority use topology information (if exists)
         if hasattr(self, 'topology_neighbors') and self.topology_neighbors:
-            # 使用存储的拓扑邻居列表
+            # Use stored topology neighbor list
             neighbors = list(self.topology_neighbors)
             logger.info(f"[BT] Client {self.ID}: Found neighbors from stored topology: {neighbors}")
         elif hasattr(self, 'topology_manager') and hasattr(self.topology_manager, 'topology'):
-            # 从拓扑管理器中获取
+            # Get from topology manager
             topology = self.topology_manager.topology
             neighbors = topology.get(self.ID, [])
             logger.info(f"[BT] Client {self.ID}: Found neighbors from topology_manager: {neighbors}")
         else:
-            # 降级策略：过滤掉服务器ID，使用所有其他clients作为邻居
+            # Fallback strategy: filter out server ID, use all other clients as neighbors
             logger.warning(f"[BT] Client {self.ID}: No topology info, using all other clients as neighbors")
             neighbors = [i for i in range(1, self._cfg.federate.client_num + 1) if i != self.ID]
             logger.info(f"[BT] Client {self.ID}: Fallback neighbors: {neighbors}")
         
-        # 2. 启动BitTorrent交换
-        # 🐛 Bug修复19: 确保chunk_manager存在
+        # 2. Start BitTorrent exchange
+        # 🐛 Bug fix 19: Ensure chunk_manager exists
         if not hasattr(self, 'chunk_manager'):
             logger.error(f"[BT] Client {self.ID}: No chunk_manager found!")
             self._report_bittorrent_completion_failure()
             return
             
-        # 🔧 关键修复：BitTorrent应该交换clients刚训练完成的轮次的chunks
-        # 时序分析：Client.state在接收模型时更新，Server.state在聚合后+1
-        # 当Server发送start_bittorrent(state=N+1)时，clients只有第N轮的chunks
+        # 🔧 Critical fix: BitTorrent should exchange chunks from the round clients just finished training
+        # Timing analysis: Client.state updates when receiving model, Server.state updates after aggregation +1
+        # When Server sends start_bittorrent(state=N+1), clients only have chunks from round N
         bt_round = round_num - 1 if round_num > 0 else 0
         logger.info(f"[BT] Client {self.ID}: BitTorrent will exchange chunks from round {bt_round} (server state: {round_num})")
         
-        # 传递修正的轮次到BitTorrent
+        # Pass corrected round to BitTorrent
         self._start_bittorrent_exchange(neighbors, bt_round)
         
-        # 3. 启动交换循环（在后台进行）
+        # 3. Start exchange loop (runs in background)
         logger.info(f"[BT] Client {self.ID}: Starting BitTorrent exchange loop with expected_chunks={expected_chunks}")
         import threading
         bt_thread = threading.Thread(target=self._run_bittorrent_exchange_loop, 
@@ -1144,20 +1144,20 @@ class Client(BaseClient):
 
     def _start_bittorrent_exchange(self, neighbors, round_num):
         """
-        在训练完成后启动BitTorrent chunk交换
-        🔴 关键修改：添加round_num参数
+        Start BitTorrent chunk exchange after training completion
+        🔴 Key modification: Added round_num parameter
         """
-        # 🔧 修复：保存当前ID到chunk_manager
+        # 🔧 Fix: Save current ID to chunk_manager
         if hasattr(self, 'chunk_manager'):
             self.chunk_manager.client_id = self.ID
             self.chunk_manager.current_round = round_num
         
-        # 初始化BitTorrent管理器
+        # Initialize BitTorrent manager
         try:
             from federatedscope.core.bittorrent_manager import BitTorrentManager
         except ImportError:
             logger.error("[BT] BitTorrentManager not found, using stub")
-            # 降级处理：创建一个简单的stub
+            # Fallback handling: Create a simple stub
             class BitTorrentManager:
                 def __init__(self, *args, **kwargs):
                     self.round_num = round_num
@@ -1166,22 +1166,22 @@ class Client(BaseClient):
         
         self.bt_manager = BitTorrentManager(
             self.ID,
-            round_num,  # 🔴 传递当前轮次
+            round_num,  # 🔴 Pass current round number
             self.chunk_manager,
             self.comm_manager,
             neighbors
         )
         
-        # 直接启动chunk交换，无需tracker
+        # Directly start chunk exchange, no tracker needed
         self.bt_manager.start_exchange()
         
     def _run_bittorrent_exchange_loop(self, expected_chunks):
-        """运行BitTorrent交换主循环"""
+        """Run BitTorrent exchange main loop"""
         logger.info(f"[BT] Client {self.ID}: Exchange loop started, expected_chunks={expected_chunks}")
         try:
             import time
-            # 🐛 Bug修复20: 添加安全的循环终止条件
-            max_iterations = 10000  # 防止无限循环
+            # 🐛 Bug fix 20: Add safe loop termination condition
+            max_iterations = 10000  # Prevent infinite loop
             iteration = 0
             
             while not self._has_all_chunks(expected_chunks) and iteration < max_iterations:
@@ -1192,24 +1192,24 @@ class Client(BaseClient):
                     logger.info(f"[BT] Client {self.ID}: BitTorrent exchange was stopped, breaking from loop at iteration {iteration}")
                     break
                 
-                # 每100次迭代输出进度
+                # Output progress every 100 iterations
                 if iteration % 100 == 1:
                     current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
                     peer_count = len(self.bt_manager.peer_bitfields)
                     logger.info(f"[BT] Client {self.ID}: Iteration {iteration}, current chunks: {current_chunks}/{expected_chunks}, peers: {peer_count}")
                 
-                # 🆕 双池请求管理：只在队列为空时填充，减少选择程序调用频率
+                # 🆕 Dual pool request management: Only fill when queue is empty, reduce selection program call frequency
                 if len(self.bt_manager.pending_queue) == 0:
                     logger.debug(f"[BT] Client {self.ID}: Pending queue empty, filling with priority chunks...")
                     self.bt_manager._fill_pending_queue()
                 
-                # 从队列转移请求到活跃池
+                # Transfer requests from queue to active pool
                 if (len(self.bt_manager.pending_requests) < self.bt_manager.MAX_ACTIVE_REQUESTS and
                     len(self.bt_manager.pending_queue) > 0):
                     logger.debug(f"[BT] Client {self.ID}: Transferring requests from queue to active pool...")
                     self.bt_manager._transfer_from_queue_to_active()
                 else:
-                    if iteration % 100 == 1:  # 减少日志频率
+                    if iteration % 100 == 1:  # Reduce log frequency
                         active_count = len(self.bt_manager.pending_requests)
                         queue_count = len(self.bt_manager.pending_queue)
                         if active_count == 0 and queue_count == 0:
@@ -1217,21 +1217,21 @@ class Client(BaseClient):
                         else:
                             logger.debug(f"[BT] Client {self.ID}: Pool status - Active: {active_count}/{self.bt_manager.MAX_ACTIVE_REQUESTS}, Queue: {queue_count}/{self.bt_manager.MAX_PENDING_QUEUE}")
                         
-                # 定期更新choke/unchoke（每10次迭代）
+                # Periodically update choke/unchoke (every 10 iterations)
                 if iteration % 10 == 0:
                     self.bt_manager._regular_unchoke_algorithm()
                     
-                # 检查超时
+                # Check timeout
                 self.bt_manager.check_timeouts()
                     
-                # 短暂休眠避免CPU占用过高
+                # Brief sleep to avoid excessive CPU usage
                 time.sleep(0.01)
                 
-            # 记录完成原因
+            # Record completion reason
             final_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
             logger.info(f"[BT] Client {self.ID}: Exchange loop completed after {iteration} iterations. Final chunks: {final_chunks}/{expected_chunks}")
             
-            # 4. 完成后报告给Server
+            # 4. Report to Server after completion
             self._report_bittorrent_completion()
             
         except Exception as e:
@@ -1239,41 +1239,41 @@ class Client(BaseClient):
             self._report_bittorrent_completion_failure()
 
     def callback_funcs_for_bitfield(self, message):
-        """处理bitfield消息"""
+        """Handle bitfield message"""
         logger.info(f"[BT] Client {self.ID}: Received bitfield message from peer {message.sender}")
         
         if not hasattr(self, 'bt_manager'):
             logger.warning(f"[BT] Client {self.ID}: No bt_manager when receiving bitfield from {message.sender}")
             return
             
-        # 🔴 验证轮次匹配
+        # 🔴 Validate round match
         if message.content['round_num'] != self.bt_manager.round_num:
             logger.warning(f"[BT] Client {self.ID}: Received bitfield from wrong round: {message.content['round_num']} vs {self.bt_manager.round_num}")
             return
         
         logger.info(f"[BT] Client {self.ID}: Processing bitfield from peer {message.sender}, round {message.content['round_num']}")
         
-        # 🆕 直接传递消息内容（包含重要性分数），让BitTorrent管理器处理格式转换
+        # 🆕 Pass message content directly (including importance scores), let BitTorrent manager handle format conversion
         logger.info(f"[BT] Client {self.ID}: Passing bitfield message content from peer {message.sender}: {len(message.content.get('bitfield', []))} chunks")
         
-        # 🔧 调试：检查bitfield内容
+        # 🔧 Debug: Check bitfield content
         if not message.content.get('bitfield'):
             logger.debug(f"[BT] Client {self.ID}: Received empty bitfield from peer {message.sender}")
             
         self.bt_manager.handle_bitfield(message.sender, message.content)
         
     def callback_funcs_for_have(self, message):
-        """处理have消息"""
+        """Handle have message"""
         if not hasattr(self, 'bt_manager'):
             return
             
         sender_id = message.sender
-        # 🔴 验证轮次匹配
+        # 🔴 Validate round match
         if message.content['round_num'] != self.bt_manager.round_num:
             logger.warning(f"[BT] Have message from wrong round: {message.content['round_num']}")
             return
             
-        # 🆕 获取重要性分数（如果有的话）
+        # 🆕 Get importance score (if available)
         importance_score = message.content.get('importance_score', 0.0)
         
         self.bt_manager.handle_have(sender_id, 
@@ -1283,26 +1283,26 @@ class Client(BaseClient):
                                   importance_score)
         
     def callback_funcs_for_interested(self, message):
-        """处理interested消息"""
+        """Handle interested message"""
         if hasattr(self, 'bt_manager'):
             self.bt_manager.handle_interested(message.sender)
         
     def callback_funcs_for_choke(self, message):
-        """处理choke消息"""
+        """Handle choke message"""
         if hasattr(self, 'bt_manager'):
             self.bt_manager.handle_choke(message.sender)
         
     def callback_funcs_for_unchoke(self, message):
-        """处理unchoke消息"""
+        """Handle unchoke message"""
         if hasattr(self, 'bt_manager'):
             self.bt_manager.handle_unchoke(message.sender)
         
     def callback_funcs_for_request(self, message):
-        """处理chunk请求"""
+        """Handle chunk request"""
         logger.debug(f"[BT] Client {self.ID}: Received request from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
         if hasattr(self, 'bt_manager'):
-            # 🔴 传递round_num到handle_request
+            # 🔴 Pass round_num to handle_request
             self.bt_manager.handle_request(
                 message.sender,
                 message.content['round_num'],
@@ -1313,7 +1313,7 @@ class Client(BaseClient):
             logger.warning(f"[BT] Client {self.ID}: No bt_manager when handling request from {message.sender}")
         
     def callback_funcs_for_piece(self, message):
-        """处理chunk数据"""
+        """Handle chunk data"""
         logger.debug(f"[BT] Client {self.ID}: Received piece from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
         if hasattr(self, 'bt_manager'):
@@ -1329,8 +1329,8 @@ class Client(BaseClient):
             logger.warning(f"[BT] Client {self.ID}: No bt_manager when handling piece from {message.sender}")
         
     def callback_funcs_for_cancel(self, message):
-        """处理cancel消息"""
-        # 简单处理：从pending requests中移除
+        """Handle cancel message"""
+        # Simple handling: remove from pending requests
         if hasattr(self, 'bt_manager'):
             chunk_key = (message.content['round_num'], 
                         message.content['source_client_id'], 
@@ -1339,24 +1339,24 @@ class Client(BaseClient):
                 del self.bt_manager.pending_requests[chunk_key]
 
     def _has_all_chunks(self, expected_chunks):
-        """🐛 Bug修复29: 检查是否收集了所有chunks"""
+        """🐛 Bug Fix 29: Check if all chunks have been collected"""
         if not hasattr(self, 'chunk_manager') or not hasattr(self, 'bt_manager'):
             return False
         
-        # 获取当前拥有的chunks数量
-        # 🔴 传递round_num限制只检查当前轮次的chunks
+        # Get current number of chunks owned
+        # 🔴 Pass round_num to limit checking only current round chunks
         current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
         return current_chunks >= expected_chunks
         
     def _report_bittorrent_completion(self):
         """
-        向Server报告BitTorrent交换完成
+        Report BitTorrent exchange completion to Server
         """
-        # 🐛 Bug修复31: 安全获取统计信息
-        # 🔴 使用当前轮次获取chunks数量
+        # 🐛 Bug Fix 31: Safely get statistics information
+        # 🔴 Use current round to get chunk count
         chunks_collected = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num)) if hasattr(self, 'chunk_manager') and hasattr(self, 'bt_manager') else 0
         
-        # 🐛 Bug修复32: 安全获取传输统计
+        # 🐛 Bug Fix 32: Safely get transfer statistics
         bytes_downloaded = getattr(self.bt_manager, 'total_downloaded', 0) if hasattr(self, 'bt_manager') else 0
         bytes_uploaded = getattr(self.bt_manager, 'total_uploaded', 0) if hasattr(self, 'bt_manager') else 0
         
@@ -1375,7 +1375,7 @@ class Client(BaseClient):
         logger.info(f"[BT] Client {self.ID}: Reported completion to server")
         
     def _report_bittorrent_completion_failure(self):
-        """🐛 Bug修复33: 报告BitTorrent失败"""
+        """🐛 Bug Fix 33: Report BitTorrent failure"""
         self.comm_manager.send(
             Message(msg_type='bittorrent_complete',
                     sender=self.ID,

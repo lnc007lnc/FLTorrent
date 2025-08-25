@@ -189,7 +189,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
         
         # Initialize chunk tracker for BitTorrent-like chunk management
         self.chunk_tracker = ChunkTracker()
-        logger.info("🗂️ Server: 初始化chunk tracker系统")
+        logger.info("🗂️ Server: Initialize chunk tracker system")
     
         # the unseen clients indicate the ones that do not contribute to FL
         # process by training on their local data and uploading their local
@@ -490,12 +490,12 @@ class Server(BaseServer, ConnectionHandlerMixin):
         
         for client_id, neighbors in topology_graph.items():
             if neighbors:  # Only send if client has neighbors to connect to
-                # 🔧 关键修复：添加neighbor地址信息
+                # 🔧 Critical fix: Add neighbor address information
                 neighbor_addresses = {}
                 for neighbor_id in neighbors:
                     if neighbor_id in self.comm_manager.neighbors:
                         neighbor_addr = self.comm_manager.neighbors[neighbor_id]
-                        # 解析地址字符串为字典格式
+                        # Parse address string to dictionary format
                         if ':' in neighbor_addr:
                             host, port = neighbor_addr.split(':')
                             neighbor_addresses[neighbor_id] = {
@@ -515,7 +515,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                     timestamp=self.cur_timestamp,
                     content={
                         'neighbors_to_connect': neighbors,
-                        'neighbor_addresses': neighbor_addresses,  # 🔧 添加真实地址信息
+                        'neighbor_addresses': neighbor_addresses,  # 🔧 Add real address information
                         'topology_type': self.topology_manager.topology_type.value,
                         'max_attempts': self._cfg.topology.max_connection_attempts,
                         'retry_delay': self._cfg.topology.connection_retry_delay
@@ -686,7 +686,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
         """
         The behaviors for starting a new training round
         """
-        # 🔥 关键修改：在广播新模型前，先等待BitTorrent完成
+        # 🔥 Key modification: Wait for BitTorrent completion before broadcasting new model
         if hasattr(self._cfg, 'bittorrent') and self._cfg.bittorrent.enable:
             self.trigger_bittorrent()
         
@@ -1272,41 +1272,41 @@ class Server(BaseServer, ConnectionHandlerMixin):
     
     def callback_funcs_for_chunk_info(self, message: Message):
         """
-        处理来自客户端的chunk信息报告
+        Handle chunk information reports from clients
         
         Arguments:
-            message: 包含chunk信息的消息
+            message: Message containing chunk information
         """
         try:
             sender = message.sender
             chunk_info_dict = message.content
             
-            # 调试：打印原始数据类型
+            # Debug: Print raw data types
             logger.debug(f"🔍 Raw chunk_info_dict types: {[(k, type(v), v) for k, v in chunk_info_dict.items()]}")
             
-            # 安全地转换数据类型，处理bytes数据
+            # Safely convert data types, handle bytes data
             def safe_convert(value, target_type, field_name="unknown"):
                 logger.debug(f"🔧 Converting {field_name}: {value} (type: {type(value)}) -> {target_type}")
                 
                 if isinstance(value, bytes):
-                    # 如果是bytes，尝试不同的处理方式
-                    if len(value) == 8:  # 可能是64位整数的bytes表示
+                    # If bytes, try different processing approaches
+                    if len(value) == 8:  # Possibly 64-bit integer bytes representation
                         import struct
                         try:
-                            # 尝试将8字节解释为little-endian 64位整数
+                            # Try to interpret 8 bytes as little-endian 64-bit integer
                             int_value = struct.unpack('<Q', value)[0] 
                             logger.debug(f"🔧 Decoded bytes as int64: {int_value}")
                             value = int_value
                         except:
-                            # 如果失败，尝试解码为字符串
+                            # If failed, try decoding as string
                             try:
-                                value = value.decode('utf-8').rstrip('\x00')  # 移除null字符
+                                value = value.decode('utf-8').rstrip('\x00')  # Remove null characters
                                 logger.debug(f"🔧 Decoded bytes as string: '{value}'")
                             except:
                                 logger.debug(f"Failed to decode bytes: {value}")
                                 return 0 if target_type == int else 0.0 if target_type == float else ""
                     else:
-                        # 其他长度的bytes尝试解码为字符串
+                        # Try to decode bytes of other lengths as string
                         try:
                             value = value.decode('utf-8').rstrip('\x00')
                         except:
@@ -1325,7 +1325,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                     logger.debug(f"Failed to convert {field_name} '{value}' to {target_type}: {e}")
                     return 0 if target_type == int else 0.0 if target_type == float else ""
             
-            # 从字典创建ChunkInfo对象，确保类型正确
+            # Create ChunkInfo object from dictionary, ensure correct types
             chunk_info = ChunkInfo(
                 client_id=safe_convert(chunk_info_dict['client_id'], int, 'client_id'),
                 round_num=safe_convert(chunk_info_dict['round_num'], int, 'round_num'),
@@ -1336,62 +1336,62 @@ class Server(BaseServer, ConnectionHandlerMixin):
                 timestamp=safe_convert(chunk_info_dict['timestamp'], float, 'timestamp')
             )
             
-            # 更新chunk追踪器
+            # Update chunk tracker
             success = self.chunk_tracker.update_chunk_info(chunk_info)
             
             if success:
-                # 静默处理成功的chunk信息
+                # Silently handle successful chunk information
                 pass
             else:
-                logger.debug(f"Server: 处理客户端{sender}的chunk信息失败")
+                logger.debug(f"Server: Failed to process chunk information from client {sender}")
                 
         except Exception as e:
-            logger.error(f"❌ Server: 处理chunk信息消息失败: {e}")
+            logger.error(f"❌ Server: Failed to process chunk information message: {e}")
     
     def get_chunk_tracker_stats(self) -> dict:
-        """获取chunk tracker统计信息"""
+        """Get chunk tracker statistics"""
         return self.chunk_tracker.get_tracker_stats()
     
     def query_chunk_locations(self, round_num: int, chunk_id: int) -> list:
-        """查询指定chunk的持有者列表"""
+        """Query list of holders for specified chunk"""
         return self.chunk_tracker.get_chunk_locations(round_num, chunk_id)
     
     def get_client_chunks_list(self, client_id: int) -> list:
-        """获取指定客户端持有的chunks列表"""
+        """Get list of chunks held by specified client"""
         return self.chunk_tracker.get_client_chunks(client_id)
     
     def get_round_chunk_availability(self, round_num: int) -> dict:
-        """获取指定轮次所有chunks的可用性统计"""
+        """Get availability statistics for all chunks in specified round"""
         return self.chunk_tracker.get_chunk_availability(round_num)
 
-    # ==================== BitTorrent支持方法 ====================
+    # ==================== BitTorrent Support Methods ====================
     
     def trigger_bittorrent(self):
         """
-        🔧 修改：同步阻塞版本
-        在聚合完成后触发BitTorrent chunk交换，等待所有客户端完成后才继续
+        🔧 Modified: Synchronous blocking version
+        Trigger BitTorrent chunk exchange after aggregation completion, wait for all clients to complete before continuing
         """
         logger.info("[BT] Server: Initiating BitTorrent chunk exchange phase")
         
-        # 初始化BitTorrent状态机
+        # Initialize BitTorrent state machine
         if not hasattr(self, 'bt_state'):
             self.bt_state = 'IDLE'
         
-        # 设置状态为EXCHANGING
+        # Set state to EXCHANGING
         self.bt_state = 'EXCHANGING'
-        self.bt_round = self.state  # 记录当前FL轮次
+        self.bt_round = self.state  # Record current FL round
         self.bittorrent_completion_status = {}
         self.bt_start_time = time.time()
         
-        # 获取配置
+        # Get configuration
         chunks_per_client = getattr(getattr(self._cfg, 'chunk', None), 'num_chunks', 10)
         self.bt_expected_chunks = self.client_num * chunks_per_client
         
-        # 广播开始BitTorrent消息给所有clients
+        # Broadcast start BitTorrent message to all clients
         self.comm_manager.send(
             Message(msg_type='start_bittorrent',
                     sender=self.ID,
-                    receiver=list(range(1, self.client_num + 1)),  # 所有client IDs
+                    receiver=list(range(1, self.client_num + 1)),  # All client IDs
                     state=self.state,
                     content={
                         'round': self.state,
@@ -1399,29 +1399,29 @@ class Server(BaseServer, ConnectionHandlerMixin):
                     })
         )
         
-        # 设置超时配置
+        # Set timeout configuration
         timeout = getattr(getattr(self._cfg, 'bittorrent', None), 'timeout', 60.0)
         self.bt_timeout = timeout
         
         logger.info(f"[BT] Waiting for {self.client_num} clients to complete chunk exchange (timeout: {timeout}s)")
         
-        # 🔥 关键修改：同步等待所有客户端完成BitTorrent
+        # 🔥 Key modification: Synchronously wait for all clients to complete BitTorrent
         self._wait_for_all_bittorrent_completion()
         
         return True
 
     def _wait_for_all_bittorrent_completion(self):
         """
-        🔥 新增：同步等待所有客户端完成BitTorrent交换
+        🔥 Added: Synchronously wait for all clients to complete BitTorrent exchange
         """
         start_time = time.time()
-        check_interval = 2.0  # 每2秒检查一次
-        last_completed_clients = -1  # 跟踪上次完成的客户端数量
+        check_interval = 2.0  # Check every 2 seconds
+        last_completed_clients = -1  # Track number of clients completed last time
         
         logger.info(f"[BT] Starting synchronous wait for all {self.client_num} clients to complete BitTorrent exchange")
         
         while True:
-            # 检查是否所有客户端都已完成
+            # Check if all clients have completed
             completed_clients = len(self.bittorrent_completion_status)
             if completed_clients >= self.client_num:
                 total_time = time.time() - start_time
@@ -1429,7 +1429,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                 self.bt_state = 'COMPLETED'
                 break
             
-            # 检查超时
+            # Check timeout
             elapsed_time = time.time() - start_time
             if elapsed_time > self.bt_timeout:
                 logger.warning(f"[BT] ⏰ BitTorrent exchange timeout after {self.bt_timeout}s")
@@ -1437,37 +1437,37 @@ class Server(BaseServer, ConnectionHandlerMixin):
                 self.bt_state = 'TIMEOUT'
                 break
             
-            # 只在完成客户端数量有变化时打印进度
+            # Only print progress when number of completed clients changes
             if completed_clients != last_completed_clients:
                 logger.info(f"[BT] 🕰️ BitTorrent progress: {completed_clients}/{self.client_num} clients completed, {elapsed_time:.1f}s elapsed")
                 last_completed_clients = completed_clients
             
-            # 在等待期间处理消息
+            # Handle messages during waiting period
             try:
-                # 使用非阻塞方式检查消息队列
+                # Use non-blocking way to check message queue
                 if hasattr(self.comm_manager, 'server_funcs') and \
                    hasattr(self.comm_manager.server_funcs, 'msg_queue') and \
                    len(self.comm_manager.server_funcs.msg_queue) > 0:
                     
-                    # 处理消息
+                    # Process messages
                     msg = self.comm_manager.receive()
                     if msg:
                         logger.debug(f"[BT] Processing message type '{msg.msg_type}' from client {msg.sender} during BitTorrent wait")
                         
-                        # 处理BitTorrent相关消息
+                        # Handle BitTorrent-related messages
                         if msg.msg_type in self.msg_handlers:
                             self.msg_handlers[msg.msg_type](msg)
                         else:
                             logger.warning(f"[BT] Unknown message type during BitTorrent wait: {msg.msg_type}")
                 else:
-                    # 没有消息，短暂休眠
+                    # No messages, sleep briefly
                     time.sleep(check_interval)
                         
             except Exception as e:
                 logger.debug(f"[BT] Message handling error during BitTorrent wait: {e}")
                 time.sleep(check_interval)
         
-        # 记录最终结果
+        # Record final result
         if self.bt_state == 'COMPLETED':
             total_chunks = sum(self.bittorrent_completion_status.values())
             logger.info(f"[BT] 🎉 BitTorrent exchange completed successfully! Total chunks collected: {total_chunks}")
@@ -1476,14 +1476,14 @@ class Server(BaseServer, ConnectionHandlerMixin):
 
     def callback_funcs_for_bittorrent_complete(self, message):
         """
-        🔧 修改：简化的BitTorrent完成消息处理（配合同步等待机制）
+        🔧 Modified: Simplified BitTorrent completion message handling (with synchronous wait mechanism)
         """
         sender_id = message.sender
         chunks_collected = message.content.get('chunks_collected', 0)
         exchange_time = message.content.get('exchange_time', 0)
         status = message.content.get('status', 'completed')
         
-        # 记录完成状态
+        # Record completion status
         if hasattr(self, 'bittorrent_completion_status'):
             self.bittorrent_completion_status[sender_id] = chunks_collected
             
@@ -1492,47 +1492,47 @@ class Server(BaseServer, ConnectionHandlerMixin):
             else:
                 logger.info(f"[BT] ✅ Client {sender_id} completed: {chunks_collected} chunks in {exchange_time:.2f}s")
                 
-            # 打印当前进度
+            # Print current progress
             completed_count = len(self.bittorrent_completion_status)
             logger.info(f"[BT] Progress: {completed_count}/{self.client_num} clients completed BitTorrent exchange")
             
         else:
             logger.warning(f"[BT] Received unexpected bittorrent_complete from client {sender_id}")
             
-        # 不再需要check_bittorrent_state()，因为同步等待会处理完成检查
+        # No longer need check_bittorrent_state() as synchronous wait handles completion checking
 
     def check_bittorrent_state(self):
         """
-        🆕 新增：检查BitTorrent状态机
-        在消息处理循环中调用，避免阻塞
+        🆕 Added: Check BitTorrent state machine
+        Called in message processing loop to avoid blocking
         """
         if not hasattr(self, 'bt_state') or self.bt_state != 'EXCHANGING':
             return
         
-        # 检查超时
+        # Check timeout
         if hasattr(self, 'bt_timeout') and self.bt_timeout > 0:
             if time.time() - self.bt_start_time > self.bt_timeout:
                 logger.warning(f"[BT] BitTorrent exchange timeout after {self.bt_timeout}s")
                 self._handle_bittorrent_timeout()
                 return
         
-        # 检查是否所有clients完成
+        # Check if all clients completed
         if len(self.bittorrent_completion_status) >= self.client_num:
             self._handle_bittorrent_completion()
         elif len(self.bittorrent_completion_status) >= self.client_num * 0.8:
-            # 可选：80%完成可以继续
+            # Optional: 80% completion can continue
             remaining_time = self.bt_timeout - (time.time() - self.bt_start_time)
-            if remaining_time < 5.0:  # 只剩下5秒
+            if remaining_time < 5.0:  # Only 5 seconds left
                 logger.info("[BT] 80% clients completed, proceeding...")
                 self._handle_bittorrent_completion()
 
     def _handle_bittorrent_completion(self):
         """
-        🆕 处理BitTorrent完成
+        🆕 Handle BitTorrent completion
         """
         self.bt_state = 'COMPLETED'
         
-        # 统计成功率
+        # Calculate success rate
         success_count = sum(1 for status in self.bittorrent_completion_status.values() 
                            if status >= self.bt_expected_chunks)
         
@@ -1541,21 +1541,21 @@ class Server(BaseServer, ConnectionHandlerMixin):
         else:
             logger.warning(f"[BT] {success_count}/{self.client_num} clients collected all chunks")
         
-        # 清理状态
+        # Clean up state
         self.bittorrent_completion_status.clear()
         
         logger.info("[BT] BitTorrent exchange phase completed successfully")
 
     def _handle_bittorrent_timeout(self):
         """
-        🆕 处理BitTorrent超时
+        🆕 Handle BitTorrent timeout
         """
         self.bt_state = 'TIMEOUT'
         
         completed = len(self.bittorrent_completion_status)
         logger.error(f"[BT] Timeout with {completed}/{self.client_num} clients completed")
         
-        # 根据完成情况决定是否继续
+        # Decide whether to continue based on completion status
         min_ratio = getattr(getattr(self._cfg, 'bittorrent', None), 'min_completion_ratio', 0.8)
         if completed >= self.client_num * min_ratio:
             logger.info(f"[BT] {completed} clients completed, continuing...")
@@ -1566,14 +1566,14 @@ class Server(BaseServer, ConnectionHandlerMixin):
             logger.info("[BT] Proceeding with FL training despite BitTorrent failure")
 
     def check_bittorrent_completion(self):
-        """检查所有clients是否完成chunk收集"""
+        """Check if all clients have completed chunk collection"""
         if not hasattr(self, 'bittorrent_completion_status'):
             return False
             
         if len(self.bittorrent_completion_status) < self.client_num:
             return False
             
-        # 检查每个client是否收集了所有n*m个chunks
+        # Check if each client has collected all n*m chunks
         expected_chunks = self.client_num * getattr(getattr(self._cfg, 'chunk', None), 'num_chunks', 10)
         for client_id, chunks_collected in self.bittorrent_completion_status.items():
             if chunks_collected < expected_chunks:

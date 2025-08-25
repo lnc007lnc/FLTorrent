@@ -16,72 +16,72 @@ logger = logging.getLogger(__name__)
 
 class ChunkAction(Enum):
     """Chunk action types"""
-    ADD = "add"      # 新增chunk
-    DELETE = "delete"  # 删除chunk
-    UPDATE = "update"  # 更新chunk
+    ADD = "add"      # Add chunk
+    DELETE = "delete"  # Delete chunk
+    UPDATE = "update"  # Update chunk
 
 
 @dataclass
 class ChunkInfo:
     """
-    Chunk信息数据结构
+    Chunk information data structure
     """
-    client_id: int          # 客户端ID
-    round_num: int          # 训练轮次
-    chunk_id: int          # chunk索引
-    action: str            # 操作类型: add/delete/update
-    chunk_hash: str        # chunk的hash值
-    chunk_size: int        # chunk大小(字节)
-    timestamp: float       # 时间戳
+    client_id: int          # Client ID
+    round_num: int          # Training round
+    chunk_id: int          # Chunk index
+    action: str            # Action type: add/delete/update
+    chunk_hash: str        # Hash value of chunk
+    chunk_size: int        # Chunk size (bytes)
+    timestamp: float       # Timestamp
     
     def to_dict(self) -> Dict:
-        """转换为字典格式"""
+        """Convert to dictionary format"""
         return asdict(self)
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'ChunkInfo':
-        """从字典创建ChunkInfo对象"""
+        """Create ChunkInfo object from dictionary"""
         return cls(**data)
     
     def to_json(self) -> str:
-        """转换为JSON格式"""
+        """Convert to JSON format"""
         return json.dumps(self.to_dict())
     
     @classmethod
     def from_json(cls, json_str: str) -> 'ChunkInfo':
-        """从JSON创建ChunkInfo对象"""
+        """Create ChunkInfo object from JSON"""
         return cls.from_dict(json.loads(json_str))
 
 
 class ChunkTracker:
     """
-    服务器端chunk追踪器
-    类似BitTorrent tracker，维护chunk分布信息
+    Server-side chunk tracker
+    Similar to BitTorrent tracker, maintains chunk distribution information
     """
     
     def __init__(self):
         self.chunk_registry: Dict[Tuple[int, int], Dict[int, Set[int]]] = {}
-        # 格式: {(round_num, chunk_id): {client_id: {hash_set}}}
+        # Format: {(round_num, chunk_id): {client_id: {hash_set}}}
         
         self.client_chunks: Dict[int, Dict[Tuple[int, int], str]] = {}
-        # 格式: {client_id: {(round_num, chunk_id): chunk_hash}}
+        # Format: {client_id: {(round_num, chunk_id): chunk_hash}}
         
         self.chunk_metadata: Dict[str, Dict] = {}
-        # 格式: {chunk_hash: {size, first_seen, clients_count}}
+        # Format: {chunk_hash: {size, first_seen, clients_count}}
         
-        self.lock = threading.RLock()  # 线程安全锁
+        self.lock = threading.RLock()  # Thread-safe lock
         
-        logger.info("🗂️  ChunkTracker: 初始化chunk追踪器")
+        logger.info("🗂️  ChunkTracker: Initialize chunk tracker")
     
     def update_chunk_info(self, chunk_info: ChunkInfo) -> bool:
         """
-        更新chunk信息
+        Update chunk information
         
         Args:
-            chunk_info: chunk信息对象
+            chunk_info: Chunk information object
             
         Returns:
-            bool: 更新是否成功
+            bool: Whether update was successful
         """
         try:
             with self.lock:
@@ -103,19 +103,19 @@ class ChunkTracker:
                     return self._update_chunk(chunk_key, client_id, chunk_hash, chunk_info)
                 
                 else:
-                    logger.debug(f"ChunkTracker: 未知的chunk操作类型: {action}")
+                    logger.debug(f"ChunkTracker: Unknown chunk action type: {action}")
                     return False
                     
         except Exception as e:
-            logger.error(f"❌ ChunkTracker: 更新chunk信息失败: {e}")
+            logger.error(f"❌ ChunkTracker: Failed to update chunk information: {e}")
             return False
     
     def _add_chunk(self, chunk_key: Tuple[int, int], client_id: int, 
                    chunk_hash: str, chunk_info: ChunkInfo) -> bool:
-        """添加chunk记录"""
+        """Add chunk record"""
         round_num, chunk_id = chunk_key
         
-        # 更新chunk注册表
+        # Update chunk registry
         if chunk_key not in self.chunk_registry:
             self.chunk_registry[chunk_key] = {}
         
@@ -124,13 +124,13 @@ class ChunkTracker:
         
         self.chunk_registry[chunk_key][client_id].add(hash(chunk_hash))
         
-        # 更新客户端chunk映射
+        # Update client chunk mapping
         if client_id not in self.client_chunks:
             self.client_chunks[client_id] = {}
         
         self.client_chunks[client_id][chunk_key] = chunk_hash
         
-        # 更新chunk元数据
+        # Update chunk metadata
         if chunk_hash not in self.chunk_metadata:
             self.chunk_metadata[chunk_hash] = {
                 'size': chunk_info.chunk_size,
@@ -140,14 +140,14 @@ class ChunkTracker:
         
         self.chunk_metadata[chunk_hash]['clients_count'] += 1
         
-        logger.debug(f"➕ ChunkTracker: 添加chunk - 客户端{client_id}, 轮次{round_num}, chunk{chunk_id}")
+        logger.debug(f"➕ ChunkTracker: Added chunk - client {client_id}, round {round_num}, chunk {chunk_id}")
         return True
     
     def _delete_chunk(self, chunk_key: Tuple[int, int], client_id: int, chunk_hash: str) -> bool:
-        """删除chunk记录"""
+        """Delete chunk record"""
         round_num, chunk_id = chunk_key
         
-        # 从chunk注册表中删除
+        # Remove from chunk registry
         if chunk_key in self.chunk_registry and client_id in self.chunk_registry[chunk_key]:
             self.chunk_registry[chunk_key][client_id].discard(hash(chunk_hash))
             
@@ -157,27 +157,27 @@ class ChunkTracker:
             if not self.chunk_registry[chunk_key]:
                 del self.chunk_registry[chunk_key]
         
-        # 从客户端chunk映射中删除
+        # Remove from client chunk mapping
         if client_id in self.client_chunks and chunk_key in self.client_chunks[client_id]:
             del self.client_chunks[client_id][chunk_key]
             
             if not self.client_chunks[client_id]:
                 del self.client_chunks[client_id]
         
-        # 更新chunk元数据
+        # Update chunk metadata
         if chunk_hash in self.chunk_metadata:
             self.chunk_metadata[chunk_hash]['clients_count'] -= 1
             
             if self.chunk_metadata[chunk_hash]['clients_count'] <= 0:
                 del self.chunk_metadata[chunk_hash]
         
-        logger.debug(f"➖ ChunkTracker: 删除chunk - 客户端{client_id}, 轮次{round_num}, chunk{chunk_id}")
+        logger.debug(f"➖ ChunkTracker: Deleted chunk - client {client_id}, round {round_num}, chunk {chunk_id}")
         return True
     
     def _update_chunk(self, chunk_key: Tuple[int, int], client_id: int, 
                      chunk_hash: str, chunk_info: ChunkInfo) -> bool:
-        """更新chunk记录"""
-        # 先删除旧记录，再添加新记录
+        """Update chunk record"""
+        # First delete old record, then add new record
         old_hash = self.client_chunks.get(client_id, {}).get(chunk_key, "")
         if old_hash:
             self._delete_chunk(chunk_key, client_id, old_hash)
@@ -186,14 +186,14 @@ class ChunkTracker:
     
     def get_chunk_locations(self, round_num: int, chunk_id: int) -> List[int]:
         """
-        获取指定chunk的所有持有者
+        Get all holders of the specified chunk
         
         Args:
-            round_num: 轮次
-            chunk_id: chunk ID
+            round_num: Round number
+            chunk_id: Chunk ID
             
         Returns:
-            List[int]: 持有该chunk的客户端ID列表
+            List[int]: List of client IDs that hold the chunk
         """
         with self.lock:
             chunk_key = (round_num, chunk_id)
@@ -203,13 +203,13 @@ class ChunkTracker:
     
     def get_client_chunks(self, client_id: int) -> List[Tuple[int, int]]:
         """
-        获取指定客户端持有的所有chunks
+        Get all chunks held by the specified client
         
         Args:
-            client_id: 客户端ID
+            client_id: Client ID
             
         Returns:
-            List[Tuple[int, int]]: (round_num, chunk_id)列表
+            List[Tuple[int, int]]: List of (round_num, chunk_id) tuples
         """
         with self.lock:
             if client_id in self.client_chunks:
@@ -218,13 +218,13 @@ class ChunkTracker:
     
     def get_chunk_availability(self, round_num: int) -> Dict[int, int]:
         """
-        获取指定轮次所有chunks的可用性统计
+        Get availability statistics for all chunks in the specified round
         
         Args:
-            round_num: 轮次
+            round_num: Round number
             
         Returns:
-            Dict[int, int]: {chunk_id: 持有者数量}
+            Dict[int, int]: {chunk_id: number of holders}
         """
         with self.lock:
             availability = {}
@@ -234,7 +234,7 @@ class ChunkTracker:
             return availability
     
     def get_tracker_stats(self) -> Dict:
-        """获取tracker统计信息"""
+        """Get tracker statistics"""
         with self.lock:
             total_chunks = len(self.chunk_metadata)
             total_clients = len(self.client_chunks)
@@ -258,31 +258,31 @@ class ChunkTracker:
     
     def cleanup_old_rounds(self, keep_rounds: int = 5):
         """
-        清理旧轮次的chunk记录
+        Clean up chunk records from old rounds
         
         Args:
-            keep_rounds: 保留的轮次数量
+            keep_rounds: Number of rounds to keep
         """
         with self.lock:
             if not self.chunk_registry:
                 return
             
-            # 找到最大轮次
+            # Find the maximum round number
             max_round = max(round_num for round_num, _ in self.chunk_registry.keys())
             cutoff_round = max_round - keep_rounds + 1
             
-            # 需要删除的chunk keys
+            # Chunk keys to be deleted
             keys_to_delete = [
                 (round_num, chunk_id) 
                 for round_num, chunk_id in self.chunk_registry.keys() 
                 if round_num < cutoff_round
             ]
             
-            # 删除旧记录
+            # Delete old records
             for chunk_key in keys_to_delete:
                 del self.chunk_registry[chunk_key]
             
-            # 清理客户端chunk映射
+            # Clean up client chunk mappings
             for client_id in list(self.client_chunks.keys()):
                 old_chunks = [
                     chunk_key for chunk_key in self.client_chunks[client_id].keys()
@@ -295,12 +295,12 @@ class ChunkTracker:
                 if not self.client_chunks[client_id]:
                     del self.client_chunks[client_id]
             
-            logger.info(f"🧹 ChunkTracker: 清理了轮次{cutoff_round}之前的记录")
+            logger.info(f"🧹 ChunkTracker: Cleaned up records before round {cutoff_round}")
     
     def export_tracker_data(self) -> Dict:
-        """导出tracker数据用于持久化"""
+        """Export tracker data for persistence"""
         with self.lock:
-            # 转换为可序列化格式
+            # Convert to serializable format
             serializable_registry = {}
             for (round_num, chunk_id), clients in self.chunk_registry.items():
                 key = f"{round_num}_{chunk_id}"

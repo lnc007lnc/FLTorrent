@@ -1,25 +1,25 @@
-# FederatedScope 基础Docker镜像
-# 用于边缘设备联邦学习仿真
+# FederatedScope base Docker image
+# For edge device federated learning simulation
 
 FROM ubuntu:20.04
 
-# 维护者信息
+# Maintainer information
 LABEL maintainer="FederatedScope Edge Simulation"
 LABEL description="Base image for FederatedScope edge device simulation"
 
-# 设置工作目录
+# Set working directory
 WORKDIR /app
 
-# 设置环境变量
+# Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-# 安装基础系统包和Python 3.10（匹配宿主机版本）
+# Install basic system packages and Python 3.10 (matching host version)
 RUN apt-get update && apt-get install -y \
-    # 系统基础包
+    # Basic system packages
     software-properties-common \
     ca-certificates \
     gnupg \
@@ -34,71 +34,71 @@ RUN apt-get update && apt-get install -y \
     python3.10-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# 设置Python 3.10为默认python
+# Set Python 3.10 as default python
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python \
     && ln -sf /usr/bin/python3.10 /usr/bin/python3
 
-# 安装最新pip（避免旧版本兼容性问题）
+# Install latest pip (avoid old version compatibility issues)
 RUN python -m ensurepip --upgrade \
     && python -m pip install --upgrade pip setuptools wheel
 
-# 安装系统依赖
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    # 网络工具 (用于tc网络限制)
+    # Network tools (for tc network limiting)
     iproute2 \
     net-tools \
     iputils-ping \
     iptables \
-    # 系统工具
+    # System tools
     curl \
     wget \
     git \
     build-essential \
-    # 清理缓存
+    # Clean cache
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Python依赖安装（pip已在上面升级过）
+# Python dependency installation (pip upgraded above)
 
-# 安装基础Python依赖（匹配宿主机环境版本）
+# Install basic Python dependencies (matching host environment versions)
 RUN pip install --no-cache-dir \
-    # 核心依赖包（匹配宿主机版本）
+    # Core dependency packages (matching host versions)
     numpy==1.26.4 \
     scikit-learn==1.5.1 \
     scipy==1.15.3 \
     pandas==2.3.0 \
-    # 网络库（匹配宿主机版本）
+    # Network libraries (matching host versions)
     requests==2.32.3 \
     urllib3==2.5.0 \
-    # 系统工具
+    # System tools
     setuptools==78.1.1 \
     PyYAML==6.0.2 \
     psutil==7.0.0 \
     pympler==1.1 \
-    # ML工具
+    # ML tools
     tensorboard==2.19.0 \
-    # Ray（匹配宿主机版本）
+    # Ray (matching host version)
     ray[default]==2.47.1 \
-    # gRPC相关（用于分布式通信）
+    # gRPC related (for distributed communication)
     grpcio \
     grpcio-tools \
     protobuf
 
-# 安装最新PyTorch（支持RTX 5090 sm_120架构）
+# Install latest PyTorch (supporting RTX 5090 sm_120 architecture)
 RUN pip install --no-cache-dir --pre \
     torch \
     torchvision \
     torchaudio \
     --index-url https://download.pytorch.org/whl/nightly/cu129
 
-# 复制FederatedScope代码
+# Copy FederatedScope code
 COPY . /app/
 
-# 设置权限
+# Set permissions
 RUN chmod +x /app/federatedscope/main.py
 
-# 创建必要目录
+# Create necessary directories
 RUN mkdir -p /app/data /app/logs /app/output /app/configs
 
-# 默认命令
+# Default command
 CMD ["python", "/app/federatedscope/main.py", "--help"]

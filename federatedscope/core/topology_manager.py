@@ -45,7 +45,7 @@ class TopologyManager:
         """
         self.topology_type = TopologyType(topology_type.lower())
         self.client_list = client_list or []
-        self.connections = connections  # 连接数控制参数
+        self.connections = connections  # Connection count control parameter
         self.topology_graph = {}  # Dict[client_id] -> List[neighbor_ids]
         self.connection_requirements = {}  # Expected connections for each client
         self.established_connections = {}  # Actual established connections
@@ -133,7 +133,7 @@ class TopologyManager:
     
     def _compute_fully_connected_topology(self) -> Dict[int, List[int]]:
         """
-        Compute fully connected topology: all clients connected to all others (原mesh)
+        Compute fully connected topology: all clients connected to all others (original mesh)
         """
         topology = {}
         

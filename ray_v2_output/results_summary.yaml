@@ -1,0 +1,21 @@
+configuration:
+  chunk_num: 10
+  client_num: 4
+  dataset: CIFAR10@torchvision
+  importance_method: snip
+  model: convnet2
+  total_rounds: 10
+log_files:
+  clients:
+  - logs/client_1.log
+  - logs/client_2.log
+  - logs/client_3.log
+  - logs/client_4.log
+  server: logs/server.log
+output_directories:
+  clients:
+  - ray_v2_output/client_1_output
+  - ray_v2_output/client_2_output
+  - ray_v2_output/client_3_output
+  - ray_v2_output/client_4_output
+  server: ray_v2_output/server_output
