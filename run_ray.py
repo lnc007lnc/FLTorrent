@@ -712,8 +712,8 @@ class FallbackFederatedScopeClient:
         # 客户端专用种子
         self.config['seed'] = 12345 + self.client_id
         
-        # CPU模式配置
-        self.config['use_gpu'] = False
+        # GPU模式配置 - 所有客户端都使用GPU（分数分配）
+        self.config['use_gpu'] = True
         
         # 准备配置和输出目录
         config_dir = f"{CONFIG.OUTPUT_DIR}/configs"
@@ -931,14 +931,9 @@ class DockerFederatedScopeClient:
         # 客户端专用种子
         self.config['seed'] = 12345 + self.client_id
         
-        # 🎮 GPU配置：根据设备类型和Ray分配决定
-        if self.device_profile.device_type in ["smartphone_high", "edge_server"]:
-            # 高端设备支持GPU，但最终由Ray资源分配决定
-            self.config['device'] = 0  # 容器内GPU设备ID
-            self.config['use_gpu'] = True
-        else:
-            # 低端设备强制使用CPU
-            self.config['use_gpu'] = False
+        # 🎮 GPU配置：所有节点都启用GPU（分数分配）
+        self.config['device'] = 0  # 容器内GPU设备ID
+        self.config['use_gpu'] = True  # 所有客户端都使用GPU
         
         # 客户端输出目录
         self.config['outdir'] = f"/app/output"
@@ -1364,47 +1359,69 @@ class RayV2FederatedLearning:
             'outdir': f'{CONFIG.OUTPUT_DIR}/server_output'
         }
         
-    def allocate_gpu_resources(self) -> List[Optional[int]]:
-        """智能GPU资源分配：服务器使用CPU，客户端使用GPU"""
+    def allocate_gpu_resources(self) -> List[Optional[float]]:
+        """动态分数GPU资源分配：服务器使用CPU，所有节点使用分数GPU"""
         cluster_resources = ray.cluster_resources()
-        available_gpus = int(cluster_resources.get('GPU', 0))
+        available_gpus = float(cluster_resources.get('GPU', 0))
         
         if available_gpus == 0:
             self.logger.warning("⚠️ 未检测到GPU，所有节点使用CPU模式")
-            return [None] * (CONFIG.CLIENT_NUM + 1)
-        
-        gpu_allocation = []
+            return [None] + [None] * CONFIG.CLIENT_NUM
         
         # 🖥️ 服务器固定使用CPU（不分配GPU）
-        gpu_allocation.append(None)
+        gpu_allocation = [None]  # 服务器CPU模式
         
-        # 🎮 客户端优先使用GPU：按需分配到所有可用GPU
-        gpu_capable_clients = 0
-        for i in range(CONFIG.CLIENT_NUM):
-            # 检查客户端是否支持GPU（高端手机和边缘服务器）
-            device_type = list(CONFIG.DEVICE_DISTRIBUTION.keys())[i % len(CONFIG.DEVICE_DISTRIBUTION)]
-            if device_type in ["smartphone_high", "edge_server"]:
-                if gpu_capable_clients < available_gpus:
-                    # 为支持GPU的客户端分配GPU
-                    gpu_id = gpu_capable_clients % available_gpus
-                    gpu_allocation.append(gpu_id)
-                    gpu_capable_clients += 1
-                else:
-                    # GPU已分配完，使用CPU
-                    gpu_allocation.append(None)
-            else:
-                # 低端设备使用CPU
-                gpu_allocation.append(None)
-        
-        gpu_summary = {
-            "total_gpus": available_gpus,
-            "server": "CPU",
-            "clients_with_gpu": gpu_capable_clients,
-            "clients_with_cpu": CONFIG.CLIENT_NUM - gpu_capable_clients
+        # 🎮 定义设备性能对应的GPU资源分配比例
+        device_gpu_ratios = {
+            "edge_server": 0.7,        # 边缘服务器 - 高性能 70%
+            "smartphone_high": 0.5,    # 高端手机 - 中等性能 50% 
+            "smartphone_low": 0.3,     # 低端手机 - 低性能 30%
+            "raspberry_pi": 0.3,       # 树莓派 - 低性能 30%
+            "iot_device": 0.2,         # IoT设备 - 最低性能 20%
         }
         
-        self.logger.info(f"🎯 GPU资源分配: {gpu_summary}")
-        self.logger.info(f"📋 详细分配: Server=CPU, Clients={gpu_allocation[1:]}")
+        # 计算所有客户端需要的GPU总量
+        total_required_gpu = 0.0
+        client_requirements = []
+        
+        for i in range(CONFIG.CLIENT_NUM):
+            device_type = list(CONFIG.DEVICE_DISTRIBUTION.keys())[i % len(CONFIG.DEVICE_DISTRIBUTION)]
+            required_gpu = device_gpu_ratios.get(device_type, 0.3)  # 默认0.3
+            client_requirements.append((device_type, required_gpu))
+            total_required_gpu += required_gpu
+        
+        # 如果总需求超过可用GPU，按比例缩放
+        scaling_factor = 1.0
+        if total_required_gpu > available_gpus:
+            scaling_factor = available_gpus / total_required_gpu
+            self.logger.warning(f"⚠️ GPU需求({total_required_gpu:.2f}) 超过可用GPU({available_gpus:.0f})，按比例缩放({scaling_factor:.2f})")
+        
+        # 分配GPU资源给每个客户端
+        actual_total_gpu = 0.0
+        for device_type, required_gpu in client_requirements:
+            allocated_gpu = required_gpu * scaling_factor
+            gpu_allocation.append(allocated_gpu)
+            actual_total_gpu += allocated_gpu
+        
+        # 生成分配摘要
+        device_summary = {}
+        for (device_type, _), allocated_gpu in zip(client_requirements, gpu_allocation[1:]):
+            if device_type not in device_summary:
+                device_summary[device_type] = {'count': 0, 'total_gpu': 0.0}
+            device_summary[device_type]['count'] += 1
+            device_summary[device_type]['total_gpu'] += allocated_gpu
+        
+        gpu_summary = {
+            "total_available_gpus": available_gpus,
+            "total_allocated_gpus": actual_total_gpu,
+            "utilization_rate": f"{(actual_total_gpu/available_gpus)*100:.1f}%",
+            "server": "CPU only",
+            "scaling_factor": scaling_factor,
+            "device_allocation": device_summary
+        }
+        
+        self.logger.info(f"🎯 分数GPU资源分配: {gpu_summary}")
+        self.logger.info(f"📋 客户端详细分配: {[f'{alloc:.2f}' if alloc else 'CPU' for alloc in gpu_allocation[1:]]}")
         return gpu_allocation
     
     def _create_diverse_device_fleet(self, num_devices: int) -> List[EdgeDeviceProfile]:
@@ -1594,10 +1611,10 @@ class RayV2FederatedLearning:
             # Ray资源分配（基于设备类型和GPU分配）
             client_resources = self._get_ray_resources_for_device(device_profile)
             
-            # 🎮 添加GPU资源分配（如果客户端应该使用GPU）
+            # 🎮 添加分数GPU资源分配（所有客户端都使用GPU）
             client_gpu = client_gpus[i] if i < len(client_gpus) else None
-            if client_gpu is not None and device_profile.device_type in ["smartphone_high", "edge_server"]:
-                client_resources["num_gpus"] = 1  # 为GPU客户端分配1个GPU
+            if client_gpu is not None:
+                client_resources["num_gpus"] = client_gpu  # 分配分数GPU资源
             
             try:
                 # 根据Docker可用性选择Actor类型
@@ -1666,22 +1683,13 @@ class RayV2FederatedLearning:
             available_gpus = int(available_resources.get('GPU', 0))
             gpu_used = total_gpus - available_gpus
             
-            # 统计客户端类型
-            gpu_clients = 0
-            cpu_clients = 0
-            for status in client_statuses:
-                if status.get("status") == "running":
-                    # 检查是否为高端设备会使用GPU
-                    device_type = status.get("device_type", "unknown")
-                    if device_type in ["smartphone_high", "edge_server"] and total_gpus > gpu_clients:
-                        gpu_clients += 1
-                    else:
-                        cpu_clients += 1
+            # 统计运行中的客户端（所有客户端都使用分数GPU）
+            total_clients = sum(1 for s in client_statuses if s["status"] == "running")
             
             self.logger.info(
-                f"⏰ {elapsed}s | 服务器: {server_status['status']} | "
-                f"客户端: GPU={gpu_clients}, CPU={cpu_clients} | "
-                f"Ray GPU使用: {gpu_used}/{total_gpus}"
+                f"⏰ {elapsed}s | 服务器: {server_status['status']} (CPU) | "
+                f"客户端: {total_clients}个节点(分数GPU) | "
+                f"Ray GPU使用: {gpu_used:.1f}/{total_gpus:.0f} ({(gpu_used/total_gpus)*100:.1f}%)"
             )
             
             # 检查训练完成
