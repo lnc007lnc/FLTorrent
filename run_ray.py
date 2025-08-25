@@ -145,8 +145,9 @@ class FLConfig:
     BT_MIN_COMPLETION_RATIO: float = 0.8   # 最小完成比率
     
     # === 拓扑设置 ===
-    TOPOLOGY_TYPE: str = "mesh"           # 拓扑类型: star, ring, mesh
+    TOPOLOGY_TYPE: str = "random"         # 拓扑类型: star, ring, fully_connected, mesh, random
     TOPOLOGY_TIMEOUT: float = 600.0       # 拓扑构建超时
+    TOPOLOGY_CONNECTIONS: int = 2         # 每个节点连接数（mesh:恰好连接数, random:最少连接数）
     
     # === Docker和网络仿真设置 ===
     USE_DOCKER: bool = True               # 启用Docker容器化
@@ -1388,6 +1389,7 @@ class RayV2FederatedLearning:
                 'use': True,
                 'type': CONFIG.TOPOLOGY_TYPE,
                 'timeout': CONFIG.TOPOLOGY_TIMEOUT,
+                'connections': CONFIG.TOPOLOGY_CONNECTIONS,
                 'verbose': True
             },
             

@@ -16,12 +16,17 @@ def extend_topology_cfg(cfg):
     cfg.topology.use = False
     
     # Type of network topology to construct
-    # Options: 'star', 'ring', 'mesh', 'tree', 'custom'
+    # Options: 'star', 'ring', 'fully_connected', 'mesh', 'random', 'tree', 'custom'
     cfg.topology.type = 'star'
     
     # Custom topology specification (used when type='custom')
     # Dict format: {client_id: [neighbor_ids]}
     cfg.topology.custom_graph = CN()
+    
+    # Number of connections per node (for 'mesh' and 'random' topologies)
+    # mesh: each node connects to exactly this many neighbors
+    # random: each node connects to at least this many neighbors (may have more)
+    cfg.topology.connections = 2
     
     # Timeout for topology construction (seconds)
     cfg.topology.timeout = 60.0

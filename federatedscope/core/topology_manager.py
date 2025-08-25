@@ -8,6 +8,7 @@ beyond the default server-client model.
 
 import logging
 import time
+import random
 from typing import Dict, List, Set, Tuple
 from enum import Enum
 
@@ -16,11 +17,13 @@ logger = logging.getLogger(__name__)
 
 class TopologyType(Enum):
     """Supported network topology types"""
-    STAR = "star"           # A-B-C in sequence, B connects to A and C
-    RING = "ring"           # A-B-C-A circular connections
-    MESH = "mesh"           # All-to-all connections
-    TREE = "tree"           # Binary tree structure
-    CUSTOM = "custom"       # User-defined topology
+    STAR = "star"                       # A-B-C in sequence, B connects to A and C
+    RING = "ring"                       # A-B-C-A circular connections
+    FULLY_CONNECTED = "fully_connected" # All-to-all connections (original mesh)
+    MESH = "mesh"                       # Limited connections per node based on degree
+    RANDOM = "random"                   # Random connections ensuring minimum degree
+    TREE = "tree"                       # Binary tree structure
+    CUSTOM = "custom"                   # User-defined topology
 
 
 class TopologyManager:
@@ -28,23 +31,28 @@ class TopologyManager:
     Manages network topology construction for federated learning clients
     """
     
-    def __init__(self, topology_type: str = "star", client_list: List[int] = None):
+    def __init__(self, topology_type: str = "star", client_list: List[int] = None, 
+                 connections: int = 2):
         """
         Initialize topology manager
         
         Args:
             topology_type: Type of topology to build
             client_list: List of client IDs to include in topology
+            connections: Number of connections per node:
+                        - mesh: exactly this many connections per node
+                        - random: minimum connections per node (can have more)
         """
         self.topology_type = TopologyType(topology_type.lower())
         self.client_list = client_list or []
+        self.connections = connections  # 连接数控制参数
         self.topology_graph = {}  # Dict[client_id] -> List[neighbor_ids]
         self.connection_requirements = {}  # Expected connections for each client
         self.established_connections = {}  # Actual established connections
         self.connection_progress = {}  # Track connection progress per client
         
         logger.info(f"TopologyManager initialized: {self.topology_type.value} topology "
-                   f"for clients {self.client_list}")
+                   f"for clients {self.client_list} (connections: {self.connections})")
     
     def compute_topology(self) -> Dict[int, List[int]]:
         """
@@ -57,8 +65,12 @@ class TopologyManager:
             return self._compute_star_topology()
         elif self.topology_type == TopologyType.RING:
             return self._compute_ring_topology()
+        elif self.topology_type == TopologyType.FULLY_CONNECTED:
+            return self._compute_fully_connected_topology()
         elif self.topology_type == TopologyType.MESH:
             return self._compute_mesh_topology()
+        elif self.topology_type == TopologyType.RANDOM:
+            return self._compute_random_topology()
         elif self.topology_type == TopologyType.TREE:
             return self._compute_tree_topology()
         else:
@@ -119,9 +131,9 @@ class TopologyManager:
         logger.info(f"Ring topology computed: {topology}")
         return topology
     
-    def _compute_mesh_topology(self) -> Dict[int, List[int]]:
+    def _compute_fully_connected_topology(self) -> Dict[int, List[int]]:
         """
-        Compute mesh topology: all clients connected to all others
+        Compute fully connected topology: all clients connected to all others (原mesh)
         """
         topology = {}
         
@@ -133,7 +145,97 @@ class TopologyManager:
         self.topology_graph = topology
         self.connection_requirements = topology.copy()
         
-        logger.info(f"Mesh topology computed: {topology}")
+        logger.info(f"Fully connected topology computed: {topology}")
+        return topology
+        
+    def _compute_mesh_topology(self) -> Dict[int, List[int]]:
+        """
+        Compute mesh topology: each node connects to exactly 'connections' neighbors
+        """
+        topology = {}
+        
+        if len(self.client_list) < 2:
+            logger.warning("Mesh topology requires at least 2 clients")
+            return {}
+            
+        # Ensure connections is reasonable
+        max_possible = len(self.client_list) - 1
+        actual_connections = min(self.connections, max_possible)
+        
+        if actual_connections < self.connections:
+            logger.warning(f"Reduced connections from {self.connections} to {actual_connections} "
+                         f"due to limited client count ({len(self.client_list)})")
+        
+        for client_id in self.client_list:
+            # Get all other clients
+            other_clients = [c for c in self.client_list if c != client_id]
+            
+            # Select exactly actual_connections neighbors deterministically
+            # Use client_id as seed for consistent selection across runs
+            local_random = random.Random(client_id)
+            neighbors = local_random.sample(other_clients, min(actual_connections, len(other_clients)))
+            topology[client_id] = sorted(neighbors)  # Sort for consistency
+        
+        self.topology_graph = topology
+        self.connection_requirements = topology.copy()
+        
+        logger.info(f"Mesh topology computed with connections={actual_connections}: {topology}")
+        return topology
+        
+    def _compute_random_topology(self) -> Dict[int, List[int]]:
+        """
+        Compute random topology: each node connects to at least 'connections' random neighbors,
+        with some additional random connections for variety. If connections >= (nodes-1), 
+        automatically becomes fully connected topology.
+        """
+        topology = {}
+        
+        if len(self.client_list) < 2:
+            logger.warning("Random topology requires at least 2 clients")
+            return {}
+            
+        # Check if requested connections would result in full connectivity
+        max_possible = len(self.client_list) - 1
+        
+        if self.connections >= max_possible:
+            logger.info(f"Random topology with connections={self.connections} >= {max_possible}, "
+                       f"creating fully connected topology instead")
+            # Create fully connected topology
+            for client_id in self.client_list:
+                neighbors = [c for c in self.client_list if c != client_id]
+                topology[client_id] = neighbors
+        else:
+            # Create random topology with specified minimum connections
+            min_connections = self.connections
+            logger.info(f"Creating random topology with min_connections={min_connections}")
+            
+            # Global random generator for extra connections
+            global_random = random.Random(42)  # Fixed seed for reproducibility
+            
+            for client_id in self.client_list:
+                other_clients = [c for c in self.client_list if c != client_id]
+                
+                # Start with minimum required connections
+                local_random = random.Random(client_id * 13)  # Different seed per client for consistency
+                neighbors = local_random.sample(other_clients, min_connections)
+                
+                # Add 0-2 additional random connections for variety (if possible)
+                remaining_clients = [c for c in other_clients if c not in neighbors]
+                if remaining_clients:
+                    extra_count = global_random.randint(0, min(2, len(remaining_clients)))
+                    if extra_count > 0:
+                        extra_neighbors = local_random.sample(remaining_clients, extra_count)
+                        neighbors.extend(extra_neighbors)
+                
+                topology[client_id] = sorted(neighbors)  # Sort for consistency
+        
+        self.topology_graph = topology
+        self.connection_requirements = topology.copy()
+        
+        total_connections = sum(len(neighbors) for neighbors in topology.values())
+        avg_connections = total_connections / len(topology)
+        logger.info(f"Random topology computed: {len(topology)} nodes, "
+                   f"total_connections={total_connections}, avg={avg_connections:.2f}")
         return topology
     
     def _compute_tree_topology(self) -> Dict[int, List[int]]:

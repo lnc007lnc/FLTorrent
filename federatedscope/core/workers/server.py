@@ -182,7 +182,8 @@ class Server(BaseServer, ConnectionHandlerMixin):
             # Will be initialized with actual client list after all clients join
             self.topology_manager = TopologyManager(
                 topology_type=self._cfg.topology.type,
-                client_list=[]  # Will be updated when clients join
+                client_list=[],  # Will be updated when clients join
+                connections=getattr(self._cfg.topology, 'connections', 2)
             )
             logger.info(f"Topology construction enabled: {self._cfg.topology.type}")
         
