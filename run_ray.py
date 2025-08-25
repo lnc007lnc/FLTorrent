@@ -620,7 +620,7 @@ class FallbackFederatedScopeServer:
         sock.close()
         
         # 更新配置
-        self.config['distribute']['server_host'] = '0.0.0.0'
+        self.config['distribute']['server_host'] = self.node_ip
         self.config['distribute']['server_port'] = self.server_port
         self.config['use_gpu'] = False  # 强制CPU模式
         
@@ -705,7 +705,7 @@ class FallbackFederatedScopeClient:
         # 更新客户端网络配置
         self.config['distribute']['server_host'] = self.server_ip
         self.config['distribute']['server_port'] = self.server_port
-        self.config['distribute']['client_host'] = '0.0.0.0'
+        self.config['distribute']['client_host'] = self.node_ip
         self.config['distribute']['client_port'] = self.client_port
         self.config['distribute']['data_idx'] = self.client_id
         
