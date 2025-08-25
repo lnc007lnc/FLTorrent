@@ -137,3 +137,4 @@ dmypy.json
 .idea/
 
 **/.DS_Store
+data/cifar-10-python.tar.gz

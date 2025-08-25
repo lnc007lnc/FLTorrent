@@ -1,0 +1,124 @@
+# FederatedScope Docker边缘设备仿真配置
+# 使用Docker容器模拟不同类型的边缘设备进行联邦学习
+
+# 基础联邦学习配置
+federate:
+  mode: 'distributed'
+  client_num: 5
+  total_round_num: 10
+  sample_client_num: 5
+
+# Docker仿真配置
+docker_simulation:
+  # 启用Docker仿真
+  use_docker: True
+  
+  # Docker网络配置
+  network_name: "fl_edge_network"
+  enable_network_simulation: True
+  
+  # 设备配置 - 模拟真实边缘环境
+  device_configs:
+    - device_id: "client_1"
+      device_type: "smartphone_high"
+      docker_image: "federatedscope:smartphone-high"
+      resources:
+        memory: "4g"
+        cpus: "4.0"
+        gpu_support: True
+      network_profile:
+        bandwidth_up_kbps: 50000    # 5G网络
+        bandwidth_down_kbps: 100000
+        latency_ms: 15
+        packet_loss_rate: 0.001
+        
+    - device_id: "client_2"
+      device_type: "smartphone_low"
+      docker_image: "federatedscope:smartphone-low"
+      resources:
+        memory: "1.5g"
+        cpus: "2.0"
+        gpu_support: False
+      network_profile:
+        bandwidth_up_kbps: 10000    # 4G网络
+        bandwidth_down_kbps: 30000
+        latency_ms: 40
+        packet_loss_rate: 0.01
+        
+    - device_id: "client_3"
+      device_type: "raspberry_pi"
+      docker_image: "federatedscope:raspberry-pi"
+      resources:
+        memory: "4g"
+        cpus: "4.0"
+        gpu_support: False
+      network_profile:
+        bandwidth_up_kbps: 25000    # WiFi连接
+        bandwidth_down_kbps: 50000
+        latency_ms: 25
+        packet_loss_rate: 0.005
+        
+    - device_id: "client_4"
+      device_type: "iot_minimal"
+      docker_image: "federatedscope:iot-minimal"
+      resources:
+        memory: "256m"
+        cpus: "1.0"
+        gpu_support: False
+      network_profile:
+        bandwidth_up_kbps: 128      # 低带宽IoT
+        bandwidth_down_kbps: 512
+        latency_ms: 200
+        packet_loss_rate: 0.05
+        
+    - device_id: "server"
+      device_type: "edge_server"
+      docker_image: "federatedscope:edge-server"
+      resources:
+        memory: "16g"
+        cpus: "8.0"
+        gpu_support: True
+      network_profile:
+        bandwidth_up_kbps: 1000000  # 千兆网络
+        bandwidth_down_kbps: 1000000
+        latency_ms: 5
+        packet_loss_rate: 0.0001
+
+# 数据配置
+data:
+  root: 'data/'
+  type: 'CIFAR10'
+  splits: [0.6, 0.2, 0.2]
+  
+# 模型配置
+model:
+  type: 'convnet2'
+  hidden: 2048
+  dropout: 0.5
+
+# 训练配置
+train:
+  optimizer:
+    lr: 0.01
+    weight_decay: 0.0001
+  local_update_steps: 5
+  batch_size: 32
+  
+# 评估配置
+eval:
+  freq: 1
+  metrics: ['acc', 'loss']
+  
+# 日志和输出
+output:
+  use_tensorboard: True
+  tensorboard:
+    save_path: 'exp_out/docker_simulation/tensorboard'
+  results:
+    save_path: 'exp_out/docker_simulation/results'
+    
+# 其他配置
+use_gpu: False  # 将由Docker容器内部决定
+early_stop:
+  patience: 10
+  delta: 0.0

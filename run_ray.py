@@ -797,9 +797,12 @@ class DockerFederatedScopeServer:
         self.server_port = sock.getsockname()[1]
         sock.close()
         
-        # 更新配置
-        self.config['distribute']['server_host'] = '0.0.0.0'  # 容器内监听所有接口
-        self.config['distribute']['server_port'] = 50051      # 容器内端口
+        # 更新配置 - Docker模式三段地址格式：绑定IP|报告IP|报告端口
+        container_bind_ip = '0.0.0.0'  # 容器内绑定地址
+        external_access_ip = self.node_ip  # 外部访问IP
+        external_access_port = self.server_port  # 宿主机映射端口
+        self.config['distribute']['server_host'] = f"{container_bind_ip}|{external_access_ip}|{external_access_port}"
+        self.config['distribute']['server_port'] = 50051  # 容器内端口（保持整数类型）
         
         if self.gpu_id is not None:
             self.config['device'] = 0  # 容器内GPU ID
@@ -914,11 +917,15 @@ class DockerFederatedScopeClient:
         # 应用设备特定配置
         self._apply_device_constraints()
         
-        # 更新客户端网络配置
+        # 更新客户端网络配置  
         self.config['distribute']['server_host'] = self.server_ip
         self.config['distribute']['server_port'] = self.server_port
-        self.config['distribute']['client_host'] = '0.0.0.0'  # 容器内监听
-        self.config['distribute']['client_port'] = 50052       # 容器内端口
+        # Docker模式三段地址格式：绑定IP|报告IP|报告端口
+        container_bind_ip = '0.0.0.0'  # 容器内绑定地址
+        external_access_ip = self.node_ip  # 外部访问IP  
+        external_access_port = self.client_port  # 宿主机映射端口
+        self.config['distribute']['client_host'] = f"{container_bind_ip}|{external_access_ip}|{external_access_port}"
+        self.config['distribute']['client_port'] = 50052  # 容器内端口（保持整数类型）
         self.config['distribute']['data_idx'] = self.client_id
         
         # 客户端专用种子

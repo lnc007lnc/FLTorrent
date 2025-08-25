@@ -106,8 +106,32 @@ class gRPCCommManager(object):
         https://grpc.io/docs/languages/python/
     """
     def __init__(self, host='0.0.0.0', port='50050', client_num=2, cfg=None):
-        self.host = host
-        self.port = port
+        # Docker三段地址支持：绑定IP|报告IP|报告端口
+        logger.info(f"🔍 gRPCCommManager初始化 - 原始host: '{host}', port: {port}")
+        
+        # 处理host地址格式
+        if '|' in host:
+            # Docker三段格式：绑定IP|报告IP|报告端口
+            parts = host.split('|')
+            bind_host, report_host, report_port_str = parts
+            self.bind_host = bind_host    # 实际绑定地址
+            self.report_host = report_host  # 报告给其他实体的地址
+            self.host = report_host  # local_address使用报告地址
+            self.report_port = int(report_port_str)  # 报告给其他实体的端口
+            self.port = self.report_port  # local_address使用报告端口
+            logger.info(f"🐳 Docker三段模式 - 绑定: '{bind_host}:{port}', 报告: '{report_host}:{self.report_port}'")
+        else:
+            # 非Docker单地址模式
+            self.bind_host = host
+            self.report_host = host
+            self.host = host
+            self.report_port = int(port)
+            self.port = int(port)
+            logger.info(f"📡 非Docker模式 - 地址: '{host}:{port}'")
+        
+        # 绑定端口始终使用配置中的port参数
+        self.bind_port = int(port)
+        logger.info(f"✅ 最终设置 - bind: '{self.bind_host}:{self.bind_port}', report: '{self.host}:{self.port}'")
         options = [
             ("grpc.max_send_message_length", cfg.grpc_max_send_message_length),
             ("grpc.max_receive_message_length",
@@ -124,8 +148,8 @@ class gRPCCommManager(object):
 
         self.server_funcs = gRPCComServeFunc()
         self.grpc_server = self.serve(max_workers=client_num,
-                                      host=host,
-                                      port=port,
+                                      host=self.bind_host,  # 使用绑定地址启动服务器
+                                      port=self.bind_port,  # 使用绑定端口启动服务器
                                       options=options)
         self.neighbors = dict()
         self.monitor = None  # used to track the communication related metrics
@@ -136,13 +160,22 @@ class gRPCCommManager(object):
         This function is referred to
         https://grpc.io/docs/languages/python/basics/#starting-the-server
         """
+        logger.info(f"🚀 gRPC服务器启动 - 绑定地址: {host}:{port}")
         server = grpc.server(
             futures.ThreadPoolExecutor(max_workers=max_workers),
             compression=self.comp_method,
             options=options)
         gRPC_comm_manager_pb2_grpc.add_gRPCComServeFuncServicer_to_server(
             self.server_funcs, server)
-        server.add_insecure_port("{}:{}".format(host, port))
+        # 确保host不包含端口号
+        if ':' in host:
+            logger.error(f"❌ 主机地址包含端口号: {host}")
+            # 如果host已经包含端口号，直接使用
+            bind_address = host
+        else:
+            bind_address = "{}:{}".format(host, port)
+        logger.info(f"📍 gRPC尝试绑定到: {bind_address}")
+        server.add_insecure_port(bind_address)
         server.start()
 
         return server
