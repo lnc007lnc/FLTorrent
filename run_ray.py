@@ -48,7 +48,7 @@ class EdgeDeviceProfile:
     bandwidth_up_kbps: int = 10000         # 上行带宽 (kbps)
     bandwidth_down_kbps: int = 50000       # 下行带宽 (kbps)
     latency_ms: int = 50                   # 网络延迟 (毫秒)
-    packet_loss_rate: float = 0.01        # 丢包率 (0-1)
+    packet_loss_rate: float = 0.00        # 丢包率 (0-1)
     jitter_ms: int = 10                    # 网络抖动 (毫秒)
     
     # 设备特性
@@ -63,7 +63,7 @@ class FLConfig:
     
     # === 基础设置 ===
     CLIENT_NUM: int = 2                     # 客户端数量（测试用）
-    TOTAL_ROUNDS: int = 2                   # 训练轮数（测试用）
+    TOTAL_ROUNDS: int = 10                   # 训练轮数（测试用）
     CHUNK_NUM: int = 10                    # 每个客户端模型chunk数
     IMPORTANCE_METHOD: str = "snip"         # chunk重要度方法: magnitude, l2_norm, snip, fisher
     
@@ -125,11 +125,11 @@ class FLConfig:
     
     # === 设备分布配置 ===
     DEVICE_DISTRIBUTION: Dict[str, float] = field(default_factory=lambda: {
-        "smartphone_high": 0.20,    # 20% 高端手机
-        "smartphone_low": 0.40,     # 40% 低端手机
-        "raspberry_pi": 0.15,       # 15% 树莓派
-        "iot_device": 0.20,         # 20% IoT设备
-        "edge_server": 0.05         # 5% 边缘服务器
+        "smartphone_high": 1,    # 20% 高端手机
+        "smartphone_low": 0,     # 40% 低端手机
+        "raspberry_pi": 0,       # 15% 树莓派
+        "iot_device": 0,         # 20% IoT设备
+        "edge_server": 0         # 5% 边缘服务器
     })
     
     # === 训练设置 ===
@@ -153,22 +153,13 @@ class FLConfig:
     ENABLE_NETWORK_SIMULATION: bool = True # 启用网络仿真
     DOCKER_BASE_IMAGE: str = "federatedscope:base"  # Docker基础镜像
     
-    # 边缘设备分布配置 (设备类型 -> 占比)
-    DEVICE_DISTRIBUTION: Dict[str, float] = field(default_factory=lambda: {
-        "smartphone_high": 0.2,   # 20% 高端手机
-        "smartphone_low": 0.4,    # 40% 低端手机
-        "raspberry_pi": 0.2,      # 20% 树莓派
-        "iot_device": 0.15,       # 15% IoT设备
-        "edge_server": 0.05       # 5% 边缘服务器
-    })
-    
     # === Ray资源设置 ===
     RAY_AUTO_GPU_DETECTION: bool = True   # 自动GPU检测
     RAY_MAX_CPUS: Optional[int] = None     # 最大CPU数（None=自动）
     RAY_MAX_GPUS: Optional[int] = None     # 最大GPU数（None=自动）
     
     # === 监控设置 ===
-    MONITOR_DURATION: int = 120           # 监控时长（秒）（测试用）
+    MONITOR_DURATION: int = 999999999           # 监控时长（秒）
     LOG_LEVEL: str = "INFO"               # 日志级别
     ENABLE_RAY_DASHBOARD: bool = True     # 启用Ray Dashboard
     
@@ -182,32 +173,32 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_high",
         device_type="smartphone", 
         docker_image="federatedscope:base",  # 临时使用base镜像
-        cpu_limit="1.0", memory_limit="4g", storage_limit="32g",
+        cpu_limit="1.0", memory_limit="3g", storage_limit="32g",
         bandwidth_up_kbps=50000, bandwidth_down_kbps=100000,
         latency_ms=20, packet_loss_rate=0.005, jitter_ms=5,
-        training_speed_multiplier=1.2, availability_ratio=0.95,
-        mobility_pattern="mobile"
+        training_speed_multiplier=1.0, availability_ratio=1.0,
+        mobility_pattern="static"
     ),
     
     "smartphone_low": EdgeDeviceProfile(
         device_id="smartphone_low", 
         device_type="smartphone",
         docker_image="federatedscope:base",  # 临时使用base镜像
-        cpu_limit="0.3", memory_limit="1.5g", storage_limit="8g",
+        cpu_limit="0.3", memory_limit="3g", storage_limit="8g",
         bandwidth_up_kbps=5000, bandwidth_down_kbps=20000,
         latency_ms=100, packet_loss_rate=0.02, jitter_ms=20,
-        training_speed_multiplier=0.4, availability_ratio=0.7,
-        battery_constraint=True, mobility_pattern="mobile"
+        training_speed_multiplier=0.6, availability_ratio=1.0,
+        battery_constraint=False, mobility_pattern="static"
     ),
     
     "raspberry_pi": EdgeDeviceProfile(
         device_id="raspberry_pi",
         device_type="edge_device",
         docker_image="federatedscope:base",  # 临时使用base镜像
-        cpu_limit="0.6", memory_limit="4g", storage_limit="64g",
+        cpu_limit="0.6", memory_limit="3g", storage_limit="64g",
         bandwidth_up_kbps=10000, bandwidth_down_kbps=50000,
         latency_ms=30, packet_loss_rate=0.01, jitter_ms=10,
-        training_speed_multiplier=0.6, availability_ratio=0.95,
+        training_speed_multiplier=0.7, availability_ratio=1.0,
         mobility_pattern="static"
     ),
     
@@ -215,21 +206,21 @@ EDGE_DEVICE_PROFILES = {
         device_id="iot_device",
         device_type="iot",
         docker_image="federatedscope:base",  # 临时使用base镜像
-        cpu_limit="0.1", memory_limit="256m", storage_limit="2g", 
+        cpu_limit="0.1", memory_limit="2g", storage_limit="2g", 
         bandwidth_up_kbps=128, bandwidth_down_kbps=512,
         latency_ms=300, packet_loss_rate=0.05, jitter_ms=50,
-        training_speed_multiplier=0.1, availability_ratio=0.6,
-        battery_constraint=True, mobility_pattern="intermittent"
+        training_speed_multiplier=0.3, availability_ratio=1.0,
+        battery_constraint=False, mobility_pattern="static"
     ),
     
     "edge_server": EdgeDeviceProfile(
         device_id="edge_server",
         device_type="edge_server", 
         docker_image="federatedscope:base",  # 临时使用base镜像
-        cpu_limit="2.0", memory_limit="8g", storage_limit="100g",
+        cpu_limit="2.0", memory_limit="4g", storage_limit="100g",
         bandwidth_up_kbps=100000, bandwidth_down_kbps=1000000,
         latency_ms=10, packet_loss_rate=0.001, jitter_ms=2,
-        training_speed_multiplier=2.0, availability_ratio=0.99,
+        training_speed_multiplier=1.0, availability_ratio=1.0,
         mobility_pattern="static"
     )
 }
@@ -788,6 +779,19 @@ class DockerFederatedScopeServer:
         self.server_port = None
         self.container_name = "fl_server"
         
+    def _get_absolute_path(self, path: str) -> str:
+        """安全地获取绝对路径，处理Ray Actor中的工作目录问题"""
+        try:
+            # 如果路径已经是绝对路径，直接返回
+            if os.path.isabs(path):
+                return path
+            # 尝试获取绝对路径
+            return os.path.abspath(path)
+        except (OSError, FileNotFoundError):
+            # 如果当前工作目录不存在，使用固定的基础目录
+            base_dir = "/mnt/g/FLtorrent_combine/FederatedScope-master"
+            return os.path.join(base_dir, path)
+    
     def start(self) -> Tuple[str, int]:
         """启动Docker服务器容器"""
         # 动态分配端口
@@ -816,8 +820,8 @@ class DockerFederatedScopeServer:
         with open(config_path, 'w') as f:
             yaml.safe_dump(self.config, f)
         
-        # 准备日志目录
-        log_dir = f"{CONFIG.OUTPUT_DIR}/logs" 
+        # 准备日志目录 - 使用CONFIG.LOG_DIR确保路径一致
+        log_dir = CONFIG.LOG_DIR  # 使用统一的日志目录
         os.makedirs(log_dir, exist_ok=True)
         
         # Docker容器配置
@@ -836,15 +840,15 @@ class DockerFederatedScopeServer:
                 "PYTHONPATH": "/app"
             },
             
-            # 卷挂载
+            # 卷挂载 - 修复Ray Actor中的路径问题
             "volumes": {
-                os.path.abspath(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
-                os.path.abspath(log_dir): {"bind": "/app/logs", "mode": "rw"},
-                os.path.abspath("data"): {"bind": "/app/data", "mode": "rw"}
+                self._get_absolute_path(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
+                self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
+                self._get_absolute_path("data"): {"bind": "/app/data", "mode": "rw"}
             },
             
-            # 启动命令 - 使用shell包装以设置工作目录和环境
-            "command": ["sh", "-c", "cd /app && PYTHONPATH=/app python federatedscope/main.py --cfg /app/config.yaml"]
+            # 启动命令 - 使用shell包装以设置工作目录和环境，并重定向日志到挂载目录
+            "command": ["sh", "-c", "cd /app && PYTHONPATH=/app python federatedscope/main.py --cfg /app/config.yaml > /app/logs/server.log 2>&1"]
         }
         
         # GPU支持
@@ -905,6 +909,19 @@ class DockerFederatedScopeClient:
         self.client_port = None
         self.container_name = f"fl_client_{client_id}"
         
+    def _get_absolute_path(self, path: str) -> str:
+        """安全地获取绝对路径，处理Ray Actor中的工作目录问题"""
+        try:
+            # 如果路径已经是绝对路径，直接返回
+            if os.path.isabs(path):
+                return path
+            # 尝试获取绝对路径
+            return os.path.abspath(path)
+        except (OSError, FileNotFoundError):
+            # 如果当前工作目录不存在，使用固定的基础目录
+            base_dir = "/mnt/g/FLtorrent_combine/FederatedScope-master"
+            return os.path.join(base_dir, path)
+    
     def start(self) -> bool:
         """启动Docker客户端容器"""
         # 动态分配端口
@@ -931,9 +948,11 @@ class DockerFederatedScopeClient:
         # 客户端专用种子
         self.config['seed'] = 12345 + self.client_id
         
-        # 🎮 GPU配置：所有节点都启用GPU（分数分配）
-        self.config['device'] = 0  # 容器内GPU设备ID
-        self.config['use_gpu'] = True  # 所有客户端都使用GPU
+        # 🎮 GPU配置：基于Ray资源分配而非容器内检测
+        # Docker容器启动前无法检测CUDA，应该基于Ray的GPU分配来决定
+        # 注意：use_gpu将在容器启动后由FederatedScope重新检测
+        self.config['device'] = 0  # 容器内默认使用GPU 0（如果可用）
+        self.config['use_gpu'] = True  # 临时设置，容器内会重新检测
         
         # 客户端输出目录
         self.config['outdir'] = f"/app/output"
@@ -941,7 +960,7 @@ class DockerFederatedScopeClient:
         # 准备配置和输出目录
         config_dir = f"{CONFIG.OUTPUT_DIR}/configs"
         output_dir = f"{CONFIG.OUTPUT_DIR}/client_{self.client_id}_output"
-        log_dir = f"{CONFIG.OUTPUT_DIR}/logs"
+        log_dir = CONFIG.LOG_DIR  # 使用统一的日志目录，与宿主机保持一致
         data_dir = "data"
         
         os.makedirs(config_dir, exist_ok=True)
@@ -1003,26 +1022,48 @@ class DockerFederatedScopeClient:
                 "PYTHONPATH": "/app"
             },
             
-            # 卷挂载
+            # 卷挂载 - 修复Ray Actor中的路径问题
             "volumes": {
-                os.path.abspath(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
-                os.path.abspath(output_dir): {"bind": "/app/output", "mode": "rw"},
-                os.path.abspath(log_dir): {"bind": "/app/logs", "mode": "rw"},
-                os.path.abspath(data_dir): {"bind": "/app/data", "mode": "rw"}
+                self._get_absolute_path(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
+                self._get_absolute_path(output_dir): {"bind": "/app/output", "mode": "rw"},
+                self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
+                self._get_absolute_path(data_dir): {"bind": "/app/data", "mode": "rw"}
             },
             
             # 特权模式(用于网络控制)
             "privileged": True,
             
-            # 启动命令 - 使用shell包装以设置工作目录和环境
-            "command": ["sh", "-c", "cd /app && PYTHONPATH=/app python federatedscope/main.py --cfg /app/config.yaml"]
+            # 启动命令 - 使用shell包装以设置工作目录和环境，并重定向日志到挂载目录
+            "command": ["sh", "-c", f"cd /app && PYTHONPATH=/app python federatedscope/main.py --cfg /app/config.yaml > /app/logs/client_{self.client_id}.log 2>&1"]
         }
         
-        # GPU支持
-        if self.config.get('use_gpu', False):
+        # GPU支持 - 基于Ray资源分配决定容器GPU访问权限
+        # 从Actor类的资源选项中获取GPU分配信息
+        # 这个信息在Actor创建时就已经确定了
+        try:
+            # 获取当前Actor的资源分配（从类变量或实例保存的信息）
+            actor_options = ray.get_runtime_context().current_actor
+            # 由于无法直接获取Actor的资源配置，我们使用一个更简单的方法：
+            # 检查集群中是否有GPU资源，如果有就给容器GPU访问权限
+            cluster_resources = ray.cluster_resources()
+            has_gpu_in_cluster = cluster_resources.get('GPU', 0) > 0
+            
+            if has_gpu_in_cluster:
+                # 如果集群有GPU资源，给Docker容器GPU访问权限
+                # FederatedScope会在容器内自动检测并决定是否使用GPU
+                container_config["device_requests"] = [
+                    docker.types.DeviceRequest(count=-1, capabilities=[['gpu']])
+                ]
+                print(f"🎮 客户端{self.client_id}: 集群有GPU资源，启用容器GPU访问")
+            else:
+                print(f"💻 客户端{self.client_id}: 集群无GPU资源，使用CPU模式")
+                
+        except Exception as e:
+            # 如果获取资源信息失败，默认启用GPU访问（让FederatedScope自己决定）
             container_config["device_requests"] = [
                 docker.types.DeviceRequest(count=-1, capabilities=[['gpu']])
             ]
+            print(f"🎮 客户端{self.client_id}: 无法获取资源信息({e})，默认启用GPU访问")
         
         try:
             # 启动容器
@@ -1254,9 +1295,19 @@ class RayV2FederatedLearning:
         
     def generate_base_config(self) -> Dict[str, Any]:
         """生成基础配置"""
+        # 检查CUDA可用性
+        use_gpu = False
+        try:
+            import torch
+            use_gpu = torch.cuda.is_available()
+            if not use_gpu:
+                self.logger.warning("⚠️ CUDA不可用，所有节点将使用CPU模式")
+        except ImportError:
+            self.logger.warning("⚠️ PyTorch未安装，使用CPU模式")
+            
         return {
-            'use_gpu': True,
-            'device': 0,  # 将被动态覆盖
+            'use_gpu': use_gpu,
+            'device': 0 if use_gpu else -1,  # GPU设备ID或CPU模式
             'seed': 12345,  # 将被动态覆盖
             
             'federate': {
@@ -1373,28 +1424,39 @@ class RayV2FederatedLearning:
         
         # 🎮 定义设备性能对应的GPU资源分配比例
         device_gpu_ratios = {
-            "edge_server": 0.7,        # 边缘服务器 - 高性能 70%
-            "smartphone_high": 0.5,    # 高端手机 - 中等性能 50% 
-            "smartphone_low": 0.3,     # 低端手机 - 低性能 30%
-            "raspberry_pi": 0.3,       # 树莓派 - 低性能 30%
-            "iot_device": 0.2,         # IoT设备 - 最低性能 20%
+            "edge_server": 0.5,        # 边缘服务器 - 高性能 50%
+            "smartphone_high": 0.35,   # 高端手机 - 中等性能 35% 
+            "smartphone_low": 0.25,    # 低端手机 - 低性能 25%
+            "raspberry_pi": 0.25,      # 树莓派 - 低性能 25%
+            "iot_device": 0.15,        # IoT设备 - 最低性能 15%
         }
         
         # 计算所有客户端需要的GPU总量
         total_required_gpu = 0.0
         client_requirements = []
         
+        # 只使用ratio>0的设备类型进行GPU分配
+        active_device_types = [dt for dt, ratio in CONFIG.DEVICE_DISTRIBUTION.items() if ratio > 0]
+        if not active_device_types:
+            active_device_types = ["smartphone_high"]  # 默认设备类型
+            
         for i in range(CONFIG.CLIENT_NUM):
-            device_type = list(CONFIG.DEVICE_DISTRIBUTION.keys())[i % len(CONFIG.DEVICE_DISTRIBUTION)]
+            device_type = active_device_types[i % len(active_device_types)]
             required_gpu = device_gpu_ratios.get(device_type, 0.3)  # 默认0.3
             client_requirements.append((device_type, required_gpu))
             total_required_gpu += required_gpu
         
-        # 如果总需求超过可用GPU，按比例缩放
-        scaling_factor = 1.0
-        if total_required_gpu > available_gpus:
-            scaling_factor = available_gpus / total_required_gpu
-            self.logger.warning(f"⚠️ GPU需求({total_required_gpu:.2f}) 超过可用GPU({available_gpus:.0f})，按比例缩放({scaling_factor:.2f})")
+        # 🎯 智能缩放：始终保持90-100%的GPU利用率
+        target_utilization = 0.80  # 目标80%利用率（降低资源竞争）
+        target_gpu_usage = available_gpus * target_utilization
+        scaling_factor = target_gpu_usage / total_required_gpu
+        
+        if scaling_factor < 1.0:
+            self.logger.warning(f"⚠️ GPU需求({total_required_gpu:.2f}) 超过目标使用量({target_gpu_usage:.2f})，向下缩放({scaling_factor:.2f})")
+        elif scaling_factor > 1.0:
+            self.logger.info(f"🚀 GPU充足({total_required_gpu:.2f} < {target_gpu_usage:.2f})，向上扩展({scaling_factor:.2f})提升性能")
+        else:
+            self.logger.info(f"⚡ GPU分配已优化，达到目标利用率({target_utilization*100:.0f}%)")
         
         # 分配GPU资源给每个客户端
         actual_total_gpu = 0.0
@@ -1431,7 +1493,9 @@ class RayV2FederatedLearning:
         
         # 按照配置的分布比例分配设备类型
         for device_type, ratio in CONFIG.DEVICE_DISTRIBUTION.items():
-            count = max(1, int(num_devices * ratio))  # 至少保证一个设备
+            if ratio <= 0:  # 跳过比例为0的设备类型
+                continue
+            count = max(1, int(num_devices * ratio))
             
             for i in range(count):
                 if len(device_assignments) >= num_devices:
@@ -1442,9 +1506,12 @@ class RayV2FederatedLearning:
                 device_variant = self._create_device_variant(base_profile, len(device_assignments) + 1)
                 device_assignments.append(device_variant)
         
-        # 如果设备不够，随机添加
+        # 如果设备不够，随机添加（只从比例>0的设备类型中选择）
         while len(device_assignments) < num_devices:
-            device_type = random.choice(device_types)
+            available_types = [dt for dt, ratio in CONFIG.DEVICE_DISTRIBUTION.items() if ratio > 0]
+            if not available_types:
+                break  # 没有可用的设备类型
+            device_type = random.choice(available_types)
             base_profile = EDGE_DEVICE_PROFILES[device_type]
             device_variant = self._create_device_variant(base_profile, len(device_assignments) + 1)
             device_assignments.append(device_variant)
@@ -1487,17 +1554,24 @@ class RayV2FederatedLearning:
         """根据设备类型获取Ray资源分配"""
         base_cpu = max(0.1, float(device_profile.cpu_limit))
         
-        # 根据设备类型调整资源
+        # 从设备配置中解析内存限制
+        memory_str = device_profile.memory_limit.lower()
+        if memory_str.endswith('g'):
+            memory_bytes = int(float(memory_str[:-1]) * 1024 * 1024 * 1024)
+        elif memory_str.endswith('m'):
+            memory_bytes = int(float(memory_str[:-1]) * 1024 * 1024)
+        else:
+            memory_bytes = 1024 * 1024 * 1024  # 默认1GB
+        
+        # 根据设备类型调整CPU资源
         if device_profile.device_type == "iot":
-            return {"num_cpus": 0.2, "memory": 256 * 1024 * 1024}  # 256MB
-        elif device_profile.device_type == "smartphone" and "low" in device_profile.device_id:
-            return {"num_cpus": 0.5, "memory": 1 * 1024 * 1024 * 1024}  # 1GB
+            return {"num_cpus": 0.2, "memory": memory_bytes}
         elif device_profile.device_type == "smartphone":
-            return {"num_cpus": 1.0, "memory": 4 * 1024 * 1024 * 1024}  # 4GB
+            return {"num_cpus": base_cpu, "memory": memory_bytes}
         elif device_profile.device_type == "edge_server":
-            return {"num_cpus": 2.0, "memory": 8 * 1024 * 1024 * 1024}  # 8GB
+            return {"num_cpus": base_cpu, "memory": memory_bytes}
         else:  # raspberry_pi, edge_device
-            return {"num_cpus": 0.8, "memory": 2 * 1024 * 1024 * 1024}  # 2GB
+            return {"num_cpus": base_cpu, "memory": memory_bytes}
     
     def cleanup_environment(self):
         """清理环境"""
@@ -1679,8 +1753,8 @@ class RayV2FederatedLearning:
             available_resources = ray.available_resources()
             
             # 计算实际GPU使用情况
-            total_gpus = int(cluster_resources.get('GPU', 0))
-            available_gpus = int(available_resources.get('GPU', 0))
+            total_gpus = float(cluster_resources.get('GPU', 0))
+            available_gpus = float(available_resources.get('GPU', 0))
             gpu_used = total_gpus - available_gpus
             
             # 统计运行中的客户端（所有客户端都使用分数GPU）
@@ -1689,7 +1763,7 @@ class RayV2FederatedLearning:
             self.logger.info(
                 f"⏰ {elapsed}s | 服务器: {server_status['status']} (CPU) | "
                 f"客户端: {total_clients}个节点(分数GPU) | "
-                f"Ray GPU使用: {gpu_used:.1f}/{total_gpus:.0f} ({(gpu_used/total_gpus)*100:.1f}%)"
+                f"Ray GPU使用: {gpu_used:.1f}/{total_gpus:.1f} ({(gpu_used/total_gpus)*100:.1f}%)"
             )
             
             # 检查训练完成
