@@ -150,7 +150,10 @@ class TopologyManager:
         
     def _compute_mesh_topology(self) -> Dict[int, List[int]]:
         """
-        Compute mesh topology: each node connects to exactly 'connections' neighbors
+        Compute balanced mesh topology: each node connects to approximately 'connections' neighbors
+        
+        🔧 FIXED: Creates symmetric topology where total connections per node are balanced.
+        Previous implementation only controlled outbound connections, leading to imbalanced topologies.
         """
         topology = {}
         
@@ -158,28 +161,93 @@ class TopologyManager:
             logger.warning("Mesh topology requires at least 2 clients")
             return {}
             
-        # Ensure connections is reasonable
-        max_possible = len(self.client_list) - 1
-        actual_connections = min(self.connections, max_possible)
+        n = len(self.client_list)
+        max_possible = n - 1
+        target_connections = min(self.connections, max_possible)
         
-        if actual_connections < self.connections:
-            logger.warning(f"Reduced connections from {self.connections} to {actual_connections} "
-                         f"due to limited client count ({len(self.client_list)})")
+        if target_connections < self.connections:
+            logger.warning(f"Reduced connections from {self.connections} to {target_connections} "
+                         f"due to limited client count ({n})")
         
-        for client_id in self.client_list:
-            # Get all other clients
-            other_clients = [c for c in self.client_list if c != client_id]
+        # 🔧 FIX: Create balanced symmetric topology
+        if target_connections >= max_possible:
+            # Full mesh if target >= n-1
+            for client_id in self.client_list:
+                topology[client_id] = [c for c in self.client_list if c != client_id]
+            logger.info(f"Mesh topology: full connectivity (target={target_connections} >= max={max_possible})")
+        else:
+            # 🆕 Create symmetric balanced mesh
+            topology = {client_id: [] for client_id in self.client_list}
+            edges = set()  # Track unique edges to avoid duplicates
             
-            # Select exactly actual_connections neighbors deterministically
-            # Use client_id as seed for consistent selection across runs
-            local_random = random.Random(client_id)
-            neighbors = local_random.sample(other_clients, min(actual_connections, len(other_clients)))
-            topology[client_id] = sorted(neighbors)  # Sort for consistency
+            # Use deterministic seed for reproducible topology
+            mesh_random = random.Random(42)
+            
+            # Create edge list with balanced distribution
+            attempts = 0
+            max_attempts = n * target_connections * 2  # Reasonable attempt limit
+            
+            while len(edges) < (n * target_connections) // 2 and attempts < max_attempts:
+                # Randomly select two different nodes
+                nodes = mesh_random.sample(self.client_list, 2)
+                node1, node2 = min(nodes), max(nodes)  # Normalize edge order
+                edge = (node1, node2)
+                
+                # Check if this edge would exceed target connections for either node
+                if (edge not in edges and 
+                    len(topology[node1]) < target_connections and 
+                    len(topology[node2]) < target_connections):
+                    
+                    edges.add(edge)
+                    topology[node1].append(node2)
+                    topology[node2].append(node1)
+                
+                attempts += 1
+            
+            # 🔧 Ensure minimum connectivity if needed
+            # Add missing connections to nodes that are under-connected
+            for client_id in self.client_list:
+                current_connections = len(topology[client_id])
+                if current_connections < target_connections:
+                    # Find potential neighbors not yet connected
+                    available_neighbors = [
+                        c for c in self.client_list 
+                        if c != client_id and c not in topology[client_id] 
+                        and len(topology[c]) < target_connections
+                    ]
+                    
+                    # Add connections to reach target
+                    needed = min(target_connections - current_connections, len(available_neighbors))
+                    if needed > 0:
+                        # Use client_id as seed for deterministic neighbor selection
+                        client_random = random.Random(client_id)
+                        chosen_neighbors = client_random.sample(available_neighbors, needed)
+                        
+                        for neighbor in chosen_neighbors:
+                            if neighbor not in topology[client_id]:  # Double check
+                                topology[client_id].append(neighbor)
+                                topology[neighbor].append(client_id)
+                                edges.add((min(client_id, neighbor), max(client_id, neighbor)))
+            
+            # Sort neighbor lists for consistency
+            for client_id in topology:
+                topology[client_id].sort()
+            
+            # Calculate statistics
+            total_edges = len(edges)
+            connections_per_node = [len(neighbors) for neighbors in topology.values()]
+            avg_connections = sum(connections_per_node) / n
+            min_connections = min(connections_per_node)
+            max_connections = max(connections_per_node)
+            
+            logger.info(f"Balanced mesh topology: {n} nodes, {total_edges} edges")
+            logger.info(f"Connections per node - Target: {target_connections}, "
+                       f"Actual: [{min_connections}, {max_connections}], Avg: {avg_connections:.1f}")
         
         self.topology_graph = topology
         self.connection_requirements = topology.copy()
         
-        logger.info(f"Mesh topology computed with connections={actual_connections}: {topology}")
+        logger.info(f"Mesh topology computed (balanced): {topology}")
         return topology
         
     def _compute_random_topology(self) -> Dict[int, List[int]]:
