@@ -252,9 +252,11 @@ class TopologyManager:
         
     def _compute_random_topology(self) -> Dict[int, List[int]]:
         """
-        Compute random topology: each node connects to at least 'connections' random neighbors,
-        with some additional random connections for variety. If connections >= (nodes-1), 
-        automatically becomes fully connected topology.
+        Compute balanced random topology: each node connects to approximately 'connections' neighbors.
+        
+        🔧 FIXED: Creates symmetric topology with balanced random connections.
+        Previous implementation only controlled outbound connections, leading to imbalanced topologies.
+        New implementation uses symmetric edge management with randomized balanced distribution.
         """
         topology = {}
         
@@ -262,48 +264,112 @@ class TopologyManager:
             logger.warning("Random topology requires at least 2 clients")
             return {}
             
-        # Check if requested connections would result in full connectivity
-        max_possible = len(self.client_list) - 1
+        n = len(self.client_list)
+        max_possible = n - 1
+        target_connections = min(self.connections, max_possible)
         
-        if self.connections >= max_possible:
-            logger.info(f"Random topology with connections={self.connections} >= {max_possible}, "
-                       f"creating fully connected topology instead")
-            # Create fully connected topology
+        if target_connections < self.connections:
+            logger.warning(f"Reduced connections from {self.connections} to {target_connections} "
+                         f"due to limited client count ({n})")
+        
+        # 🔧 FIX: Create balanced symmetric random topology
+        if target_connections >= max_possible:
+            # Full mesh if target >= n-1
             for client_id in self.client_list:
-                neighbors = [c for c in self.client_list if c != client_id]
-                topology[client_id] = neighbors
+                topology[client_id] = [c for c in self.client_list if c != client_id]
+            logger.info(f"Random topology: full connectivity (target={target_connections} >= max={max_possible})")
         else:
-            # Create random topology with specified minimum connections
-            min_connections = self.connections
-            logger.info(f"Creating random topology with min_connections={min_connections}")
+            # 🆕 Create symmetric balanced random topology
+            topology = {client_id: [] for client_id in self.client_list}
+            edges = set()  # Track unique edges to avoid duplicates
             
-            # Global random generator for extra connections
-            global_random = random.Random(42)  # Fixed seed for reproducibility
+            # Use deterministic seed for reproducible topology with randomness
+            random_gen = random.Random(42)
             
-            for client_id in self.client_list:
-                other_clients = [c for c in self.client_list if c != client_id]
+            # Create target number of edges with random selection
+            target_edges = (n * target_connections) // 2
+            
+            # Generate all possible edges and shuffle them randomly
+            all_possible_edges = []
+            for i, client1 in enumerate(self.client_list):
+                for j, client2 in enumerate(self.client_list[i+1:], i+1):
+                    all_possible_edges.append((client1, client2))
+            
+            random_gen.shuffle(all_possible_edges)  # Randomize edge order
+            
+            # Try to add edges while maintaining balance
+            for edge in all_possible_edges:
+                node1, node2 = edge
                 
-                # Start with minimum required connections
-                local_random = random.Random(client_id * 13)  # Different seed per client for consistency
-                neighbors = local_random.sample(other_clients, min_connections)
+                # Check if adding this edge would exceed target connections for either node
+                if (len(topology[node1]) < target_connections and 
+                    len(topology[node2]) < target_connections):
+                    
+                    edges.add(edge)
+                    topology[node1].append(node2)
+                    topology[node2].append(node1)
+                    
+                    # Stop if we have enough edges
+                    if len(edges) >= target_edges:
+                        break
+            
+            # 🔧 Ensure minimum connectivity with random selection
+            # Add missing connections to under-connected nodes
+            under_connected = [client_id for client_id in self.client_list 
+                             if len(topology[client_id]) < target_connections]
+            
+            while under_connected:
+                # Randomly select an under-connected node
+                client_id = random_gen.choice(under_connected)
+                current_connections = len(topology[client_id])
                 
-                # Add 0-2 additional random connections for variety (if possible)
-                remaining_clients = [c for c in other_clients if c not in neighbors]
-                if remaining_clients:
-                    extra_count = global_random.randint(0, min(2, len(remaining_clients)))
-                    if extra_count > 0:
-                        extra_neighbors = local_random.sample(remaining_clients, extra_count)
-                        neighbors.extend(extra_neighbors)
+                if current_connections >= target_connections:
+                    under_connected.remove(client_id)
+                    continue
                 
-                topology[client_id] = sorted(neighbors)  # Sort for consistency
+                # Find potential neighbors not yet connected
+                available_neighbors = [
+                    c for c in self.client_list 
+                    if c != client_id and c not in topology[client_id] 
+                    and len(topology[c]) < target_connections
+                ]
+                
+                if not available_neighbors:
+                    # If no balanced neighbors available, try any unconnected neighbor
+                    available_neighbors = [
+                        c for c in self.client_list 
+                        if c != client_id and c not in topology[client_id]
+                    ]
+                
+                if available_neighbors:
+                    # Randomly choose a neighbor to connect to
+                    neighbor = random_gen.choice(available_neighbors)
+                    topology[client_id].append(neighbor)
+                    topology[neighbor].append(client_id)
+                    edges.add((min(client_id, neighbor), max(client_id, neighbor)))
+                else:
+                    # No more connections possible for this node
+                    under_connected.remove(client_id)
+            
+            # Sort neighbor lists for consistency
+            for client_id in topology:
+                topology[client_id].sort()
+            
+            # Calculate statistics
+            total_edges = len(edges)
+            connections_per_node = [len(neighbors) for neighbors in topology.values()]
+            avg_connections = sum(connections_per_node) / n
+            min_connections = min(connections_per_node)
+            max_connections = max(connections_per_node)
+            
+            logger.info(f"Balanced random topology: {n} nodes, {total_edges} edges")
+            logger.info(f"Connections per node - Target: {target_connections}, "
+                       f"Actual: [{min_connections}, {max_connections}], Avg: {avg_connections:.1f}")
         
         self.topology_graph = topology
         self.connection_requirements = topology.copy()
         
-        total_connections = sum(len(neighbors) for neighbors in topology.values())
-        avg_connections = total_connections / len(topology)
-        logger.info(f"Random topology computed: {len(topology)} nodes, "
-                   f"total_connections={total_connections}, avg={avg_connections:.2f}")
+        logger.info(f"Random topology computed (balanced): {topology}")
         return topology
     
     def _compute_tree_topology(self) -> Dict[int, List[int]]:

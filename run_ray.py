@@ -62,7 +62,7 @@ class FLConfig:
     """联邦学习配置参数"""
     
     # === 基础设置 ===
-    CLIENT_NUM: int = 2                     # 客户端数量（测试用）
+    CLIENT_NUM: int = 4                     # 客户端数量（测试用）
     TOTAL_ROUNDS: int = 10                   # 训练轮数（测试用）
     CHUNK_NUM: int = 10                    # 每个客户端模型chunk数
     IMPORTANCE_METHOD: str = "snip"         # chunk重要度方法: magnitude, l2_norm, snip, fisher
@@ -145,7 +145,7 @@ class FLConfig:
     BT_MIN_COMPLETION_RATIO: float = 0.8   # 最小完成比率
     
     # === 拓扑设置 ===
-    TOPOLOGY_TYPE: str = "random"         # 拓扑类型: star, ring, fully_connected, mesh, random
+    TOPOLOGY_TYPE: str = "mesh"         # 拓扑类型: star, ring, fully_connected, mesh, random
     TOPOLOGY_TIMEOUT: float = 600.0       # 拓扑构建超时
     TOPOLOGY_CONNECTIONS: int = 2         # 每个节点连接数（mesh:恰好连接数, random:最少连接数）
     
@@ -174,7 +174,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_high",
         device_type="smartphone", 
         docker_image="federatedscope:base",  # 临时使用base镜像
-        cpu_limit="1.0", memory_limit="3g", storage_limit="32g",
+        cpu_limit="1.0", memory_limit="2g", storage_limit="32g",
         bandwidth_up_kbps=50000, bandwidth_down_kbps=100000,
         latency_ms=20, packet_loss_rate=0.005, jitter_ms=5,
         training_speed_multiplier=1.0, availability_ratio=1.0,
@@ -185,7 +185,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_low", 
         device_type="smartphone",
         docker_image="federatedscope:base",  # 临时使用base镜像
-        cpu_limit="0.3", memory_limit="3g", storage_limit="8g",
+        cpu_limit="0.3", memory_limit="2g", storage_limit="8g",
         bandwidth_up_kbps=5000, bandwidth_down_kbps=20000,
         latency_ms=100, packet_loss_rate=0.02, jitter_ms=20,
         training_speed_multiplier=0.6, availability_ratio=1.0,
@@ -196,7 +196,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="raspberry_pi",
         device_type="edge_device",
         docker_image="federatedscope:base",  # 临时使用base镜像
-        cpu_limit="0.6", memory_limit="3g", storage_limit="64g",
+        cpu_limit="0.6", memory_limit="2g", storage_limit="64g",
         bandwidth_up_kbps=10000, bandwidth_down_kbps=50000,
         latency_ms=30, packet_loss_rate=0.01, jitter_ms=10,
         training_speed_multiplier=0.7, availability_ratio=1.0,
@@ -218,7 +218,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="edge_server",
         device_type="edge_server", 
         docker_image="federatedscope:base",  # 临时使用base镜像
-        cpu_limit="2.0", memory_limit="4g", storage_limit="100g",
+        cpu_limit="2.0", memory_limit="2g", storage_limit="100g",
         bandwidth_up_kbps=100000, bandwidth_down_kbps=1000000,
         latency_ms=10, packet_loss_rate=0.001, jitter_ms=2,
         training_speed_multiplier=1.0, availability_ratio=1.0,
