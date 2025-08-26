@@ -82,7 +82,13 @@ RUN pip install --no-cache-dir \
     # gRPC related (for distributed communication)
     grpcio \
     grpcio-tools \
-    protobuf
+    protobuf \
+    # NLP dependencies
+    tqdm \
+    nltk \
+    transformers \
+    datasets \
+    tokenizers
 
 # Install latest PyTorch (supporting RTX 5090 sm_120 architecture)
 RUN pip install --no-cache-dir --pre \

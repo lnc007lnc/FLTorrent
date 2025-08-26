@@ -60,7 +60,7 @@ def assert_topology_cfg(cfg):
         return  # Skip validation if topology is disabled
     
     # Validate topology type
-    valid_types = ['star', 'ring', 'mesh', 'tree', 'custom']
+    valid_types = ['star', 'ring', 'fully_connected', 'mesh', 'random', 'tree', 'custom']
     assert cfg.topology.type in valid_types, \
         f"cfg.topology.type must be one of {valid_types}, but got {cfg.topology.type}"
     
@@ -104,7 +104,9 @@ def assert_topology_cfg(cfg):
         min_clients_required = {
             'star': 2,
             'ring': 3,
+            'fully_connected': 2,
             'mesh': 2,
+            'random': 2,
             'tree': 2,
             'custom': 1
         }

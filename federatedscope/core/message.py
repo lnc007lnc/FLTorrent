@@ -6,7 +6,7 @@ from federatedscope.core.proto import gRPC_comm_manager_pb2
 
 
 def b64serializer(x):
-    return base64.b64encode(pickle.dumps(x))
+    return base64.b64encode(pickle.dumps(x)).decode('ascii')
 
 
 class Message(object):
@@ -187,8 +187,12 @@ class Message(object):
             m_single = gRPC_comm_manager_pb2.mSingle()
             if type(value) in [int, np.int32]:
                 m_single.int_value = value
-            elif type(value) in [str, bytes]:
+            elif type(value) == str:
                 m_single.str_value = value
+            elif type(value) == bytes:
+                # Convert bytes to base64 string for protobuf compatibility
+                import base64
+                m_single.str_value = base64.b64encode(value).decode('ascii')
             elif type(value) in [float, np.float32]:
                 m_single.float_value = value
             elif type(value) == bool:

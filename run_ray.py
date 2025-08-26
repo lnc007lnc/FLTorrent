@@ -62,24 +62,37 @@ class FLConfig:
     """Federated learning configuration parameters"""
     
     # === Basic Settings ===
-    CLIENT_NUM: int = 4                     # Number of clients (for testing)
-    TOTAL_ROUNDS: int = 10                   # Number of training rounds (for testing)
+    CLIENT_NUM: int = 2                     # Number of clients (for testing)
+    TOTAL_ROUNDS: int = 20                   # Increased rounds for better convergence
     CHUNK_NUM: int = 10                    # Number of model chunks per client
     IMPORTANCE_METHOD: str = "snip"         # Chunk importance method: magnitude, l2_norm, snip, fisher
     
     # === Dataset Settings ===
-    DATASET: str = "CIFAR10@torchvision"   # Dataset
-    BATCH_SIZE: int = 32                   # Batch size
-    DATA_SPLIT_ALPHA: float = 0.1          # LDA data split parameter
+    # CNN Settings (uncomment for computer vision tasks)
+    # DATASET: str = "CIFAR10@torchvision"   # CNN Dataset
+    # BATCH_SIZE: int = 32                   # CNN Batch size
+    # DATA_SPLIT_ALPHA: float = 0.1          # LDA data split parameter
+    
+    # Transformer/NLP Settings (current active)
+    DATASET: str = "shakespeare"            # Shakespeare text dataset
+    BATCH_SIZE: int = 8                     # Small batch size for testing
+    DATA_SPLIT_ALPHA: float = 0.5          # LDA data split parameter (less extreme split)
     
     # === Model Settings ===
-    MODEL_TYPE: str = "convnet2"          # Model type
-    MODEL_HIDDEN: int = 512               # Hidden layer size
-    MODEL_OUT_CHANNELS: int = 10          # Number of output channels
-    MODEL_DROPOUT: float = 0.0            # Dropout rate
+    # CNN Model Settings (uncomment for computer vision tasks)
+    # MODEL_TYPE: str = "convnet2"          # CNN Model type
+    # MODEL_HIDDEN: int = 512               # Hidden layer size
+    # MODEL_OUT_CHANNELS: int = 10          # Number of output channels for CNN
+    # MODEL_DROPOUT: float = 0.0            # Dropout rate
+    
+    # Transformer/NLP Model Settings (current active)
+    MODEL_TYPE: str = "lstm"                # LSTM model for text
+    MODEL_HIDDEN: int = 256                 # Increased hidden size for better capacity
+    MODEL_OUT_CHANNELS: int = 80            # Vocab size for shakespeare
+    MODEL_DROPOUT: float = 0.1             # Add dropout for regularization
     
     # === Docker Settings ===
-    USE_DOCKER: bool = True                # Enable Docker container mode
+    USE_DOCKER: bool = True               # Disable Docker for testing (enable after rebuilding image)
     BASE_DOCKER_IMAGE: str = "federatedscope:base"  # Base image
     DOCKER_NETWORK_NAME: str = "fl_network"         # Docker network name
     ENABLE_NETWORK_SIMULATION: bool = True          # Enable network simulation
@@ -133,11 +146,11 @@ class FLConfig:
     })
     
     # === Training Settings ===
-    LOCAL_UPDATE_STEPS: int = 1           # Local training steps
-    LEARNING_RATE: float = 0.01           # Learning rate
-    OPTIMIZER: str = "SGD"                # Optimizer
+    LOCAL_UPDATE_STEPS: int = 5           # Increased local training steps
+    LEARNING_RATE: float = 0.001          # Reduced learning rate for LSTM stability
+    OPTIMIZER: str = "Adam"               # Adam optimizer for better convergence
     WEIGHT_DECAY: float = 0.0001          # Weight decay
-    GRAD_CLIP: float = 5.0                # Gradient clipping
+    GRAD_CLIP: float = 1.0                # Reduced gradient clipping for LSTM
     
     # === BitTorrent Settings ===
     BITTORRENT_TIMEOUT: float = 600.0     # BitTorrent timeout
@@ -145,12 +158,11 @@ class FLConfig:
     BT_MIN_COMPLETION_RATIO: float = 0.8   # Minimum completion ratio
     
     # === Topology Settings ===
-    TOPOLOGY_TYPE: str = "mesh"         # Topology type: star, ring, fully_connected, mesh, random
+    TOPOLOGY_TYPE: str = "random"         # Topology type: star, ring, fully_connected, mesh, random
     TOPOLOGY_TIMEOUT: float = 600.0       # Topology construction timeout
     TOPOLOGY_CONNECTIONS: int = 2         # Connections per node (mesh: exact connections, random: minimum connections)
     
-    # === Docker and Network Simulation Settings ===
-    USE_DOCKER: bool = True               # Enable Docker containerization
+    # === Network Simulation Settings ===
     ENABLE_NETWORK_SIMULATION: bool = True # Enable network simulation
     DOCKER_BASE_IMAGE: str = "federatedscope:base"  # Docker base image
     
@@ -1331,17 +1343,8 @@ class RayV2FederatedLearning:
             'data': {
                 'root': 'data/',
                 'type': CONFIG.DATASET,
-                'splits': [0.8, 0.1, 0.1],
-                'num_workers': 0,
-                'transform': [['ToTensor'], ['Normalize', {
-                    'mean': [0.4914, 0.4822, 0.4465], 
-                    'std': [0.2470, 0.2435, 0.2616]
-                }]],
-                'test_transform': [['ToTensor'], ['Normalize', {
-                    'mean': [0.4914, 0.4822, 0.4465], 
-                    'std': [0.2470, 0.2435, 0.2616]
-                }]],
-                'args': [{'download': True}],
+                'splits': [0.6, 0.2, 0.2],  # Shakespeare dataset standard splits
+                'subsample': 0.5,            # Increased data usage for better learning
                 'splitter': 'lda',
                 'splitter_args': [{'alpha': CONFIG.DATA_SPLIT_ALPHA}]
             },
@@ -1353,7 +1356,9 @@ class RayV2FederatedLearning:
             'model': {
                 'type': CONFIG.MODEL_TYPE,
                 'hidden': CONFIG.MODEL_HIDDEN,
+                'in_channels': 80,           # Shakespeare vocab size
                 'out_channels': CONFIG.MODEL_OUT_CHANNELS,
+                'embed_size': 8,             # Small embedding for testing
                 'dropout': CONFIG.MODEL_DROPOUT
             },
             
@@ -1372,11 +1377,11 @@ class RayV2FederatedLearning:
             },
             
             'criterion': {
-                'type': 'CrossEntropyLoss'
+                'type': 'character_loss'     # Character-level loss for shakespeare
             },
             
             'trainer': {
-                'type': 'cvtrainer'
+                'type': 'nlptrainer'         # NLP trainer for text tasks
             },
             
             'eval': {
