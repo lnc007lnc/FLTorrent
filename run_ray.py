@@ -1788,17 +1788,6 @@ class RayV2FederatedLearning:
         """Stop all processes and Docker containers"""
         self.logger.info("🛑 Stop all federated learning processes...")
         
-        # Stop Ray Actors
-        try:
-            if self.server_actor:
-                ray.get(self.server_actor.stop.remote())
-            
-            if self.client_actors:
-                stop_futures = [actor.stop.remote() for actor in self.client_actors]
-                ray.get(stop_futures)
-        except Exception as e:
-            self.logger.warning(f"⚠️  Ray Actors stop warning: {e}")
-        
         # Clean Docker environment
         if CONFIG.USE_DOCKER and hasattr(self, 'docker_manager'):
             try:
@@ -1806,6 +1795,18 @@ class RayV2FederatedLearning:
                 self.logger.info("✅ Docker environment cleaned")
             except Exception as e:
                 self.logger.warning(f"⚠️  Docker cleanup warning: {e}")
+        else:
+            # St
+            # op Ray Actors
+            try:
+                if self.server_actor:
+                    ray.get(self.server_actor.stop.remote())
+
+                if self.client_actors:
+                    stop_futures = [actor.stop.remote() for actor in self.client_actors]
+                    ray.get(stop_futures)
+            except Exception as e:
+                self.logger.warning(f"⚠️  Ray Actors stop warning: {e}")
         
         self.logger.info("✅ All resources stopped")
         
