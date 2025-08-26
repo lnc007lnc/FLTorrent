@@ -139,3 +139,4 @@ dmypy.json
 **/.DS_Store
 data/cifar-10-python.tar.gz
 data/shakespeare/
+data/cifar-10-batches-py/
