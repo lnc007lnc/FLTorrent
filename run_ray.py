@@ -356,20 +356,72 @@ class NetworkSimulator:
             return {"error": str(e)}
 
 class DockerManager:
-    """Docker environment manager"""
+    """Docker environment manager with local storage configuration"""
     
     def __init__(self):
         self.client = None
         self.network_simulator = NetworkSimulator()
         self.fl_network = None
+        self.local_docker_root = f"{os.getcwd()}/docker_data"
         self.docker_available = self._check_docker_availability()
         
         if self.docker_available:
             try:
+                # Configure Docker client to use local storage
                 self.client = docker.from_env()
+                self._setup_local_docker_storage()
             except Exception as e:
                 print(f"⚠️  Docker connection failed: {e}")
                 self.docker_available = False
+                
+    def _setup_local_docker_storage(self):
+        """Setup local Docker storage directory and check system disk space"""
+        try:
+            # Check system disk space first
+            statvfs = os.statvfs('/')
+            free_space_gb = (statvfs.f_frsize * statvfs.f_bavail) / (1024**3)
+            total_space_gb = (statvfs.f_frsize * statvfs.f_blocks) / (1024**3)
+            used_percent = ((total_space_gb - free_space_gb) / total_space_gb) * 100
+            
+            if used_percent > 85:
+                current_dir = os.getcwd()
+                parent_dir = os.path.dirname(current_dir)
+                suggested_docker_root = os.path.join(parent_dir, "docker")
+                
+                print(f"⚠️  WARNING: System disk is {used_percent:.1f}% full ({free_space_gb:.1f}GB free)")
+                print(f"   Docker images are stored in system disk (/var/lib/docker)")
+                print(f"   💡 To move Docker data to local disk, create /etc/docker/daemon.json:")
+                print(f'   {{')
+                print(f'     "data-root": "{suggested_docker_root}"')
+                print(f'   }}')
+                print(f"   Then run: sudo systemctl restart docker")
+                print(f"   This will move Docker data from system to data disk.")
+            
+            # Create local Docker storage directories (for temp files only)
+            storage_dirs = [
+                f"{self.local_docker_root}/images",
+                f"{self.local_docker_root}/containers", 
+                f"{self.local_docker_root}/volumes",
+                f"{self.local_docker_root}/buildkit",
+                f"{self.local_docker_root}/tmp"
+            ]
+            
+            for storage_dir in storage_dirs:
+                os.makedirs(storage_dir, exist_ok=True)
+            
+            print(f"🐳 Docker temp storage configured: {self.local_docker_root}")
+            
+            # Set environment variables for Docker temp files
+            docker_env_vars = {
+                'DOCKER_TMPDIR': f"{self.local_docker_root}/tmp",
+                'DOCKER_HOST': os.getenv('DOCKER_HOST', 'unix:///var/run/docker.sock')
+            }
+            
+            for key, value in docker_env_vars.items():
+                os.environ[key] = value
+                
+        except Exception as e:
+            print(f"⚠️  Failed to setup local Docker storage: {e}")
                 
     def _check_docker_availability(self) -> bool:
         """Check if Docker is available"""
@@ -446,6 +498,15 @@ class DockerManager:
                     print(f"🗑️  Cleaning up network: {CONFIG.DOCKER_NETWORK_NAME}")
                 except:
                     pass
+            
+            # Clean up local Docker storage temp files (keep directories for reuse)
+            try:
+                temp_dir = f"{self.local_docker_root}/tmp"
+                if os.path.exists(temp_dir):
+                    subprocess.run(['rm', '-rf', f"{temp_dir}/*"], shell=True, check=False)
+                    print(f"🗑️  Cleaning up Docker temp storage: {temp_dir}")
+            except:
+                pass
                     
         except Exception as e:
             print(f"⚠️  Docker cleanup warning: {e}")
@@ -512,14 +573,19 @@ class DockerManager:
             print(f"📦 Building {name} ({tag})...")
             
             try:
-                # Use Docker Python API to build image
+                # Use Docker Python API to build image with local storage
                 build_logs = self.client.api.build(
                     path='.',  # Build context is current directory
                     dockerfile=dockerfile_path,
                     tag=tag,
                     rm=True,  # Remove intermediate containers after build
                     decode=True,  # Decode build logs
-                    pull=False  # Don't automatically pull base image
+                    pull=False,  # Don't automatically pull base image
+                    buildargs={
+                        'BUILDKIT_INLINE_CACHE': '1'
+                    },
+                    # Use local build cache directory
+                    cache_from=[tag]
                 )
                 
                 # Display build progress
@@ -546,6 +612,13 @@ class DockerManager:
         
         if build_success:
             print("🎉 All Docker images built successfully!")
+            # Clean up build cache to save system disk space
+            try:
+                print("🧹 Cleaning Docker build cache...")
+                self.client.api.prune_builds()
+                print("✅ Docker build cache cleaned")
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to clean build cache: {e}")
             return True
         else:
             print("❌ Docker image build failed")
@@ -853,11 +926,12 @@ class DockerFederatedScopeServer:
                 "PYTHONPATH": "/app"
             },
             
-            # Volume mounts - fix path issues in Ray Actor
+            # Volume mounts - fix path issues in Ray Actor, use local storage
             "volumes": {
                 self._get_absolute_path(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
                 self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
-                self._get_absolute_path("data"): {"bind": "/app/data", "mode": "rw"}
+                self._get_absolute_path("data"): {"bind": "/app/data", "mode": "rw"},
+                f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"}
             },
             
             # Startup command - use shell wrapper to set working directory and environment, redirect logs to mounted directory
@@ -1035,12 +1109,13 @@ class DockerFederatedScopeClient:
                 "PYTHONPATH": "/app"
             },
             
-            # Volume mounts - fix path issues in Ray Actor
+            # Volume mounts - fix path issues in Ray Actor, use local storage
             "volumes": {
                 self._get_absolute_path(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
                 self._get_absolute_path(output_dir): {"bind": "/app/output", "mode": "rw"},
                 self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
-                self._get_absolute_path(data_dir): {"bind": "/app/data", "mode": "rw"}
+                self._get_absolute_path(data_dir): {"bind": "/app/data", "mode": "rw"},
+                f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"}
             },
             
             # Privileged mode (for network control)
@@ -1269,8 +1344,34 @@ class RayV2FederatedLearning:
         self.server_info = None
         self.cleanup_performed = False
         
+    def _find_available_port(self, start_port: int = 8265, max_attempts: int = 50) -> int:
+        """Find an available port starting from start_port"""
+        import socket
+        
+        for port in range(start_port, start_port + max_attempts):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.bind(('localhost', port))
+                    self.logger.info(f"🔍 Found available port for Ray dashboard: {port}")
+                    return port
+            except socket.error:
+                continue
+        
+        # If no port found, fall back to a random port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(('localhost', 0))
+            port = sock.getsockname()[1]
+            self.logger.info(f"🔍 Using random available port for Ray dashboard: {port}")
+            return port
+        
     def initialize_ray_cluster(self):
-        """Initialize Ray cluster"""
+        """Initialize new Ray cluster (not using default cluster)"""
+        # Shutdown any existing Ray cluster first
+        try:
+            ray.shutdown()
+        except:
+            pass  # Ignore if no cluster is running
+        
         # Detect hardware resources
         num_cpus = CONFIG.RAY_MAX_CPUS or psutil.cpu_count()
         num_gpus = CONFIG.RAY_MAX_GPUS
@@ -1282,28 +1383,44 @@ class RayV2FederatedLearning:
             except ImportError:
                 num_gpus = 0
         
-        # Initialize Ray
+        # Create new Ray cluster configuration
+        # Use parent directory to avoid Unix socket path length limit (107 bytes)
+        current_dir = os.getcwd()
+        parent_dir = os.path.dirname(current_dir)
+        ray_temp_dir = os.path.join(parent_dir, "ray")
+        os.makedirs(ray_temp_dir, exist_ok=True)
+        
         ray_config = {
             "num_cpus": num_cpus,
             "num_gpus": num_gpus or 0,
-            "ignore_reinit_error": True
+            "ignore_reinit_error": True,
+            "_temp_dir": ray_temp_dir,  # Use shorter path to avoid socket path length issues
+            "_system_config": {
+                "automatic_object_spilling_enabled": True,
+                "max_io_workers": 4,
+                "min_spilling_size": 100 * 1024 * 1024,  # 100MB
+            }
         }
         
+        dashboard_port = None
         if CONFIG.ENABLE_RAY_DASHBOARD:
+            # Find available port for Ray dashboard
+            dashboard_port = self._find_available_port(start_port=8265, max_attempts=50)
             ray_config.update({
                 "include_dashboard": True,
                 "dashboard_host": "0.0.0.0",
-                "dashboard_port": 8265
+                "dashboard_port": dashboard_port
             })
         
+        # Create new Ray cluster (explicitly not using default)
         ray.init(**ray_config)
         
         resources = ray.cluster_resources()
         self.logger.info(f"🚀 Ray cluster initialization completed:")
         self.logger.info(f"   📊 Resources: {dict(resources)}")
         
-        if CONFIG.ENABLE_RAY_DASHBOARD:
-            dashboard_url = f"http://127.0.0.1:8265"
+        if CONFIG.ENABLE_RAY_DASHBOARD and dashboard_port:
+            dashboard_url = f"http://127.0.0.1:{dashboard_port}"
             self.logger.info(f"   🌐 Dashboard: {dashboard_url}")
         
     def generate_base_config(self) -> Dict[str, Any]:
@@ -1469,6 +1586,11 @@ class RayV2FederatedLearning:
         actual_total_gpu = 0.0
         for device_type, required_gpu in client_requirements:
             allocated_gpu = required_gpu * scaling_factor
+            
+            # Ray constraint: GPU quantities >1 must be whole numbers
+            if allocated_gpu > 1.0:
+                allocated_gpu = int(allocated_gpu)  # Round down to integer
+            
             gpu_allocation.append(allocated_gpu)
             actual_total_gpu += allocated_gpu
         
@@ -1605,9 +1727,13 @@ class RayV2FederatedLearning:
         for log_dir in ['connection_logs', 'topology_logs', 'bittorrent_logs']:
             subprocess.run(['rm', '-rf', log_dir], check=False)
         
-        # Create output directory
+        # Clean previous Ray temp directory
+        subprocess.run(['rm', '-rf', f"{os.getcwd()}/tmp/ray"], check=False)
+        
+        # Create output and Ray temporary directories
         os.makedirs(CONFIG.OUTPUT_DIR, exist_ok=True)
         os.makedirs(CONFIG.LOG_DIR, exist_ok=True)
+        os.makedirs(f"{os.getcwd()}/tmp/ray", exist_ok=True)
         
         time.sleep(1)
         self.cleanup_performed = True
