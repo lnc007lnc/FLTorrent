@@ -398,12 +398,16 @@ class BitTorrentManager:
             peer_id = self._find_peer_with_chunk(chunk_key)
             if peer_id and peer_id not in self.choked_peers:
                 round_num, source_id, chunk_id = chunk_key
-                success = self._send_request(peer_id, source_id, chunk_id)
-                if success:
-                    logger.debug(f"[BT-POOL] Client {self.client_id}: Transferred chunk {chunk_key} from queue to active pool")
-                    break  # Successfully transferred one request
-                else:
-                    logger.debug(f"[BT-POOL] Client {self.client_id}: Failed to transfer chunk {chunk_key} to active pool")
+                try:
+                    success = self._send_request(peer_id, source_id, chunk_id)
+                    if success:
+                        logger.debug(f"[BT-POOL] Client {self.client_id}: Transferred chunk {chunk_key} from queue to active pool")
+                        break  # Successfully transferred one request
+                    else:
+                        logger.debug(f"[BT-POOL] Client {self.client_id}: Failed to transfer chunk {chunk_key} to active pool")
+                except Exception as e:
+                    logger.error(f"[BT-POOL] Client {self.client_id}: Exception while sending request for chunk {chunk_key}: {e}")
+                    # Continue to next chunk in queue
             else:
                 logger.debug(f"[BT-POOL] Client {self.client_id}: No available peer for chunk {chunk_key}")
     
@@ -705,16 +709,26 @@ class BitTorrentManager:
                 if alternative_peers:
                     new_peer = alternative_peers[0]
                     # 🔴 Pass correct parameters to _send_request
-                    self._send_request(new_peer, source_id, chunk_id)
-                    self.pending_requests[chunk_key] = (new_peer, current_time)
-                    self.retry_count[chunk_key] = retry_count + 1
+                    try:
+                        self._send_request(new_peer, source_id, chunk_id)
+                        self.pending_requests[chunk_key] = (new_peer, current_time)
+                        self.retry_count[chunk_key] = retry_count + 1
+                    except Exception as e:
+                        logger.error(f"[BT] Client {self.client_id}: Failed to send request for chunk {chunk_key}: {e}")
+                        # Remove from pending requests since send failed
+                        if chunk_key in self.pending_requests:
+                            del self.pending_requests[chunk_key]
                 else:
                     logger.error(f"[BT] No alternative peers for chunk {chunk_key}")
-                    del self.pending_requests[chunk_key]
+                    # Safe deletion: check if key exists before deleting
+                    if chunk_key in self.pending_requests:
+                        del self.pending_requests[chunk_key]
             else:
                 # Reached maximum retry count
                 logger.error(f"[BT] Max retries reached for chunk {chunk_key}")
-                del self.pending_requests[chunk_key]
+                # Safe deletion: check if key exists before deleting
+                if chunk_key in self.pending_requests:
+                    del self.pending_requests[chunk_key]
                 if chunk_key in self.retry_count:
                     del self.retry_count[chunk_key]
                         
@@ -875,4 +889,7 @@ class BitTorrentManager:
         self.upload_rate.clear()
         
         logger.info(f"[BT] Client {self.client_id}: BitTorrent exchange stopped successfully")
-        logger.info(f"[BT] Client {self.client_id}: Final stats - Downloaded: {self.total_downloaded} bytes, Uploaded: {self.total_uploaded} bytes")
+        # Convert to MB for readable logging
+        mb_downloaded = self.total_downloaded / (1024 * 1024)
+        mb_uploaded = self.total_uploaded / (1024 * 1024)
+        logger.info(f"[BT] Client {self.client_id}: Final stats - Downloaded: {mb_downloaded:.2f} MB, Uploaded: {mb_uploaded:.2f} MB")

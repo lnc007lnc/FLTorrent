@@ -84,6 +84,13 @@ class ConnectionMonitor:
             auto_timestamp: Whether to automatically add timestamp
         """
         try:
+            # Filter out server connections from reporting
+            # Only report peer-to-peer connections, not client-server connections
+            if peer_id is not None and peer_id == self.server_id:
+                logger.debug(f"Client {self.client_id}: Skipping report for server connection "
+                           f"(peer {peer_id} is server {self.server_id})")
+                return
+                
             # Create event data
             event_data = {
                 'event_type': event_type.value,
@@ -178,7 +185,7 @@ class ConnectionMonitor:
         if (self.last_heartbeat is None or 
             current_time - self.last_heartbeat > self.heartbeat_interval * 2):
             
-            # Send heartbeat connection status
+            # Send heartbeat connection status (this will be filtered out by report_connection_event)
             self.report_connection_event(
                 ConnectionEvent.CONNECT,
                 peer_id=self.server_id,

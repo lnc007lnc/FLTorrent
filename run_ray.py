@@ -62,38 +62,38 @@ class FLConfig:
     """Federated learning configuration parameters"""
     
     # === Basic Settings ===
-    CLIENT_NUM: int = 2                     # Number of clients (for testing)
-    TOTAL_ROUNDS: int = 20                   # Increased rounds for better convergence
-    CHUNK_NUM: int = 10                    # Number of model chunks per client
+    CLIENT_NUM: int = 100                     # Number of clients for CIFAR experiments
+    TOTAL_ROUNDS: int = 20                  # Fewer rounds for epoch-based training
+    CHUNK_NUM: int = 20                     # More chunks for ResNet layers
     IMPORTANCE_METHOD: str = "snip"         # Chunk importance method: magnitude, l2_norm, snip, fisher
     
     # === Dataset Settings ===
-    # CNN Settings (uncomment for computer vision tasks)
-    # DATASET: str = "CIFAR10@torchvision"   # CNN Dataset
-    # BATCH_SIZE: int = 32                   # CNN Batch size
-    # DATA_SPLIT_ALPHA: float = 0.1          # LDA data split parameter
+    # CNN Settings (current active for ResNet-18)
+    DATASET: str = "CIFAR10@torchvision"    # CIFAR-10 dataset
+    BATCH_SIZE: int = 32                    # Standard batch size for CIFAR-10
+    DATA_SPLIT_ALPHA: float = 0.1           # Non-IID data split parameter
     
-    # Transformer/NLP Settings (current active)
-    DATASET: str = "shakespeare"            # Shakespeare text dataset
-    BATCH_SIZE: int = 8                     # Small batch size for testing
-    DATA_SPLIT_ALPHA: float = 0.5          # LDA data split parameter (less extreme split)
+    # Transformer/NLP Settings (commented for future use)
+    # DATASET: str = "shakespeare"            # Shakespeare text dataset
+    # BATCH_SIZE: int = 8                     # Small batch size for testing
+    # DATA_SPLIT_ALPHA: float = 0.5          # LDA data split parameter (less extreme split)
     
     # === Model Settings ===
-    # CNN Model Settings (uncomment for computer vision tasks)
-    # MODEL_TYPE: str = "convnet2"          # CNN Model type
-    # MODEL_HIDDEN: int = 512               # Hidden layer size
-    # MODEL_OUT_CHANNELS: int = 10          # Number of output channels for CNN
-    # MODEL_DROPOUT: float = 0.0            # Dropout rate
+    # CNN Model Settings (current active - ResNet-18)
+    MODEL_TYPE: str = "resnet18"            # ResNet-18 for CIFAR-10
+    MODEL_HIDDEN: int = 512                 # Hidden layer size (not used for ResNet)
+    MODEL_OUT_CHANNELS: int = 10            # CIFAR-10 classes
+    MODEL_DROPOUT: float = 1.0              # Dropout for regularization
     
-    # Transformer/NLP Model Settings (current active)
-    MODEL_TYPE: str = "lstm"                # LSTM model for text
-    MODEL_HIDDEN: int = 256                 # Increased hidden size for better capacity
-    MODEL_OUT_CHANNELS: int = 80            # Vocab size for shakespeare
-    MODEL_DROPOUT: float = 0.1             # Add dropout for regularization
+    # Transformer/NLP Model Settings (commented for future use)
+    # MODEL_TYPE: str = "lstm"                # LSTM model for text
+    # MODEL_HIDDEN: int = 256                 # Increased hidden size for better capacity
+    # MODEL_OUT_CHANNELS: int = 80            # Vocab size for shakespeare
+    # MODEL_DROPOUT: float = 0.1             # Add dropout for regularization
     
     # === Docker Settings ===
     USE_DOCKER: bool = True               # Disable Docker for testing (enable after rebuilding image)
-    BASE_DOCKER_IMAGE: str = "federatedscope:base"  # Base image
+    BASE_DOCKER_IMAGE: str = "flv2:base"  # Base image
     DOCKER_NETWORK_NAME: str = "fl_network"         # Docker network name
     ENABLE_NETWORK_SIMULATION: bool = True          # Enable network simulation
     
@@ -146,11 +146,11 @@ class FLConfig:
     })
     
     # === Training Settings ===
-    LOCAL_UPDATE_STEPS: int = 5           # Increased local training steps
-    LEARNING_RATE: float = 0.001          # Reduced learning rate for LSTM stability
-    OPTIMIZER: str = "Adam"               # Adam optimizer for better convergence
-    WEIGHT_DECAY: float = 0.0001          # Weight decay
-    GRAD_CLIP: float = 1.0                # Reduced gradient clipping for LSTM
+    LOCAL_UPDATE_STEPS: int = 2           # 2 epochs for ResNet-18 on CIFAR-10
+    LEARNING_RATE: float = 0.01           # Higher learning rate for ResNet-18 on CIFAR-10
+    OPTIMIZER: str = "SGD"                # SGD optimizer for ResNet (standard choice)
+    WEIGHT_DECAY: float = 5e-4            # Weight decay for ResNet regularization
+    GRAD_CLIP: float = 5.0                # Higher gradient clipping for CNN
     
     # === BitTorrent Settings ===
     BITTORRENT_TIMEOUT: float = 600.0     # BitTorrent timeout
@@ -158,13 +158,13 @@ class FLConfig:
     BT_MIN_COMPLETION_RATIO: float = 0.8   # Minimum completion ratio
     
     # === Topology Settings ===
-    TOPOLOGY_TYPE: str = "random"         # Topology type: star, ring, fully_connected, mesh, random
+    TOPOLOGY_TYPE: str = "mesh"         # Topology type: star, ring, fully_connected, mesh, random
     TOPOLOGY_TIMEOUT: float = 600.0       # Topology construction timeout
-    TOPOLOGY_CONNECTIONS: int = 2         # Connections per node (mesh: exact connections, random: minimum connections)
+    TOPOLOGY_CONNECTIONS: int = 4         # Connections per node (mesh: exact connections, random: minimum connections)
     
     # === Network Simulation Settings ===
     ENABLE_NETWORK_SIMULATION: bool = True # Enable network simulation
-    DOCKER_BASE_IMAGE: str = "federatedscope:base"  # Docker base image
+    DOCKER_BASE_IMAGE: str = "flv2:base"  # Docker base image
     
     # === Ray Resource Settings ===
     RAY_AUTO_GPU_DETECTION: bool = True   # Automatic GPU detection
@@ -185,8 +185,8 @@ EDGE_DEVICE_PROFILES = {
     "smartphone_high": EdgeDeviceProfile(
         device_id="smartphone_high",
         device_type="smartphone", 
-        docker_image="federatedscope:base",  # Temporarily use base image
-        cpu_limit="1.0", memory_limit="2g", storage_limit="32g",
+        docker_image="flv2:base",  # Temporarily use base image
+        cpu_limit="1.0", memory_limit="3g", storage_limit="32g",
         bandwidth_up_kbps=50000, bandwidth_down_kbps=100000,
         latency_ms=20, packet_loss_rate=0.005, jitter_ms=5,
         training_speed_multiplier=1.0, availability_ratio=1.0,
@@ -196,8 +196,8 @@ EDGE_DEVICE_PROFILES = {
     "smartphone_low": EdgeDeviceProfile(
         device_id="smartphone_low", 
         device_type="smartphone",
-        docker_image="federatedscope:base",  # Temporarily use base image
-        cpu_limit="0.3", memory_limit="2g", storage_limit="8g",
+        docker_image="flv2:base",  # Temporarily use base image
+        cpu_limit="0.3", memory_limit="3g", storage_limit="8g",
         bandwidth_up_kbps=5000, bandwidth_down_kbps=20000,
         latency_ms=100, packet_loss_rate=0.02, jitter_ms=20,
         training_speed_multiplier=0.6, availability_ratio=1.0,
@@ -207,8 +207,8 @@ EDGE_DEVICE_PROFILES = {
     "raspberry_pi": EdgeDeviceProfile(
         device_id="raspberry_pi",
         device_type="edge_device",
-        docker_image="federatedscope:base",  # Temporarily use base image
-        cpu_limit="0.6", memory_limit="2g", storage_limit="64g",
+        docker_image="flv2:base",  # Temporarily use base image
+        cpu_limit="0.6", memory_limit="3g", storage_limit="64g",
         bandwidth_up_kbps=10000, bandwidth_down_kbps=50000,
         latency_ms=30, packet_loss_rate=0.01, jitter_ms=10,
         training_speed_multiplier=0.7, availability_ratio=1.0,
@@ -218,8 +218,8 @@ EDGE_DEVICE_PROFILES = {
     "iot_device": EdgeDeviceProfile(
         device_id="iot_device",
         device_type="iot",
-        docker_image="federatedscope:base",  # Temporarily use base image
-        cpu_limit="0.1", memory_limit="2g", storage_limit="2g", 
+        docker_image="flv2:base",  # Temporarily use base image
+        cpu_limit="0.1", memory_limit="3g", storage_limit="2g", 
         bandwidth_up_kbps=128, bandwidth_down_kbps=512,
         latency_ms=300, packet_loss_rate=0.05, jitter_ms=50,
         training_speed_multiplier=0.3, availability_ratio=1.0,
@@ -229,8 +229,8 @@ EDGE_DEVICE_PROFILES = {
     "edge_server": EdgeDeviceProfile(
         device_id="edge_server",
         device_type="edge_server", 
-        docker_image="federatedscope:base",  # Temporarily use base image
-        cpu_limit="2.0", memory_limit="2g", storage_limit="100g",
+        docker_image="flv2:base",  # Temporarily use base image
+        cpu_limit="2.0", memory_limit="3g", storage_limit="100g",
         bandwidth_up_kbps=100000, bandwidth_down_kbps=1000000,
         latency_ms=10, packet_loss_rate=0.001, jitter_ms=2,
         training_speed_multiplier=1.0, availability_ratio=1.0,
@@ -453,10 +453,65 @@ class DockerManager:
             print(f"⚠️  Docker not available: {e}")
             return False
         
+    def optimize_host_network_settings(self):
+        """Optimize host system network settings for ultra-high concurrency"""
+        print("🚀 Applying host network optimizations for ultra-high concurrency...")
+        
+        # System-level network optimizations
+        sysctl_settings = {
+            # TCP connection optimizations
+            "net.core.somaxconn": "65535",
+            "net.core.netdev_max_backlog": "30000", 
+            "net.core.rmem_default": "16777216",
+            "net.core.rmem_max": "134217728",
+            "net.core.wmem_default": "16777216",
+            "net.core.wmem_max": "134217728",
+            "net.ipv4.tcp_rmem": "4096 16777216 134217728", 
+            "net.ipv4.tcp_wmem": "4096 16777216 134217728",
+            "net.ipv4.tcp_mem": "786432 1048576 26777216",
+            "net.ipv4.tcp_max_syn_backlog": "30000",
+            "net.ipv4.tcp_fin_timeout": "15",
+            "net.ipv4.tcp_keepalive_time": "30",
+            "net.ipv4.tcp_keepalive_intvl": "5",
+            "net.ipv4.tcp_keepalive_probes": "3",
+            "net.ipv4.tcp_tw_reuse": "1",
+            "net.ipv4.ip_local_port_range": "1024 65535",
+            
+            # Connection tracking optimizations
+            "net.netfilter.nf_conntrack_max": "1048576",
+            "net.netfilter.nf_conntrack_tcp_timeout_established": "600",
+            "net.netfilter.nf_conntrack_tcp_timeout_close_wait": "10",
+            "net.netfilter.nf_conntrack_tcp_timeout_fin_wait": "10",
+            
+            # File descriptor limits
+            "fs.file-max": "2097152",
+            "fs.nr_open": "2097152"
+        }
+        
+        # Apply sysctl settings (non-destructive, will be reset on reboot)
+        applied_settings = []
+        for key, value in sysctl_settings.items():
+            try:
+                result = subprocess.run([
+                    'sudo', 'sysctl', '-w', f'{key}={value}'
+                ], capture_output=True, text=True, timeout=5)
+                
+                if result.returncode == 0:
+                    applied_settings.append(f"{key}={value}")
+                else:
+                    print(f"⚠️  Warning: Failed to set {key}={value}: {result.stderr.strip()}")
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
+                print(f"⚠️  Warning: Cannot apply sysctl {key}={value}: {e}")
+        
+        if applied_settings:
+            print(f"✅ Applied {len(applied_settings)} host network optimizations")
+        else:
+            print("⚠️  Warning: No host network optimizations could be applied (may need sudo access)")
+    
     def setup_docker_environment(self):
         """Set up Docker environment"""
         try:
-            # Create dedicated network
+            # Create dedicated network with ultra-high concurrency optimizations
             try:
                 self.fl_network = self.client.networks.get(CONFIG.DOCKER_NETWORK_NAME)
                 print(f"📶 Using existing Docker network: {CONFIG.DOCKER_NETWORK_NAME}")
@@ -465,11 +520,35 @@ class DockerManager:
                     CONFIG.DOCKER_NETWORK_NAME,
                     driver="bridge",
                     options={
+                        # Enable inter-container communication and IP masquerade
                         "com.docker.network.bridge.enable_icc": "true",
-                        "com.docker.network.bridge.enable_ip_masquerade": "true"
-                    }
+                        "com.docker.network.bridge.enable_ip_masquerade": "true",
+                        
+                        # High-concurrency bridge optimizations
+                        "com.docker.network.bridge.name": CONFIG.DOCKER_NETWORK_NAME,
+                        "com.docker.network.bridge.mtu": "1500",
+                        "com.docker.network.bridge.forward_delay": "0",
+                        "com.docker.network.bridge.max_age": "0",
+                        "com.docker.network.bridge.stp": "false",
+                        
+                        # Network buffer optimizations
+                        "com.docker.network.bridge.host_binding_ipv4": "0.0.0.0",
+                        "com.docker.network.bridge.default_bridge": "false",
+                        
+                        # Advanced bridge settings for high throughput
+                        "com.docker.network.bridge.enable_multicast": "true"
+                    },
+                    ipam=docker.types.IPAMConfig(
+                        driver="default",
+                        pool_configs=[
+                            docker.types.IPAMPool(
+                                subnet="172.30.0.0/16",  # Large subnet for many containers
+                                gateway="172.30.0.1"
+                            )
+                        ]
+                    )
                 )
-                print(f"📶 Creating Docker network: {CONFIG.DOCKER_NETWORK_NAME}")
+                print(f"📶 Creating optimized Docker network: {CONFIG.DOCKER_NETWORK_NAME}")
             
             return True
             
@@ -499,13 +578,37 @@ class DockerManager:
                 except:
                     pass
             
-            # Clean up local Docker storage temp files (keep directories for reuse)
+            # Clean up local Docker storage temp files and all mount directories
             try:
-                temp_dir = f"{self.local_docker_root}/tmp"
-                if os.path.exists(temp_dir):
-                    subprocess.run(['rm', '-rf', f"{temp_dir}/*"], shell=True, check=False)
-                    print(f"🗑️  Cleaning up Docker temp storage: {temp_dir}")
-            except:
+                # Clean Docker data directories completely
+                docker_cleanup_dirs = [
+                    f"{self.local_docker_root}/tmp",
+                    f"{os.getcwd()}/docker_data/tmp", 
+                    f"{os.getcwd()}/docker_data/app_tmp"
+                ]
+                
+                for cleanup_dir in docker_cleanup_dirs:
+                    if os.path.exists(cleanup_dir):
+                        try:
+                            # Use Docker to clean up root-owned files (no password needed)
+                            result = subprocess.run([
+                                'docker', 'run', '--rm', '-v', f"{cleanup_dir}:/cleanup",
+                                'alpine:latest', 'sh', '-c', 'rm -rf /cleanup/*'
+                            ], capture_output=True, text=True, timeout=10)
+                            
+                            if result.returncode == 0:
+                                print(f"🗑️  Docker-cleaned directory: {cleanup_dir}")
+                            else:
+                                # Fallback to regular rm
+                                subprocess.run(['rm', '-rf', f"{cleanup_dir}/*"], shell=True, check=False)
+                                print(f"🗑️  Cleaned directory (fallback): {cleanup_dir}")
+                        except (subprocess.TimeoutExpired, Exception):
+                            # If Docker cleanup fails, try regular rm
+                            subprocess.run(['rm', '-rf', f"{cleanup_dir}/*"], shell=True, check=False)
+                            print(f"🗑️  Cleaned directory (simple): {cleanup_dir}")
+                            
+            except Exception as e:
+                print(f"⚠️  Docker storage cleanup warning: {e}")
                 pass
                     
         except Exception as e:
@@ -519,7 +622,7 @@ class DockerManager:
         try:
             # Simplified version: only check base image, all devices use the same image
             required_images = [
-                CONFIG.DOCKER_BASE_IMAGE,  # "federatedscope:base"
+                CONFIG.DOCKER_BASE_IMAGE,  # "flv2:base"
             ]
             
             missing_images = []
@@ -553,7 +656,7 @@ class DockerManager:
         build_configs = [
             {
                 "dockerfile": "docker/Dockerfile.base",
-                "tag": "federatedscope:base",
+                "tag": "flv2:base",
                 "name": "Base image"
             }
         ]
@@ -573,7 +676,7 @@ class DockerManager:
             print(f"📦 Building {name} ({tag})...")
             
             try:
-                # Use Docker Python API to build image with local storage
+                # Use Docker Python API to build image
                 build_logs = self.client.api.build(
                     path='.',  # Build context is current directory
                     dockerfile=dockerfile_path,
@@ -584,7 +687,6 @@ class DockerManager:
                     buildargs={
                         'BUILDKIT_INLINE_CACHE': '1'
                     },
-                    # Use local build cache directory
                     cache_from=[tag]
                 )
                 
@@ -910,7 +1012,7 @@ class DockerFederatedScopeServer:
         log_dir = CONFIG.LOG_DIR  # Use unified log directory
         os.makedirs(log_dir, exist_ok=True)
         
-        # Docker container configuration
+        # Docker container configuration with ultra-high concurrency optimizations
         container_config = {
             "image": CONFIG.DOCKER_BASE_IMAGE,
             "name": self.container_name,
@@ -931,8 +1033,36 @@ class DockerFederatedScopeServer:
                 self._get_absolute_path(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
                 self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
                 self._get_absolute_path("data"): {"bind": "/app/data", "mode": "rw"},
-                f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"}
+                f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"},
+                f"{os.getcwd()}/docker_data/app_tmp": {"bind": "/app/tmp", "mode": "rw"}  # Mount for chunk databases
             },
+            
+            # Container-safe network optimizations (removing restricted sysctls)
+            "sysctls": {
+                # TCP connection optimizations (container-safe parameters)
+                "net.ipv4.tcp_keepalive_time": "30",
+                "net.ipv4.tcp_keepalive_intvl": "5",
+                "net.ipv4.tcp_keepalive_probes": "3",
+                "net.ipv4.tcp_fin_timeout": "15",
+                "net.ipv4.tcp_tw_reuse": "1",
+                "net.ipv4.ip_local_port_range": "1024 65535"
+                # Note: Removed net.core.* and net.netfilter.* parameters that require host-level privileges
+                # These optimizations are applied at host level via optimize_host_network_settings()
+            },
+            
+            # Resource limits for high concurrency
+            "ulimits": [
+                docker.types.Ulimit(name="nofile", soft=1048576, hard=1048576),  # File descriptors
+                docker.types.Ulimit(name="nproc", soft=65536, hard=65536),      # Processes
+                docker.types.Ulimit(name="memlock", soft=-1, hard=-1)           # Memory lock
+            ],
+            
+            # Enhanced network settings
+            "network_mode": CONFIG.DOCKER_NETWORK_NAME,  # Use custom network
+            "dns": ["8.8.8.8", "8.8.4.4"],             # Reliable DNS
+            
+            # Security optimizations for network performance
+            "security_opt": ["apparmor:unconfined"],
             
             # Startup command - use shell wrapper to set working directory and environment, redirect logs to mounted directory
             "command": ["sh", "-c", "cd /app && PYTHONPATH=/app python federatedscope/main.py --cfg /app/config.yaml > /app/logs/server.log 2>&1"]
@@ -984,12 +1114,14 @@ class DockerFederatedScopeClient:
     """Dockerized FederatedScope Client Actor"""
     
     def __init__(self, client_id: int, config: Dict[str, Any], 
-                 server_ip: str, server_port: int, device_profile: EdgeDeviceProfile):
+                 server_ip: str, server_port: int, device_profile: EdgeDeviceProfile,
+                 gpu_id: Optional[int] = None):
         self.client_id = client_id
         self.config = config.copy()
         self.server_ip = server_ip
         self.server_port = server_port
         self.device_profile = device_profile
+        self.gpu_id = gpu_id  # 保存分配的GPU ID
         self.container = None
         self.docker_client = docker.from_env()
         self.node_ip = ray.util.get_node_ip_address()
@@ -1087,7 +1219,7 @@ class DockerFederatedScopeClient:
         cpu_period = 100000  # 100ms
         cpu_quota = int(float(profile.cpu_limit) * cpu_period)
         
-        # Docker container configuration
+        # Docker container configuration with ultra-high concurrency optimizations
         container_config = {
             "image": profile.docker_image,
             "name": self.container_name,
@@ -1115,43 +1247,57 @@ class DockerFederatedScopeClient:
                 self._get_absolute_path(output_dir): {"bind": "/app/output", "mode": "rw"},
                 self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
                 self._get_absolute_path(data_dir): {"bind": "/app/data", "mode": "rw"},
-                f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"}
+                f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"},
+                f"{os.getcwd()}/docker_data/app_tmp": {"bind": "/app/tmp", "mode": "rw"}  # Mount for chunk databases
             },
             
-            # Privileged mode (for network control)
+            # Container-safe network optimizations (removing restricted sysctls)
+            "sysctls": {
+                # TCP connection optimizations (container-safe parameters)
+                "net.ipv4.tcp_keepalive_time": "30",
+                "net.ipv4.tcp_keepalive_intvl": "5",
+                "net.ipv4.tcp_keepalive_probes": "3",
+                "net.ipv4.tcp_fin_timeout": "15",
+                "net.ipv4.tcp_tw_reuse": "1",
+                "net.ipv4.ip_local_port_range": "1024 65535"
+                # Note: Removed net.core.* and net.netfilter.* parameters that require host-level privileges
+                # These optimizations are applied at host level via optimize_host_network_settings()
+            },
+            
+            # Resource limits for high concurrency
+            "ulimits": [
+                docker.types.Ulimit(name="nofile", soft=1048576, hard=1048576),  # File descriptors
+                docker.types.Ulimit(name="nproc", soft=65536, hard=65536),      # Processes  
+                docker.types.Ulimit(name="memlock", soft=-1, hard=-1)           # Memory lock
+            ],
+            
+            # Enhanced network settings
+            "network_mode": CONFIG.DOCKER_NETWORK_NAME,  # Use custom network
+            "dns": ["8.8.8.8", "8.8.4.4"],             # Reliable DNS
+            
+            # Privileged mode (for network control and sysctls)
             "privileged": True,
+            
+            # Security optimizations for network performance
+            "security_opt": ["apparmor:unconfined"],
             
             # Startup command - use shell wrapper to set working directory and environment, redirect logs to mounted directory
             "command": ["sh", "-c", f"cd /app && PYTHONPATH=/app python federatedscope/main.py --cfg /app/config.yaml > /app/logs/client_{self.client_id}.log 2>&1"]
         }
         
-        # GPU support - determine container GPU access based on Ray resource allocation
-        # Get GPU allocation information from Actor class resource options
-        # This information is determined when Actor is created
-        try:
-            # Get current Actor's resource allocation (from class variables or instance-saved information)
-            actor_options = ray.get_runtime_context().current_actor
-            # Since we cannot directly get Actor resource configuration, we use a simpler method:
-            # Check if cluster has GPU resources, if yes give container GPU access
-            cluster_resources = ray.cluster_resources()
-            has_gpu_in_cluster = cluster_resources.get('GPU', 0) > 0
-            
-            if has_gpu_in_cluster:
-                # If cluster has GPU resources, give Docker container GPU access
-                # FederatedScope will auto-detect inside container and decide whether to use GPU
-                container_config["device_requests"] = [
-                    docker.types.DeviceRequest(count=-1, capabilities=[['gpu']])
-                ]
-                print(f"🎮 Client {self.client_id}: Cluster has GPU resources, enable container GPU access")
-            else:
-                print(f"💻 Client {self.client_id}: Cluster has no GPU resources, use CPU mode")
-                
-        except Exception as e:
-            # If getting resource info fails, enable GPU access by default (let FederatedScope decide itself)
+        # 🎮 GPU support - 使用指定的GPU ID进行精确分配
+        if self.gpu_id is not None:
+            # 指定特定GPU设备
             container_config["device_requests"] = [
-                docker.types.DeviceRequest(count=-1, capabilities=[['gpu']])
+                docker.types.DeviceRequest(device_ids=[str(self.gpu_id)], capabilities=[['gpu']])
             ]
-            print(f"🎮 Client {self.client_id}: Cannot get resource information ({e}), default to enable GPU access")
+            # 设置CUDA环境变量限制可见GPU
+            container_config["environment"]["CUDA_VISIBLE_DEVICES"] = str(self.gpu_id)
+            print(f"🎮 Client {self.client_id}: 分配到GPU {self.gpu_id}")
+        else:
+            # CPU模式
+            container_config["environment"]["CUDA_VISIBLE_DEVICES"] = ""
+            print(f"💻 Client {self.client_id}: CPU模式，无GPU分配")
         
         try:
             # Start container
@@ -1390,9 +1536,14 @@ class RayV2FederatedLearning:
         ray_temp_dir = os.path.join(parent_dir, "ray")
         os.makedirs(ray_temp_dir, exist_ok=True)
         
+        # Calculate available memory (use 90% of system memory)
+        total_memory = psutil.virtual_memory().total
+        available_memory = int(total_memory * 0.9)  # Use 90% of total memory
+        
         ray_config = {
             "num_cpus": num_cpus,
             "num_gpus": num_gpus or 0,
+            "object_store_memory": int(available_memory * 0.3),  # 30% for object store
             "ignore_reinit_error": True,
             "_temp_dir": ray_temp_dir,  # Use shorter path to avoid socket path length issues
             "_system_config": {
@@ -1460,28 +1611,34 @@ class RayV2FederatedLearning:
             'data': {
                 'root': 'data/',
                 'type': CONFIG.DATASET,
-                'splits': [0.6, 0.2, 0.2],  # Shakespeare dataset standard splits
-                'subsample': 0.5,            # Increased data usage for better learning
-                'splitter': 'lda',
-                'splitter_args': [{'alpha': CONFIG.DATA_SPLIT_ALPHA}]
+                'splits': [0.6, 0.2, 0.2],  # Standard train/val/test splits
+                'subsample': 1.0,            # Use full CIFAR-10 dataset
+                'splitter': 'lda',  # Options: 'iid', 'lda', 'louvain', 'random', 'rel_type', 'scaffold', 'scaffold_lda', 'rand_chunk'
+                'splitter_args': [{'alpha': CONFIG.DATA_SPLIT_ALPHA}],
+                'transform': [                # Essential for CIFAR-10 PIL to tensor conversion
+                    ['ToTensor'],
+                    ['Normalize', {'mean': [0.4914, 0.4822, 0.4465], 'std': [0.2023, 0.1994, 0.2010]}]
+                ],
+                'args': [{'download': True}]  # Auto-download CIFAR-10 if missing
             },
             
             'dataloader': {
-                'batch_size': CONFIG.BATCH_SIZE
+                'batch_size': CONFIG.BATCH_SIZE,
+                'num_workers': 0             # Important: avoid multiprocessing issues in Docker
             },
             
             'model': {
                 'type': CONFIG.MODEL_TYPE,
                 'hidden': CONFIG.MODEL_HIDDEN,
-                'in_channels': 80,           # Shakespeare vocab size
+                'in_channels': 3,            # RGB channels for CIFAR-10
                 'out_channels': CONFIG.MODEL_OUT_CHANNELS,
-                'embed_size': 8,             # Small embedding for testing
+                # 'embed_size': 8,             # Small embedding for testing (NLP only)
                 'dropout': CONFIG.MODEL_DROPOUT
             },
             
             'train': {
                 'local_update_steps': CONFIG.LOCAL_UPDATE_STEPS,
-                'batch_or_epoch': 'epoch',
+                'batch_or_epoch': 'epoch',   # Use epoch-based training for stability
                 'optimizer': {
                     'lr': CONFIG.LEARNING_RATE,
                     'type': CONFIG.OPTIMIZER,
@@ -1494,17 +1651,19 @@ class RayV2FederatedLearning:
             },
             
             'criterion': {
-                'type': 'character_loss'     # Character-level loss for shakespeare
+                'type': 'CrossEntropyLoss'   # Standard classification loss for CIFAR-10
+                # 'type': 'character_loss'     # Character-level loss for shakespeare (NLP only)
             },
             
             'trainer': {
-                'type': 'nlptrainer'         # NLP trainer for text tasks
+                'type': 'cvtrainer'          # CV trainer for image classification
+                # 'type': 'nlptrainer'         # NLP trainer for text tasks (commented)
             },
             
             'eval': {
                 'freq': 1,
                 'metrics': ['acc', 'correct'],
-                'best_res_update_round_wise_key': 'test_acc'
+                'best_res_update_round_wise_key': 'val_acc'
             },
             
             'topology': {
@@ -1534,17 +1693,18 @@ class RayV2FederatedLearning:
             'outdir': f'{CONFIG.OUTPUT_DIR}/server_output'
         }
         
-    def allocate_gpu_resources(self) -> List[Optional[float]]:
-        """Dynamic fractional GPU resource allocation: server uses CPU, all nodes use fractional GPU"""
+    def allocate_gpu_resources(self) -> Tuple[Optional[float], List[Tuple[Optional[float], Optional[int]]]]:
+        """Dynamic GPU resource allocation with explicit GPU device assignment"""
         cluster_resources = ray.cluster_resources()
         available_gpus = float(cluster_resources.get('GPU', 0))
+        num_physical_gpus = int(available_gpus)  # Number of physical GPUs
         
         if available_gpus == 0:
             self.logger.warning("⚠️ No GPU detected, all nodes use CPU mode")
-            return [None] + [None] * CONFIG.CLIENT_NUM
+            return None, [(None, None)] * CONFIG.CLIENT_NUM
         
         # 🖥️ Server fixed to use CPU (no GPU allocation)
-        gpu_allocation = [None]  # Server CPU mode
+        server_gpu = None
         
         # 🎮 Define GPU resource allocation ratios corresponding to device performance
         device_gpu_ratios = {
@@ -1571,7 +1731,7 @@ class RayV2FederatedLearning:
             total_required_gpu += required_gpu
         
         # 🎯 Smart scaling: always maintain 90-100% GPU utilization
-        target_utilization = 0.80  # Target 80% utilization (reduce resource competition)
+        target_utilization = 0.95  # Target 80% utilization (reduce resource competition)
         target_gpu_usage = available_gpus * target_utilization
         scaling_factor = target_gpu_usage / total_required_gpu
         
@@ -1582,38 +1742,62 @@ class RayV2FederatedLearning:
         else:
             self.logger.info(f"⚡ GPU allocation optimized, reaching target utilization ({target_utilization*100:.0f}%)")
         
-        # Allocate GPU resources to each client
+        # 🧠 智能GPU分组分配：将客户端按GPU数量分组
+        clients_per_gpu = CONFIG.CLIENT_NUM // num_physical_gpus
+        remainder_clients = CONFIG.CLIENT_NUM % num_physical_gpus
+        
+        # 分配GPU资源给每个客户端并指定GPU ID
+        client_gpu_assignments = []
         actual_total_gpu = 0.0
-        for device_type, required_gpu in client_requirements:
+        
+        for i, (device_type, required_gpu) in enumerate(client_requirements):
             allocated_gpu = required_gpu * scaling_factor
             
             # Ray constraint: GPU quantities >1 must be whole numbers
             if allocated_gpu > 1.0:
                 allocated_gpu = int(allocated_gpu)  # Round down to integer
+            else:
+                # For fractional GPU allocation, use higher precision to prevent CUDA OOM
+                # Round to 4 decimal places instead of 2 to avoid under-allocation
+                allocated_gpu = round(allocated_gpu, 4)
             
-            gpu_allocation.append(allocated_gpu)
+            # 🎯 分组分配GPU ID：按组分配到不同GPU
+            gpu_id = i % num_physical_gpus  # 轮询分配到不同GPU
+            client_gpu_assignments.append((allocated_gpu, gpu_id))
             actual_total_gpu += allocated_gpu
         
-        # Generate allocation summary
+        # Generate allocation summary with GPU grouping info
         device_summary = {}
-        for (device_type, _), allocated_gpu in zip(client_requirements, gpu_allocation[1:]):
+        gpu_group_summary = {}
+        
+        for i, ((device_type, _), (allocated_gpu, gpu_id)) in enumerate(zip(client_requirements, client_gpu_assignments)):
+            # Device type summary
             if device_type not in device_summary:
                 device_summary[device_type] = {'count': 0, 'total_gpu': 0.0}
             device_summary[device_type]['count'] += 1
             device_summary[device_type]['total_gpu'] += allocated_gpu
+            
+            # GPU group summary
+            if gpu_id not in gpu_group_summary:
+                gpu_group_summary[gpu_id] = {'client_count': 0, 'total_allocation': 0.0}
+            gpu_group_summary[gpu_id]['client_count'] += 1
+            gpu_group_summary[gpu_id]['total_allocation'] += allocated_gpu
         
         gpu_summary = {
             "total_available_gpus": available_gpus,
-            "total_allocated_gpus": actual_total_gpu,
-            "utilization_rate": f"{(actual_total_gpu/available_gpus)*100:.1f}%",
+            "total_allocated_gpus": round(actual_total_gpu, 4),
+            "utilization_rate": f"{(actual_total_gpu/available_gpus)*100:.2f}%",
             "server": "CPU only",
-            "scaling_factor": scaling_factor,
-            "device_allocation": device_summary
+            "scaling_factor": round(scaling_factor, 6),
+            "device_allocation": device_summary,
+            "gpu_grouping": {f"GPU_{gid}": f"{info['client_count']} clients, {info['total_allocation']:.3f} total" 
+                           for gid, info in gpu_group_summary.items()}
         }
         
-        self.logger.info(f"🎯 Fractional GPU resource allocation: {gpu_summary}")
-        self.logger.info(f"📋 Client detailed allocation: {[f'{alloc:.2f}' if alloc else 'CPU' for alloc in gpu_allocation[1:]]}")
-        return gpu_allocation
+        self.logger.info(f"🎯 智能GPU分组分配: {gpu_summary}")
+        self.logger.info(f"📋 GPU分组详情: {gpu_summary['gpu_grouping']}")
+        
+        return server_gpu, client_gpu_assignments
     
     def _create_diverse_device_fleet(self, num_devices: int) -> List[EdgeDeviceProfile]:
         """Create diverse edge device queue"""
@@ -1681,9 +1865,18 @@ class RayV2FederatedLearning:
     
     def _get_ray_resources_for_device(self, device_profile: EdgeDeviceProfile) -> Dict[str, Any]:
         """Get Ray resource allocation based on device type"""
-        base_cpu = max(0.1, float(device_profile.cpu_limit))
+        # Calculate fractional CPU to fit within available cluster resources
+        cluster_resources = ray.cluster_resources()
+        available_cpus = cluster_resources.get('CPU', 64)  # Default to 64 if unknown
         
-        # Parse memory limit from device configuration
+        # Reserve some CPU for Ray system overhead (10%)
+        usable_cpus = available_cpus * 0.9
+        cpu_per_client = usable_cpus / CONFIG.CLIENT_NUM
+        
+        # Ensure minimum viable CPU allocation
+        cpu_per_client = max(0.1, min(cpu_per_client, 1.0))
+        
+        # Parse memory limit from device configuration  
         memory_str = device_profile.memory_limit.lower()
         if memory_str.endswith('g'):
             memory_bytes = int(float(memory_str[:-1]) * 1024 * 1024 * 1024)
@@ -1692,15 +1885,8 @@ class RayV2FederatedLearning:
         else:
             memory_bytes = 1024 * 1024 * 1024  # Default 1GB
         
-        # Adjust CPU resources based on device type
-        if device_profile.device_type == "iot":
-            return {"num_cpus": 0.2, "memory": memory_bytes}
-        elif device_profile.device_type == "smartphone":
-            return {"num_cpus": base_cpu, "memory": memory_bytes}
-        elif device_profile.device_type == "edge_server":
-            return {"num_cpus": base_cpu, "memory": memory_bytes}
-        else:  # raspberry_pi, edge_device
-            return {"num_cpus": base_cpu, "memory": memory_bytes}
+        # Use calculated fractional CPU for all device types
+        return {"num_cpus": cpu_per_client, "memory": memory_bytes}
     
     def cleanup_environment(self):
         """Clean environment"""
@@ -1713,13 +1899,53 @@ class RayV2FederatedLearning:
         subprocess.run(['pkill', '-9', '-f', 'python.*federatedscope'], 
                       capture_output=True, check=False)
         
-        # Clean database files
+        # Clean chunk database files (both local and Docker mount points)
         try:
             import glob
-            db_files = glob.glob('tmp/client_*/client_*_chunks.db')
-            for db_file in db_files:
-                if os.path.exists(db_file):
-                    os.remove(db_file)
+            
+            # Clean local chunk databases
+            db_patterns = [
+                'tmp/client_*/client_*_chunks.db',           # Local tmp directory
+                'tmp/client_*/*.db',                        # Any .db files in client directories
+                'docker_data/app_tmp/**/*.db',              # Docker mount point databases
+                'docker_data/tmp/**/*.db',                  # Docker temp databases
+                f"{CONFIG.OUTPUT_DIR}/**/*.db",             # Output directory databases
+                f"{CONFIG.LOG_DIR}/**/*.db"                 # Log directory databases
+            ]
+            
+            for pattern in db_patterns:
+                db_files = glob.glob(pattern, recursive=True)
+                for db_file in db_files:
+                    if os.path.exists(db_file):
+                        os.remove(db_file)
+                        self.logger.debug(f"🗑️  Removed chunk database: {db_file}")
+            
+            # Clean Docker data directories - use Docker to handle permission issues
+            docker_cleanup_dirs = [
+                f"{os.getcwd()}/docker_data/tmp",
+                f"{os.getcwd()}/docker_data/app_tmp"
+            ]
+            
+            for cleanup_dir in docker_cleanup_dirs:
+                if os.path.exists(cleanup_dir):
+                    try:
+                        # Use Docker to clean up root-owned files (no password needed)
+                        result = subprocess.run([
+                            'docker', 'run', '--rm', '-v', f"{cleanup_dir}:/cleanup",
+                            'alpine:latest', 'sh', '-c', 'rm -rf /cleanup/*'
+                        ], capture_output=True, text=True, timeout=10)
+                        
+                        if result.returncode == 0:
+                            self.logger.debug(f"🗑️  Docker-cleaned mount directory: {cleanup_dir}")
+                        else:
+                            # Fallback to regular rm
+                            subprocess.run(['rm', '-rf', f"{cleanup_dir}/*"], shell=True, check=False)
+                            self.logger.debug(f"🗑️  Cleaned mount directory (fallback): {cleanup_dir}")
+                    except (subprocess.TimeoutExpired, Exception) as e:
+                        # If Docker cleanup fails, try regular rm
+                        subprocess.run(['rm', '-rf', f"{cleanup_dir}/*"], shell=True, check=False)
+                        self.logger.debug(f"🗑️  Cleaned mount directory (simple): {cleanup_dir}")
+                    
         except Exception as e:
             self.logger.debug(f"Failed to clean database files: {e}")
         
@@ -1755,6 +1981,9 @@ class RayV2FederatedLearning:
                 CONFIG.USE_DOCKER = False
                 # Continue using non-Docker mode
             else:
+                # Apply host network optimizations for ultra-high concurrency
+                self.docker_manager.optimize_host_network_settings()
+                
                 # Check and ensure Docker images are ready
                 self.logger.info("🔍 Check Docker images...")
                 if not self.docker_manager.ensure_images_ready():
@@ -1766,15 +1995,13 @@ class RayV2FederatedLearning:
                         self.logger.error("❌ Docker environment setup failed, switch to non-container mode")
                         CONFIG.USE_DOCKER = False
                     else:
-                        self.logger.info("✅ Docker environment and image initialization successful")
+                        self.logger.info("✅ Docker environment and image initialization successful with ultra-high concurrency optimizations")
         
         # Initialize Ray
         self.initialize_ray_cluster()
         
         # GPU resource allocation
-        gpu_allocation = self.allocate_gpu_resources()
-        server_gpu = gpu_allocation[0]
-        client_gpus = gpu_allocation[1:]
+        server_gpu, client_gpu_assignments = self.allocate_gpu_resources()
         
         # Generate configuration
         base_config = self.generate_base_config()
@@ -1818,16 +2045,18 @@ class RayV2FederatedLearning:
             # Ray resource allocation (based on device type and GPU allocation)
             client_resources = self._get_ray_resources_for_device(device_profile)
             
-            # 🎮 Add fractional GPU resource allocation (all clients use GPU)
-            client_gpu = client_gpus[i] if i < len(client_gpus) else None
-            if client_gpu is not None:
-                client_resources["num_gpus"] = client_gpu  # Allocate fractional GPU resources
+            # 🎮 智能GPU分组分配：获取GPU资源和GPU ID
+            assigned_gpu_id = None
+            if i < len(client_gpu_assignments):
+                client_gpu_alloc, client_gpu_id = client_gpu_assignments[i]
+                client_resources["num_gpus"] = client_gpu_alloc  # Fractional GPU allocation
+                assigned_gpu_id = client_gpu_id  # 保存GPU ID用于Docker配置
             
             try:
                 # Choose Actor type based on Docker availability
                 if CONFIG.USE_DOCKER:
                     client_actor = DockerFederatedScopeClient.options(**client_resources).remote(
-                        client_id, client_config, server_ip, server_port, device_profile
+                        client_id, client_config, server_ip, server_port, device_profile, assigned_gpu_id
                     )
                 else:
                     client_actor = FallbackFederatedScopeClient.options(**client_resources).remote(
@@ -1982,7 +2211,7 @@ def display_banner():
     
     banner = f"""
 {'='*80}
-🚀 Ray-Powered FederatedScope V2 Script (Docker Edition)
+🚀 Ray-Powered FederatedScope V2 Script (Ultra-High Concurrency Edition)
 {'='*80}
 📊 Configuration information:
    • Number of clients: {CONFIG.CLIENT_NUM}
@@ -1995,7 +2224,15 @@ def display_banner():
 
 🐳 Docker mode: {docker_status}
 🌐 Network simulation: {network_sim_status}
+🚀 Ultra-high concurrency optimizations: {"✅ Enabled" if CONFIG.USE_DOCKER else "❌ Docker Required"}
 📱 Device distribution: {dict(CONFIG.DEVICE_DISTRIBUTION)}
+
+🔧 High-concurrency features:
+   • TCP buffer sizes: 128MB max
+   • Connection tracking: 1M connections
+   • File descriptors: 1M per container
+   • Optimized Docker network bridge
+   • System-level network tuning
 
 💡 Output directory: {CONFIG.OUTPUT_DIR}
 📝 Log directory: {CONFIG.LOG_DIR}
@@ -2018,6 +2255,7 @@ def main():
         
         print("\n🎉 Ray V2 federated learning completed!")
         print(f"📄 Results summary: {CONFIG.OUTPUT_DIR}/results_summary.yaml")
+        print(f"📊 Processed {summary['configuration']['client_num']} clients in {summary['configuration']['total_rounds']} rounds")
         print(f"📝 Log files: {CONFIG.LOG_DIR}/")
         
         if CONFIG.ENABLE_RAY_DASHBOARD:

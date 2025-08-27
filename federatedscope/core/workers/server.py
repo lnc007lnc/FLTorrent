@@ -1483,6 +1483,16 @@ class Server(BaseServer, ConnectionHandlerMixin):
         exchange_time = message.content.get('exchange_time', 0)
         status = message.content.get('status', 'completed')
         
+        # Handle byte counts (now sent as strings to avoid int32 overflow)
+        bytes_downloaded_str = message.content.get('bytes_downloaded_str', '0')
+        bytes_uploaded_str = message.content.get('bytes_uploaded_str', '0')
+        try:
+            bytes_downloaded = int(bytes_downloaded_str)
+            bytes_uploaded = int(bytes_uploaded_str)
+        except (ValueError, TypeError):
+            bytes_downloaded = 0
+            bytes_uploaded = 0
+        
         # Record completion status
         if hasattr(self, 'bittorrent_completion_status'):
             self.bittorrent_completion_status[sender_id] = chunks_collected
@@ -1490,7 +1500,10 @@ class Server(BaseServer, ConnectionHandlerMixin):
             if status == 'failed':
                 logger.error(f"[BT] ❌ Client {sender_id} failed BitTorrent exchange")
             else:
-                logger.info(f"[BT] ✅ Client {sender_id} completed: {chunks_collected} chunks in {exchange_time:.2f}s")
+                # Display transfer stats in readable format
+                mb_downloaded = bytes_downloaded / (1024 * 1024)
+                mb_uploaded = bytes_uploaded / (1024 * 1024)
+                logger.info(f"[BT] ✅ Client {sender_id} completed: {chunks_collected} chunks in {exchange_time:.2f}s - Downloaded: {bytes_downloaded} bytes, Uploaded: {bytes_uploaded} bytes")
                 
             # Print current progress
             completed_count = len(self.bittorrent_completion_status)

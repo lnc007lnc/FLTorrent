@@ -73,6 +73,9 @@ class Client(BaseClient):
 
         # Register message handlers
         self._register_default_handlers()
+        
+        # Initialize buffer for early BitTorrent messages
+        self.bt_message_buffer = []
 
         # Un-configured worker
         if config is None:
@@ -365,7 +368,9 @@ class Client(BaseClient):
             if hasattr(self, 'bt_manager') and self.bt_manager is not None:
                 logger.info(f"[BT-FL] Client {self.ID}: Stopping previous BitTorrent exchange before processing new round {round}")
                 self.bt_manager.stop_exchange()
-                self.bt_manager = None
+                # 🆕 FIX: Don't immediately set to None - let exchange loop check is_stopped flag first
+                # The exchange loop will exit gracefully when it sees bt_manager.is_stopped = True
+                # We'll set bt_manager = None later in the loop cleanup
             
             # Check if this is a BitTorrent-enabled message
             if isinstance(content, dict) and content.get('skip_weights', False):
@@ -1175,13 +1180,36 @@ class Client(BaseClient):
         # Directly start chunk exchange, no tracker needed
         self.bt_manager.start_exchange()
         
+        # Process buffered BitTorrent messages
+        self._process_buffered_bt_messages()
+        
+    def _process_buffered_bt_messages(self):
+        """Process buffered BitTorrent messages after bt_manager is ready"""
+        if not hasattr(self, 'bt_message_buffer') or len(self.bt_message_buffer) == 0:
+            return
+            
+        logger.info(f"[BT] Client {self.ID}: Processing {len(self.bt_message_buffer)} buffered BitTorrent messages")
+        
+        buffered_messages = self.bt_message_buffer.copy()
+        self.bt_message_buffer.clear()
+        
+        for message_type, message in buffered_messages:
+            if message_type == 'bitfield':
+                logger.info(f"[BT] Client {self.ID}: Processing buffered bitfield from {message.sender}")
+                self.callback_funcs_for_bitfield(message)
+            elif message_type == 'have':
+                logger.info(f"[BT] Client {self.ID}: Processing buffered have from {message.sender}")
+                self.callback_funcs_for_have(message)
+            else:
+                logger.warning(f"[BT] Client {self.ID}: Unknown buffered message type: {message_type}")
+    
     def _run_bittorrent_exchange_loop(self, expected_chunks):
         """Run BitTorrent exchange main loop"""
         logger.info(f"[BT] Client {self.ID}: Exchange loop started, expected_chunks={expected_chunks}")
         try:
             import time
             # 🐛 Bug fix 20: Add safe loop termination condition
-            max_iterations = 10000  # Prevent infinite loop
+            max_iterations = 999999999999999  # Prevent infinite loop
             iteration = 0
             
             while not self._has_all_chunks(expected_chunks) and iteration < max_iterations:
@@ -1194,14 +1222,23 @@ class Client(BaseClient):
                 
                 # Output progress every 100 iterations
                 if iteration % 100 == 1:
-                    current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
-                    peer_count = len(self.bt_manager.peer_bitfields)
-                    logger.info(f"[BT] Client {self.ID}: Iteration {iteration}, current chunks: {current_chunks}/{expected_chunks}, peers: {peer_count}")
+                    # 🆕 FIX: Safe access to bt_manager - check if still exists and not stopped
+                    if self.bt_manager and not self.bt_manager.is_stopped:
+                        current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
+                        peer_count = len(self.bt_manager.peer_bitfields)
+                        logger.info(f"[BT] Client {self.ID}: Iteration {iteration}, current chunks: {current_chunks}/{expected_chunks}, peers: {peer_count}")
+                    else:
+                        logger.info(f"[BT] Client {self.ID}: BitTorrent manager stopped, skipping progress update at iteration {iteration}")
+                        break
                 
                 # 🆕 Dual pool request management: Only fill when queue is empty, reduce selection program call frequency
-                if len(self.bt_manager.pending_queue) == 0:
+                # 🆕 FIX: Check bt_manager is still valid before accessing
+                if self.bt_manager and not self.bt_manager.is_stopped and len(self.bt_manager.pending_queue) == 0:
                     logger.debug(f"[BT] Client {self.ID}: Pending queue empty, filling with priority chunks...")
                     self.bt_manager._fill_pending_queue()
+                elif not self.bt_manager or self.bt_manager.is_stopped:
+                    logger.info(f"[BT] Client {self.ID}: BitTorrent manager stopped, exiting exchange loop")
+                    break
                 
                 # Transfer requests from queue to active pool
                 if (len(self.bt_manager.pending_requests) < self.bt_manager.MAX_ACTIVE_REQUESTS and
@@ -1234,16 +1271,33 @@ class Client(BaseClient):
             # 4. Report to Server after completion
             self._report_bittorrent_completion()
             
+            # 🆕 CLEANUP: Set bt_manager to None after successful completion
+            logger.info(f"[BT] Client {self.ID}: BitTorrent exchange completed successfully, cleaning up manager")
+            if hasattr(self, 'bt_manager'):
+                self.bt_manager = None
+            
         except Exception as e:
+            import traceback
             logger.error(f"[BT] Client {self.ID}: Exchange loop error: {e}")
+            logger.error(f"[BT] Client {self.ID}: Exception type: {type(e)}")
+            logger.error(f"[BT] Client {self.ID}: Exception traceback:")
+            for line in traceback.format_exc().split('\n'):
+                if line.strip():
+                    logger.error(f"[BT] Client {self.ID}: {line}")
             self._report_bittorrent_completion_failure()
+        finally:
+            # 🆕 CLEANUP: Always clean up bt_manager after exchange loop ends
+            logger.info(f"[BT] Client {self.ID}: Cleaning up BitTorrent manager after exchange loop")
+            if hasattr(self, 'bt_manager'):
+                self.bt_manager = None
 
     def callback_funcs_for_bitfield(self, message):
         """Handle bitfield message"""
         logger.info(f"[BT] Client {self.ID}: Received bitfield message from peer {message.sender}")
         
-        if not hasattr(self, 'bt_manager'):
-            logger.warning(f"[BT] Client {self.ID}: No bt_manager when receiving bitfield from {message.sender}")
+        if not hasattr(self, 'bt_manager') or self.bt_manager is None:
+            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering bitfield message from {message.sender}")
+            self.bt_message_buffer.append(('bitfield', message))
             return
             
         # 🔴 Validate round match
@@ -1264,7 +1318,10 @@ class Client(BaseClient):
         
     def callback_funcs_for_have(self, message):
         """Handle have message"""
-        if not hasattr(self, 'bt_manager'):
+        if not hasattr(self, 'bt_manager') or self.bt_manager is None:
+            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering have message from {message.sender}")
+            # Buffer the have message for later processing
+            self.bt_message_buffer.append(('have', message))
             return
             
         sender_id = message.sender
@@ -1360,6 +1417,7 @@ class Client(BaseClient):
         bytes_downloaded = getattr(self.bt_manager, 'total_downloaded', 0) if hasattr(self, 'bt_manager') else 0
         bytes_uploaded = getattr(self.bt_manager, 'total_uploaded', 0) if hasattr(self, 'bt_manager') else 0
         
+        # 🐛 Bug Fix 33: Large integers are now handled automatically in message.py
         self.comm_manager.send(
             Message(msg_type='bittorrent_complete',
                     sender=self.ID,
@@ -1367,8 +1425,8 @@ class Client(BaseClient):
                     content={
                         'chunks_collected': chunks_collected,
                         'exchange_time': time.time() - self.bt_start_time if hasattr(self, 'bt_start_time') else 0,
-                        'bytes_downloaded': bytes_downloaded,
-                        'bytes_uploaded': bytes_uploaded
+                        'bytes_downloaded_str': str(bytes_downloaded),  # Always send as string for consistency
+                        'bytes_uploaded_str': str(bytes_uploaded)      # Always send as string for consistency
                     })
         )
         
@@ -1383,8 +1441,8 @@ class Client(BaseClient):
                     content={
                         'chunks_collected': 0,
                         'exchange_time': 0,
-                        'bytes_downloaded': 0,
-                        'bytes_uploaded': 0,
+                        'bytes_downloaded_str': "0",
+                        'bytes_uploaded_str': "0",
                         'status': 'failed'
                     })
         )

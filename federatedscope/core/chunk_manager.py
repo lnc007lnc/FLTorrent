@@ -1414,13 +1414,23 @@ class ChunkManager:
         return final_params
     
     def _estimate_param_size(self, param_name: str, parts_info_list: List[Tuple[int, Dict]]) -> int:
-        """Estimate parameter total size"""
-        max_end = 0
-        for _, parts_info in parts_info_list:
-            if param_name in parts_info:
-                for flat_start, flat_end, shape in parts_info[param_name]:
-                    max_end = max(max_end, flat_end)
-        return max_end
+        """Estimate parameter total size based on original shape"""
+        import numpy as np
+        
+        # Get original shape from parts_info - this gives us the complete parameter dimensions
+        original_shape = self._get_original_shape(param_name, parts_info_list)
+        if original_shape:
+            # Calculate full parameter size from shape: np.prod([256,128,3,3]) = 786432
+            full_size = int(np.prod(original_shape))
+            return full_size
+        else:
+            # Fallback to old logic if shape not available (shouldn't happen in normal cases)
+            max_end = 0
+            for _, parts_info in parts_info_list:
+                if param_name in parts_info:
+                    for flat_start, flat_end, shape in parts_info[param_name]:
+                        max_end = max(max_end, flat_end)
+            return max_end
     
     def _get_original_shape(self, param_name: str, parts_info_list: List[Tuple[int, Dict]]) -> Optional[tuple]:
         """Get parameter original shape"""

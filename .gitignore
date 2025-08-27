@@ -140,3 +140,20 @@ dmypy.json
 data/cifar-10-python.tar.gz
 data/shakespeare/
 data/cifar-10-batches-py/
+
+# Experiment outputs and large files
+ray_v2_output/client_*_output/
+docker_data/
+current_clients.txt
+expected_clients.txt
+daemon.json
+package-lock.json
+package.json
+test_gpu_allocation.py
+test_importance_methods.py
+test_simple_importance.py
+
+# Logs and temporary files
+logs/
+*.db
+*.db-journal
