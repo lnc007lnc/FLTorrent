@@ -1194,12 +1194,24 @@ class Client(BaseClient):
         self.bt_message_buffer.clear()
         
         for message_type, message in buffered_messages:
+            logger.info(f"[BT] Client {self.ID}: Processing buffered {message_type} from {message.sender}")
+            
             if message_type == 'bitfield':
-                logger.info(f"[BT] Client {self.ID}: Processing buffered bitfield from {message.sender}")
                 self.callback_funcs_for_bitfield(message)
             elif message_type == 'have':
-                logger.info(f"[BT] Client {self.ID}: Processing buffered have from {message.sender}")
                 self.callback_funcs_for_have(message)
+            elif message_type == 'interested':
+                self.callback_funcs_for_interested(message)
+            elif message_type == 'choke':
+                self.callback_funcs_for_choke(message)
+            elif message_type == 'unchoke':
+                self.callback_funcs_for_unchoke(message)
+            elif message_type == 'request':
+                self.callback_funcs_for_request(message)
+            elif message_type == 'piece':
+                self.callback_funcs_for_piece(message)
+            elif message_type == 'cancel':
+                self.callback_funcs_for_cancel(message)
             else:
                 logger.warning(f"[BT] Client {self.ID}: Unknown buffered message type: {message_type}")
     
@@ -1341,59 +1353,76 @@ class Client(BaseClient):
         
     def callback_funcs_for_interested(self, message):
         """Handle interested message"""
-        if hasattr(self, 'bt_manager'):
-            self.bt_manager.handle_interested(message.sender)
+        if not hasattr(self, 'bt_manager') or self.bt_manager is None:
+            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering interested message from {message.sender}")
+            self.bt_message_buffer.append(('interested', message))
+            return
+        self.bt_manager.handle_interested(message.sender)
         
     def callback_funcs_for_choke(self, message):
         """Handle choke message"""
-        if hasattr(self, 'bt_manager'):
-            self.bt_manager.handle_choke(message.sender)
+        if not hasattr(self, 'bt_manager') or self.bt_manager is None:
+            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering choke message from {message.sender}")
+            self.bt_message_buffer.append(('choke', message))
+            return
+        self.bt_manager.handle_choke(message.sender)
         
     def callback_funcs_for_unchoke(self, message):
         """Handle unchoke message"""
-        if hasattr(self, 'bt_manager'):
-            self.bt_manager.handle_unchoke(message.sender)
+        if not hasattr(self, 'bt_manager') or self.bt_manager is None:
+            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering unchoke message from {message.sender}")
+            self.bt_message_buffer.append(('unchoke', message))
+            return
+        self.bt_manager.handle_unchoke(message.sender)
         
     def callback_funcs_for_request(self, message):
         """Handle chunk request"""
         logger.debug(f"[BT] Client {self.ID}: Received request from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
-        if hasattr(self, 'bt_manager'):
-            # 🔴 Pass round_num to handle_request
-            self.bt_manager.handle_request(
-                message.sender,
-                message.content['round_num'],
-                message.content['source_client_id'],
-                message.content['chunk_id']
-            )
-        else:
-            logger.warning(f"[BT] Client {self.ID}: No bt_manager when handling request from {message.sender}")
+        if not hasattr(self, 'bt_manager') or self.bt_manager is None:
+            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering request message from {message.sender}")
+            self.bt_message_buffer.append(('request', message))
+            return
+            
+        # 🔴 Pass round_num to handle_request
+        self.bt_manager.handle_request(
+            message.sender,
+            message.content['round_num'],
+            message.content['source_client_id'],
+            message.content['chunk_id']
+        )
         
     def callback_funcs_for_piece(self, message):
         """Handle chunk data"""
         logger.debug(f"[BT] Client {self.ID}: Received piece from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
-        if hasattr(self, 'bt_manager'):
-            self.bt_manager.handle_piece(
-                message.sender,
-                message.content['round_num'],
-                message.content['source_client_id'],
-                message.content['chunk_id'],
-                message.content['data'],
-                message.content['checksum']
-            )
-        else:
-            logger.warning(f"[BT] Client {self.ID}: No bt_manager when handling piece from {message.sender}")
+        if not hasattr(self, 'bt_manager') or self.bt_manager is None:
+            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering piece message from {message.sender}")
+            self.bt_message_buffer.append(('piece', message))
+            return
+            
+        self.bt_manager.handle_piece(
+            message.sender,
+            message.content['round_num'],
+            message.content['source_client_id'],
+            message.content['chunk_id'],
+            message.content['data'],
+            message.content['checksum']
+        )
         
     def callback_funcs_for_cancel(self, message):
         """Handle cancel message"""
+        if not hasattr(self, 'bt_manager') or self.bt_manager is None:
+            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering cancel message from {message.sender}")
+            self.bt_message_buffer.append(('cancel', message))
+            return
+            
         # Simple handling: remove from pending requests
-        if hasattr(self, 'bt_manager'):
-            chunk_key = (message.content['round_num'], 
-                        message.content['source_client_id'], 
-                        message.content['chunk_id'])
-            if chunk_key in self.bt_manager.pending_requests:
-                del self.bt_manager.pending_requests[chunk_key]
+        chunk_key = (message.content['round_num'], 
+                    message.content['source_client_id'], 
+                    message.content['chunk_id'])
+        if chunk_key in self.bt_manager.pending_requests:
+            del self.bt_manager.pending_requests[chunk_key]
 
     def _has_all_chunks(self, expected_chunks):
         """🐛 Bug Fix 29: Check if all chunks have been collected"""

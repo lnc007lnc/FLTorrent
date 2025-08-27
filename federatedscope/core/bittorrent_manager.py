@@ -7,7 +7,9 @@ import time
 import hashlib
 import random
 import logging
+import threading
 from typing import Dict, Set, List, Tuple, Optional, Any
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +224,7 @@ class BitTorrentManager:
             logger.error(f"[BT-PIECE] Client {self.client_id}: Expected={checksum}, Got={calculated_checksum}")
             # Re-request this chunk
             chunk_key = (round_num, source_client_id, chunk_id)
+            # 🔧 FIX: Atomic retry count increment (thread-safe dict operations)
             self.retry_count[chunk_key] = self.retry_count.get(chunk_key, 0) + 1
             logger.warning(f"[BT-PIECE] Client {self.client_id}: Retry count for chunk {chunk_key}: {self.retry_count[chunk_key]}")
             return False
@@ -300,8 +303,11 @@ class BitTorrentManager:
         
         # Count rarity of each chunk
         chunk_availability = {}
-        for peer_id, bitfield in self.peer_bitfields.items():
-            for chunk_key, has_chunk in bitfield.items():
+        # 🔧 FIX: Create thread-safe copy to avoid "dictionary changed size during iteration"
+        peer_bitfields_copy = dict(self.peer_bitfields)
+        for peer_id, bitfield in peer_bitfields_copy.items():
+            bitfield_copy = dict(bitfield) if isinstance(bitfield, dict) else bitfield
+            for chunk_key, has_chunk in bitfield_copy.items():
                 # 🔴 Only consider chunks from current round
                 if has_chunk and chunk_key[0] == self.round_num:
                     chunk_availability[chunk_key] = chunk_availability.get(chunk_key, 0) + 1
@@ -328,7 +334,9 @@ class BitTorrentManager:
         if not chunk_availability:
             if not hasattr(self, '_logged_no_chunks'):
                 logger.info(f"[BT] Client {self.client_id}: No chunks available from peers. Peer count: {len(self.peer_bitfields)}")
-                for peer_id, bitfield in self.peer_bitfields.items():
+                # 🔧 FIX: Use thread-safe copy for logging iteration
+                peer_bitfields_copy = dict(self.peer_bitfields)
+                for peer_id, bitfield in peer_bitfields_copy.items():
                     logger.info(f"[BT] Client {self.client_id}: Peer {peer_id} bitfield size: {len(bitfield)}")
                 self._logged_no_chunks = True
         elif not needed_chunks:
@@ -423,8 +431,12 @@ class BitTorrentManager:
         
         # Count rarity of each chunk
         chunk_availability = {}
-        for peer_id, bitfield in self.peer_bitfields.items():
-            for chunk_key, has_chunk in bitfield.items():
+        # 🔧 FIX: Create thread-safe copy to avoid "dictionary changed size during iteration"
+        peer_bitfields_copy = dict(self.peer_bitfields)  # Shallow copy for thread safety
+        for peer_id, bitfield in peer_bitfields_copy.items():
+            # 🔧 FIX: Also make bitfield copy in case it's modified during iteration
+            bitfield_copy = dict(bitfield) if isinstance(bitfield, dict) else bitfield
+            for chunk_key, has_chunk in bitfield_copy.items():
                 if has_chunk and chunk_key[0] == self.round_num:
                     chunk_availability[chunk_key] = chunk_availability.get(chunk_key, 0) + 1
         
@@ -473,7 +485,9 @@ class BitTorrentManager:
         
         # 2. Get importance score from peer's bitfield
         if hasattr(self, 'peer_importance_scores'):
-            for peer_id, peer_scores in self.peer_importance_scores.items():
+            # 🔧 FIX: Create thread-safe copy to avoid "dictionary changed size during iteration"
+            peer_importance_scores_copy = dict(self.peer_importance_scores)
+            for peer_id, peer_scores in peer_importance_scores_copy.items():
                 if chunk_key in peer_scores:
                     return peer_scores[chunk_key]
         
@@ -548,14 +562,18 @@ class BitTorrentManager:
     def _find_alternative_peers(self, chunk_key: Tuple, exclude: int = None) -> List[int]:
         """🐛 Bug fix 28: find alternative peers that have specified chunk"""
         alternatives = []
-        for peer_id, bitfield in self.peer_bitfields.items():
+        # 🔧 FIX: Use thread-safe copy to avoid "dictionary changed size during iteration"
+        peer_bitfields_copy = dict(self.peer_bitfields)
+        for peer_id, bitfield in peer_bitfields_copy.items():
             if peer_id != exclude and chunk_key in bitfield and bitfield[chunk_key]:
                 alternatives.append(peer_id)
         return alternatives
         
     def _find_peer_with_chunk(self, chunk_key: Tuple) -> Optional[int]:
         """Find peer that has specified chunk"""
-        for peer_id, bitfield in self.peer_bitfields.items():
+        # 🔧 FIX: Use thread-safe copy to avoid "dictionary changed size during iteration"
+        peer_bitfields_copy = dict(self.peer_bitfields)
+        for peer_id, bitfield in peer_bitfields_copy.items():
             if chunk_key in bitfield and bitfield[chunk_key]:
                 return peer_id
         return None
@@ -690,15 +708,20 @@ class BitTorrentManager:
         timeout_requests = []
         
         # Find timed out requests
-        for chunk_key, (peer_id, timestamp) in self.pending_requests.items():
+        # 🔧 FIX: Create thread-safe copy to avoid "dictionary changed size during iteration"
+        pending_requests_copy = dict(self.pending_requests)
+        for chunk_key, (peer_id, timestamp) in pending_requests_copy.items():
             if current_time - timestamp > self.request_timeout:
                 timeout_requests.append((chunk_key, peer_id))
         
         # Handle timed out requests
+        # 🔧 FIX: Create thread-safe snapshot of retry_count to avoid concurrent modification
+        retry_count_snapshot = dict(self.retry_count)
+        
         for chunk_key, peer_id in timeout_requests:
             # 🔴 chunk_key now contains round information
             round_num, source_id, chunk_id = chunk_key
-            retry_count = self.retry_count.get(chunk_key, 0)
+            retry_count = retry_count_snapshot.get(chunk_key, 0)
             
             if retry_count < self.max_retries:
                 # Re-request
@@ -712,7 +735,8 @@ class BitTorrentManager:
                     try:
                         self._send_request(new_peer, source_id, chunk_id)
                         self.pending_requests[chunk_key] = (new_peer, current_time)
-                        self.retry_count[chunk_key] = retry_count + 1
+                        # 🔧 FIX: Atomic retry count update - read current value and increment
+                        self.retry_count[chunk_key] = self.retry_count.get(chunk_key, 0) + 1
                     except Exception as e:
                         logger.error(f"[BT] Client {self.client_id}: Failed to send request for chunk {chunk_key}: {e}")
                         # Remove from pending requests since send failed
@@ -806,7 +830,9 @@ class BitTorrentManager:
         peer_bitfield = self.peer_bitfields[peer_id]
         
         # Check if peer has chunks I don't have
-        for chunk_key, has_chunk in peer_bitfield.items():
+        # 🔧 FIX: Create thread-safe copy to avoid "dictionary changed size during iteration"
+        peer_bitfield_copy = dict(peer_bitfield) if isinstance(peer_bitfield, dict) else peer_bitfield
+        for chunk_key, has_chunk in peer_bitfield_copy.items():
             if has_chunk and chunk_key not in my_bitfield and chunk_key[0] == self.round_num:
                 return True
         return False

@@ -65,7 +65,7 @@ class FLConfig:
     CLIENT_NUM: int = 100                     # Number of clients for CIFAR experiments
     TOTAL_ROUNDS: int = 20                  # Fewer rounds for epoch-based training
     CHUNK_NUM: int = 20                     # More chunks for ResNet layers
-    IMPORTANCE_METHOD: str = "snip"         # Chunk importance method: magnitude, l2_norm, snip, fisher
+    IMPORTANCE_METHOD: str = "fisher"         # Chunk importance method: magnitude, l2_norm, snip, fisher
     
     # === Dataset Settings ===
     # CNN Settings (current active for ResNet-18)
@@ -1121,7 +1121,7 @@ class DockerFederatedScopeClient:
         self.server_ip = server_ip
         self.server_port = server_port
         self.device_profile = device_profile
-        self.gpu_id = gpu_id  # 保存分配的GPU ID
+        self.gpu_id = gpu_id  # Save assigned GPU ID
         self.container = None
         self.docker_client = docker.from_env()
         self.node_ip = ray.util.get_node_ip_address()
@@ -1285,19 +1285,19 @@ class DockerFederatedScopeClient:
             "command": ["sh", "-c", f"cd /app && PYTHONPATH=/app python federatedscope/main.py --cfg /app/config.yaml > /app/logs/client_{self.client_id}.log 2>&1"]
         }
         
-        # 🎮 GPU support - 使用指定的GPU ID进行精确分配
+        # 🎮 GPU support - Use specified GPU ID for precise allocation
         if self.gpu_id is not None:
-            # 指定特定GPU设备
+            # Specify specific GPU device
             container_config["device_requests"] = [
                 docker.types.DeviceRequest(device_ids=[str(self.gpu_id)], capabilities=[['gpu']])
             ]
-            # 设置CUDA环境变量限制可见GPU
+            # Set CUDA environment variable to limit visible GPUs
             container_config["environment"]["CUDA_VISIBLE_DEVICES"] = str(self.gpu_id)
-            print(f"🎮 Client {self.client_id}: 分配到GPU {self.gpu_id}")
+            print(f"🎮 Client {self.client_id}: Assigned GPU {self.gpu_id}")
         else:
-            # CPU模式
+            # CPU mode
             container_config["environment"]["CUDA_VISIBLE_DEVICES"] = ""
-            print(f"💻 Client {self.client_id}: CPU模式，无GPU分配")
+            print(f"💻 Client {self.client_id}: CPU mode, no GPU allocation")
         
         try:
             # Start container
@@ -1742,11 +1742,11 @@ class RayV2FederatedLearning:
         else:
             self.logger.info(f"⚡ GPU allocation optimized, reaching target utilization ({target_utilization*100:.0f}%)")
         
-        # 🧠 智能GPU分组分配：将客户端按GPU数量分组
+        # 🧠 Smart GPU grouping allocation: Group clients by GPU count
         clients_per_gpu = CONFIG.CLIENT_NUM // num_physical_gpus
         remainder_clients = CONFIG.CLIENT_NUM % num_physical_gpus
         
-        # 分配GPU资源给每个客户端并指定GPU ID
+        # Allocate GPU resources to each client and specify GPU ID
         client_gpu_assignments = []
         actual_total_gpu = 0.0
         
@@ -1761,8 +1761,8 @@ class RayV2FederatedLearning:
                 # Round to 4 decimal places instead of 2 to avoid under-allocation
                 allocated_gpu = round(allocated_gpu, 4)
             
-            # 🎯 分组分配GPU ID：按组分配到不同GPU
-            gpu_id = i % num_physical_gpus  # 轮询分配到不同GPU
+            # 🎯 Group allocation GPU ID: Assign to different GPUs by group
+            gpu_id = i % num_physical_gpus  # Round-robin allocation to different GPUs
             client_gpu_assignments.append((allocated_gpu, gpu_id))
             actual_total_gpu += allocated_gpu
         
@@ -1794,8 +1794,8 @@ class RayV2FederatedLearning:
                            for gid, info in gpu_group_summary.items()}
         }
         
-        self.logger.info(f"🎯 智能GPU分组分配: {gpu_summary}")
-        self.logger.info(f"📋 GPU分组详情: {gpu_summary['gpu_grouping']}")
+        self.logger.info(f"🎯 Smart GPU group allocation: {gpu_summary}")
+        self.logger.info(f"📋 GPU grouping details: {gpu_summary['gpu_grouping']}")
         
         return server_gpu, client_gpu_assignments
     
@@ -2045,12 +2045,12 @@ class RayV2FederatedLearning:
             # Ray resource allocation (based on device type and GPU allocation)
             client_resources = self._get_ray_resources_for_device(device_profile)
             
-            # 🎮 智能GPU分组分配：获取GPU资源和GPU ID
+            # 🎮 Smart GPU group allocation: Get GPU resources and GPU ID
             assigned_gpu_id = None
             if i < len(client_gpu_assignments):
                 client_gpu_alloc, client_gpu_id = client_gpu_assignments[i]
                 client_resources["num_gpus"] = client_gpu_alloc  # Fractional GPU allocation
-                assigned_gpu_id = client_gpu_id  # 保存GPU ID用于Docker配置
+                assigned_gpu_id = client_gpu_id  # Save GPU ID for Docker configuration
             
             try:
                 # Choose Actor type based on Docker availability
