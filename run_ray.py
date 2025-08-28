@@ -45,8 +45,8 @@ class EdgeDeviceProfile:
     storage_limit: str = "8g"              # Storage limit
     
     # Network characteristics
-    bandwidth_up_kbps: int = 10000         # Uplink bandwidth (kbps)
-    bandwidth_down_kbps: int = 50000       # Downlink bandwidth (kbps)
+    bandwidth_up_kbps: int = 176610         # Uplink bandwidth (kbps) Ookla Speedtest Global Index spain Fixed Broadband
+    bandwidth_down_kbps: int = 241750       # Downlink bandwidth (kbps) Ookla Speedtest Global Index spain Fixed Broadband
     latency_ms: int = 50                   # Network latency (milliseconds)
     packet_loss_rate: float = 0.00        # Packet loss rate (0-1)
     jitter_ms: int = 10                    # Network jitter (milliseconds)
@@ -62,8 +62,8 @@ class FLConfig:
     """Federated learning configuration parameters"""
     
     # === Basic Settings ===
-    CLIENT_NUM: int = 100                     # Number of clients for CIFAR experiments
-    TOTAL_ROUNDS: int = 30                  # Fewer rounds for epoch-based training
+    CLIENT_NUM: int = 3                    # Number of clients for CIFAR experiments
+    TOTAL_ROUNDS: int = 5                  # Fewer rounds for epoch-based training
     CHUNK_NUM: int = 20                     # More chunks for ResNet layers
     IMPORTANCE_METHOD: str = "fisher"         # Chunk importance method: magnitude, l2_norm, snip, fisher
     
@@ -92,7 +92,7 @@ class FLConfig:
     # MODEL_DROPOUT: float = 0.1             # Add dropout for regularization
     
     # === Docker Settings ===
-    USE_DOCKER: bool = True               # Disable Docker for testing (enable after rebuilding image)
+    USE_DOCKER: bool = False               # Disable Docker for testing (enable after rebuilding image)
     BASE_DOCKER_IMAGE: str = "flv2:base"  # Base image
     DOCKER_NETWORK_NAME: str = "fl_network"         # Docker network name
     ENABLE_NETWORK_SIMULATION: bool = True          # Enable network simulation
@@ -153,9 +153,9 @@ class FLConfig:
     GRAD_CLIP: float = 5.0                # Higher gradient clipping for CNN
     
     # === BitTorrent Settings ===
-    BITTORRENT_TIMEOUT: float = 600.0     # BitTorrent timeout
+    BITTORRENT_TIMEOUT: float = 300.0     # BitTorrent timeout 5min
     BT_CHUNK_SELECTION: str = "rarest_first"  # Chunk selection strategy
-    BT_MIN_COMPLETION_RATIO: float = 0.8   # Minimum completion ratio
+    BT_MIN_COMPLETION_RATIO: float = 1.0   # Minimum completion ratio
     
     # === Topology Settings ===
     TOPOLOGY_TYPE: str = "mesh"         # Topology type: star, ring, fully_connected, mesh, random
@@ -213,7 +213,7 @@ class FLConfig:
     TARGET_UTILIZATION: float = 0.95      # Target GPU utilization (95%)
     
     # === Chunk Database Retention Settings ===
-    CHUNK_KEEP_ROUNDS: int = 20             # Number of recent rounds to keep in database
+    CHUNK_KEEP_ROUNDS: int = 2             # Number of recent rounds to keep in database
     
     # === Advanced FederatedScope Settings ===
     BACKEND: str = "torch"                 # Backend framework: torch, tensorflow

@@ -934,8 +934,17 @@ class Client(BaseClient):
         """
         try:
             if not hasattr(self, 'chunk_manager'):
-                logger.error(f"[BT-FL] Client {self.ID}: No chunk_manager available for aggregation")
-                return None
+                logger.warning(f"[BT-FL] Client {self.ID}: No chunk_manager available, initializing...")
+                try:
+                    from federatedscope.core.chunk_manager import ChunkManager
+                    self.chunk_manager = ChunkManager(
+                        client_id=self.ID,
+                        change_callback=self._send_chunk_info_to_server
+                    )
+                    logger.info(f"[BT-FL] Client {self.ID}: Successfully initialized chunk_manager for aggregation")
+                except Exception as e:
+                    logger.error(f"[BT-FL] Client {self.ID}: Failed to initialize chunk_manager: {e}")
+                    return None
                 
             logger.info(f"[BT-FL] Client {self.ID}: Starting model aggregation from chunks for round {round_num}")
             
@@ -1124,11 +1133,20 @@ class Client(BaseClient):
             logger.info(f"[BT] Client {self.ID}: Fallback neighbors: {neighbors}")
         
         # 2. Start BitTorrent exchange
-        # 🐛 Bug fix 19: Ensure chunk_manager exists
+        # 🐛 Bug fix 19: Ensure chunk_manager exists, initialize if needed
         if not hasattr(self, 'chunk_manager'):
-            logger.error(f"[BT] Client {self.ID}: No chunk_manager found!")
-            self._report_bittorrent_completion_failure()
-            return
+            logger.warning(f"[BT] Client {self.ID}: No chunk_manager found, initializing...")
+            try:
+                from federatedscope.core.chunk_manager import ChunkManager
+                self.chunk_manager = ChunkManager(
+                    client_id=self.ID,
+                    change_callback=self._send_chunk_info_to_server
+                )
+                logger.info(f"[BT] Client {self.ID}: Successfully initialized chunk_manager")
+            except Exception as e:
+                logger.error(f"[BT] Client {self.ID}: Failed to initialize chunk_manager: {e}")
+                self._report_bittorrent_completion_failure()
+                return
             
         # 🔧 Critical fix: BitTorrent should exchange chunks from the round clients just finished training
         # Timing analysis: Client.state updates when receiving model, Server.state updates after aggregation +1
