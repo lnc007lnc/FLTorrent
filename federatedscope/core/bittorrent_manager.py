@@ -48,6 +48,9 @@ class BitTorrentManager:
         # 🔧 Bug fix 3: message retransmission mechanism
         self.pending_requests: Dict[Tuple, Tuple[int, float]] = {}  # {(source_id, chunk_id): (peer_id, timestamp)}
         self.request_timeout = 5.0  # 5 second request timeout
+        
+        # ✅ Round-level lifecycle management
+        self.is_download_complete = False  # 标记当前节点是否完成下载，用于做种模式
         self.max_retries = 3  # Maximum retry count
         self.retry_count: Dict[Tuple, int] = {}  # {(source_id, chunk_id): count}
         

@@ -141,6 +141,139 @@ class ChunkManager:
         conn.commit()
         conn.close()
     
+    def _ensure_round_tables_exist(self, round_num: int):
+        """Ensure round-specific tables exist"""
+        conn = self._get_optimized_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Create metadata table for this round
+            metadata_table = f"chunk_metadata_r{round_num}"
+            cursor.execute(f'''
+                CREATE TABLE IF NOT EXISTS {metadata_table} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chunk_id INTEGER NOT NULL,
+                    chunk_hash TEXT NOT NULL,
+                    parts_info TEXT NOT NULL,
+                    flat_size INTEGER NOT NULL,
+                    importance_score REAL DEFAULT 0.0,
+                    pruning_method TEXT DEFAULT 'magnitude',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(chunk_id)
+                )
+            ''')
+            
+            # Create BitTorrent chunks table for this round
+            bt_table = f"bt_chunks_r{round_num}"
+            cursor.execute(f'''
+                CREATE TABLE IF NOT EXISTS {bt_table} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_client_id INTEGER NOT NULL,
+                    chunk_id INTEGER NOT NULL,
+                    chunk_hash TEXT NOT NULL,
+                    holder_client_id INTEGER NOT NULL,
+                    received_time REAL DEFAULT (strftime('%s', 'now')),
+                    is_verified INTEGER DEFAULT 0,
+                    UNIQUE(source_client_id, chunk_id, holder_client_id)
+                )
+            ''')
+            
+            # Create chunk data table for this round
+            data_table = f"chunk_data_r{round_num}"
+            cursor.execute(f'''
+                CREATE TABLE IF NOT EXISTS {data_table} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chunk_hash TEXT UNIQUE NOT NULL,
+                    data BLOB NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create BitTorrent session table for this round
+            session_table = f"bt_sessions_r{round_num}"
+            cursor.execute(f'''
+                CREATE TABLE IF NOT EXISTS {session_table} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    start_time REAL NOT NULL,
+                    end_time REAL,
+                    status TEXT DEFAULT 'active',
+                    total_chunks_expected INTEGER,
+                    total_chunks_received INTEGER DEFAULT 0,
+                    bytes_uploaded INTEGER DEFAULT 0,
+                    bytes_downloaded INTEGER DEFAULT 0
+                )
+            ''')
+            
+            # Create indexes
+            cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{metadata_table}_hash ON {metadata_table}(chunk_hash)')
+            cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{bt_table}_hash ON {bt_table}(chunk_hash)')
+            cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{data_table}_hash ON {data_table}(chunk_hash)')
+            
+            conn.commit()
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create round {round_num} tables: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
+    
+    def _cleanup_old_rounds_by_tables(self, keep_rounds: int = 2):
+        """Ultra-fast cleanup by dropping entire round tables"""
+        try:
+            conn = self._get_optimized_connection()
+            cursor = conn.cursor()
+            
+            # Get all existing round tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'chunk_metadata_r%'")
+            metadata_tables = [row[0] for row in cursor.fetchall()]
+            
+            # Extract round numbers and sort
+            rounds = []
+            for table in metadata_tables:
+                try:
+                    round_num = int(table.replace('chunk_metadata_r', ''))
+                    rounds.append(round_num)
+                except ValueError:
+                    continue
+            
+            rounds.sort(reverse=True)  # Newest first
+            
+            if len(rounds) <= keep_rounds:
+                logger.debug(f"🧹 Only {len(rounds)} rounds exist, no cleanup needed")
+                conn.close()
+                return
+                
+            # Rounds to delete (keep the most recent ones)
+            rounds_to_delete = rounds[keep_rounds:]
+            logger.info(f"🧹 Deleting {len(rounds_to_delete)} old rounds: {rounds_to_delete}")
+            
+            start_time = time.time()
+            deleted_tables = 0
+            
+            for round_num in rounds_to_delete:
+                # Drop all round-specific tables (chunk + BitTorrent)
+                for table_type in ["chunk_metadata", "bt_chunks", "chunk_data", "bt_sessions"]:
+                    table_name = f"{table_type}_r{round_num}"
+                    try:
+                        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+                        cursor.execute(f"DROP INDEX IF EXISTS idx_{table_name}_hash")
+                        deleted_tables += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to drop table {table_name}: {e}")
+            
+            conn.commit()
+            elapsed = time.time() - start_time
+            
+            logger.info(f"🧹✅ Ultra-fast cleanup completed in {elapsed:.2f}s:")
+            logger.info(f"   - Deleted {len(rounds_to_delete)} rounds")
+            logger.info(f"   - Dropped {deleted_tables} tables")
+            logger.info(f"   - Performance: {deleted_tables/elapsed:.1f} tables/sec")
+            
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to cleanup old rounds: {e}")
+    
     @staticmethod
     def model_to_params(model: nn.Module) -> Dict[str, np.ndarray]:
         """Convert all parameters and buffers in model to numpy arrays"""
@@ -301,12 +434,21 @@ class ChunkManager:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            cursor.execute('''
+            # 🚀 NEW: Query from round-specific table
+            metadata_table = f"chunk_metadata_r{round_num}"
+            
+            # Check if round table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metadata_table,))
+            if not cursor.fetchone():
+                logger.debug(f"No round {round_num} table found for importance scores")
+                conn.close()
+                return {}
+            
+            cursor.execute(f'''
                 SELECT chunk_id, importance_score, pruning_method, flat_size, chunk_hash
-                FROM chunk_metadata 
-                WHERE round_num = ?
+                FROM {metadata_table} 
                 ORDER BY chunk_id
-            ''', (round_num,))
+            ''')
             
             results = cursor.fetchall()
             conn.close()
@@ -441,21 +583,25 @@ class ChunkManager:
                 chunk_bytes = pickle.dumps(chunk_data)
                 chunk_hash = hashlib.sha256(chunk_bytes).hexdigest()
                 
-                # Save chunk data (if not exists)
-                cursor.execute(
-                    "INSERT OR IGNORE INTO chunk_data (chunk_hash, data) VALUES (?, ?)",
-                    (chunk_hash, chunk_bytes)
-                )
+                # 🚀 NEW: Save to round-specific tables
+                self._ensure_round_tables_exist(round_num)
                 
-                # Save chunk metadata (including importance scores)
+                # Save chunk data to round-specific table
+                data_table = f"chunk_data_r{round_num}"
+                cursor.execute(f"""
+                    INSERT OR IGNORE INTO {data_table} (chunk_hash, data) VALUES (?, ?)
+                """, (chunk_hash, chunk_bytes))
+                
+                # Save chunk metadata to round-specific table
                 parts_json = json.dumps(chunk_info['parts'])
                 importance_score = importance_scores[i] if i < len(importance_scores) else 0.0
                 
-                cursor.execute('''
-                    INSERT OR REPLACE INTO chunk_metadata 
-                    (round_num, chunk_id, chunk_hash, parts_info, flat_size, importance_score, pruning_method)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (round_num, chunk_info['chunk_id'], chunk_hash, 
+                metadata_table = f"chunk_metadata_r{round_num}"
+                cursor.execute(f'''
+                    INSERT OR REPLACE INTO {metadata_table} 
+                    (chunk_id, chunk_hash, parts_info, flat_size, importance_score, pruning_method)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (chunk_info['chunk_id'], chunk_hash, 
                      parts_json, chunk_info['flat_size'], importance_score, importance_method))
                 
                 saved_hashes.append(chunk_hash)
@@ -497,23 +643,32 @@ class ChunkManager:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            # Query chunk metadata
-            cursor.execute('''
+            # 🚀 NEW: Query from round-specific tables
+            metadata_table = f"chunk_metadata_r{round_num}"
+            data_table = f"chunk_data_r{round_num}"
+            
+            # Check if round tables exist
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metadata_table,))
+            if not cursor.fetchone():
+                logger.debug(f"No round {round_num} tables found")
+                conn.close()
+                return []
+            
+            # Query chunk metadata from round-specific table
+            cursor.execute(f'''
                 SELECT chunk_id, chunk_hash, parts_info, flat_size
-                FROM chunk_metadata
-                WHERE round_num = ?
+                FROM {metadata_table}
                 ORDER BY chunk_id
-            ''', (round_num,))
+            ''')
             
             metadata_rows = cursor.fetchall()
             
             chunks = []
             for chunk_id, chunk_hash, parts_json, flat_size in metadata_rows:
-                # Load chunk data
-                cursor.execute(
-                    "SELECT data FROM chunk_data WHERE chunk_hash = ?",
-                    (chunk_hash,)
-                )
+                # Load chunk data from round-specific table
+                cursor.execute(f"""
+                    SELECT data FROM {data_table} WHERE chunk_hash = ?
+                """, (chunk_hash,))
                 data_row = cursor.fetchone()
                 
                 if data_row:
@@ -547,21 +702,30 @@ class ChunkManager:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            cursor.execute('''
+            # 🚀 NEW: Query from round-specific tables
+            metadata_table = f"chunk_metadata_r{round_num}"
+            data_table = f"chunk_data_r{round_num}"
+            
+            # Check if round tables exist
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metadata_table,))
+            if not cursor.fetchone():
+                conn.close()
+                return None
+            
+            cursor.execute(f'''
                 SELECT chunk_hash, parts_info, flat_size
-                FROM chunk_metadata
-                WHERE round_num = ? AND chunk_id = ?
-            ''', (round_num, chunk_id))
+                FROM {metadata_table}
+                WHERE chunk_id = ?
+            ''', (chunk_id,))
             
             row = cursor.fetchone()
             if row:
                 chunk_hash, parts_json, flat_size = row
                 
-                # Load chunk data
-                cursor.execute(
-                    "SELECT data FROM chunk_data WHERE chunk_hash = ?",
-                    (chunk_hash,)
-                )
+                # Load chunk data from round-specific table
+                cursor.execute(f"""
+                    SELECT data FROM {data_table} WHERE chunk_hash = ?
+                """, (chunk_hash,))
                 data_row = cursor.fetchone()
                 
                 if data_row:
@@ -581,27 +745,108 @@ class ChunkManager:
             logger.error(f"❌ Failed to get chunk: {e}")
             return None
     
-    def get_storage_stats(self) -> Dict:
-        """Get database storage statistics"""
+    def get_storage_stats(self, round_num: Optional[int] = None) -> Dict:
+        """Get database storage statistics
+        
+        Args:
+            round_num: Optional round number. If specified, returns stats for that round only.
+                      If None, returns stats for all rounds (default behavior).
+        """
         try:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            # Count chunk metadata
-            cursor.execute("SELECT COUNT(*) FROM chunk_metadata")
-            total_metadata = cursor.fetchone()[0]
+            if round_num is not None:
+                # Query specific round tables only
+                metadata_tables = [f"chunk_metadata_r{round_num}"]
+                data_tables = [f"chunk_data_r{round_num}"]
+                
+                # Check if round tables exist
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metadata_tables[0],))
+                if not cursor.fetchone():
+                    metadata_tables = []
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (data_tables[0],))
+                if not cursor.fetchone():
+                    data_tables = []
+            else:
+                # 🚀 Aggregate stats from all round tables
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'chunk_metadata_r%'")
+                metadata_tables = [row[0] for row in cursor.fetchall()]
+                
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'chunk_data_r%'")
+                data_tables = [row[0] for row in cursor.fetchall()]
             
-            # Count chunk data
-            cursor.execute("SELECT COUNT(*) FROM chunk_data")
-            total_chunks = cursor.fetchone()[0]
+            total_metadata = 0
+            total_chunks = 0
+            total_size = 0
+            min_round = None
+            max_round = None
             
-            # Count storage size
-            cursor.execute("SELECT SUM(LENGTH(data)) FROM chunk_data")
-            total_size = cursor.fetchone()[0] or 0
+            # Set min/max round for specific round query
+            if round_num is not None and (metadata_tables or data_tables):
+                min_round = max_round = round_num
             
-            # Count round range
-            cursor.execute("SELECT MIN(round_num), MAX(round_num) FROM chunk_metadata")
-            min_round, max_round = cursor.fetchone()
+            # Count metadata from round tables
+            for table in metadata_tables:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    total_metadata += cursor.fetchone()[0]
+                    
+                    # Extract round number for min/max calculation (only for all-rounds query)
+                    if round_num is None:
+                        try:
+                            table_round_num = int(table.replace('chunk_metadata_r', ''))
+                            if min_round is None or table_round_num < min_round:
+                                min_round = table_round_num
+                            if max_round is None or table_round_num > max_round:
+                                max_round = table_round_num
+                        except ValueError:
+                            continue
+                except sqlite3.Error:
+                    continue
+            
+            # Count data from all round tables
+            for table in data_tables:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    total_chunks += cursor.fetchone()[0]
+                    
+                    cursor.execute(f"SELECT SUM(LENGTH(data)) FROM {table}")
+                    size = cursor.fetchone()[0] or 0
+                    total_size += size
+                except sqlite3.Error:
+                    continue
+                    
+            # Fallback to legacy tables if no round tables exist
+            if total_metadata == 0 and total_chunks == 0:
+                try:
+                    if round_num is not None:
+                        # Query specific round from legacy tables
+                        cursor.execute("SELECT COUNT(*) FROM chunk_metadata WHERE round_num = ?", (round_num,))
+                        total_metadata = cursor.fetchone()[0]
+                        cursor.execute("SELECT COUNT(DISTINCT chunk_hash) FROM chunk_metadata WHERE round_num = ?", (round_num,))
+                        chunk_count = cursor.fetchone()[0]
+                        if chunk_count > 0:
+                            cursor.execute("""
+                                SELECT SUM(LENGTH(cd.data)) FROM chunk_data cd 
+                                JOIN chunk_metadata cm ON cd.chunk_hash = cm.chunk_hash 
+                                WHERE cm.round_num = ?
+                            """, (round_num,))
+                            total_size = cursor.fetchone()[0] or 0
+                            total_chunks = chunk_count
+                            min_round = max_round = round_num
+                    else:
+                        # Query all rounds from legacy tables
+                        cursor.execute("SELECT COUNT(*) FROM chunk_metadata")
+                        total_metadata = cursor.fetchone()[0]
+                        cursor.execute("SELECT COUNT(DISTINCT chunk_hash) FROM chunk_data")
+                        total_chunks = cursor.fetchone()[0]
+                        cursor.execute("SELECT SUM(LENGTH(data)) FROM chunk_data")
+                        total_size = cursor.fetchone()[0] or 0
+                        cursor.execute("SELECT MIN(round_num), MAX(round_num) FROM chunk_metadata")
+                        min_round, max_round = cursor.fetchone()
+                except sqlite3.Error:
+                    pass
             
             conn.close()
             
@@ -612,7 +857,8 @@ class ChunkManager:
                 'unique_chunks': total_chunks,
                 'storage_size_bytes': total_size,
                 'storage_size_mb': total_size / (1024 * 1024) if total_size else 0,
-                'round_range': (min_round, max_round) if min_round is not None else (None, None)
+                'round_range': (min_round, max_round) if min_round is not None else (None, None),
+                'query_scope': f'round_{round_num}' if round_num is not None else 'all_rounds'
             }
             
         except Exception as e:
@@ -625,62 +871,12 @@ class ChunkManager:
         
         Args:
             keep_rounds: Keep data from recent rounds, default to keep only 2 rounds
+        
+        Note: This method now redirects to the ultra-fast table-based cleanup for optimal performance
         """
-        try:
-            conn = self._get_optimized_connection()
-            cursor = conn.cursor()
-            
-            # Find minimum round to keep (considering both local and received chunks)
-            cursor.execute("SELECT MAX(round_num) FROM chunk_metadata")
-            max_local_round = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT MAX(round_num) FROM bt_chunks")
-            max_bt_round = cursor.fetchone()[0]
-            
-            # Use the larger round from both tables as the baseline
-            max_round = max_local_round
-            if max_bt_round is not None:
-                if max_round is None:
-                    max_round = max_bt_round
-                else:
-                    max_round = max(max_round, max_bt_round)
-            
-            if max_round is not None:
-                min_keep_round = max_round - keep_rounds + 1
-                
-                # Delete old local chunk metadata
-                deleted_local = cursor.execute(
-                    "DELETE FROM chunk_metadata WHERE round_num < ?",
-                    (min_keep_round,)
-                ).rowcount
-                
-                # 🔧 New: Delete old BitTorrent chunk records
-                deleted_bt = cursor.execute(
-                    "DELETE FROM bt_chunks WHERE round_num < ?",
-                    (min_keep_round,)
-                ).rowcount
-                
-                # Delete chunk data that is no longer referenced
-                # Now bt_chunks table will also be cleaned, so there won't be permanent reference issues
-                deleted_data = cursor.execute('''
-                    DELETE FROM chunk_data 
-                    WHERE chunk_hash NOT IN (
-                        SELECT DISTINCT chunk_hash FROM chunk_metadata
-                        UNION
-                        SELECT DISTINCT chunk_hash FROM bt_chunks
-                    )
-                ''').rowcount
-                
-                conn.commit()
-                logger.info(f"🧹 Node {self.client_id}: Cleaned data from before round {min_keep_round}")
-                logger.info(f"   - Deleted local chunk metadata: {deleted_local} entries")
-                logger.info(f"   - Deleted received chunk records: {deleted_bt} entries") 
-                logger.info(f"   - Deleted unreferenced chunk data: {deleted_data} entries")
-                
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to clean old chunks: {e}")
+        logger.info(f"🧹 Redirecting to ultra-fast cleanup method for better performance...")
+        # Redirect to ultra-fast cleanup method
+        return self._cleanup_old_rounds_by_tables(keep_rounds)
     
     def reconstruct_model_from_chunks(self, round_num: int, target_model: nn.Module) -> bool:
         """
@@ -808,15 +1004,41 @@ class ChunkManager:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            # Get recently added chunk information (based on creation time)
-            cursor.execute('''
-                SELECT round_num, chunk_id, chunk_hash, flat_size, created_at
-                FROM chunk_metadata
-                ORDER BY created_at DESC
-                LIMIT 10
-            ''')
+            # Get recently added chunk information from round-specific tables
+            recent_chunks = []
             
-            recent_chunks = cursor.fetchall()
+            # Query from all round-specific metadata tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'chunk_metadata_r%'")
+            metadata_tables = [row[0] for row in cursor.fetchall()]
+            
+            for table in metadata_tables:
+                try:
+                    # Extract round number from table name
+                    table_round_num = int(table.replace('chunk_metadata_r', ''))
+                    cursor.execute(f'''
+                        SELECT {table_round_num}, chunk_id, chunk_hash, flat_size, created_at
+                        FROM {table}
+                        ORDER BY created_at DESC
+                        LIMIT 10
+                    ''')
+                    recent_chunks.extend(cursor.fetchall())
+                except (ValueError, sqlite3.Error):
+                    continue
+            
+            # Sort by creation time and limit
+            recent_chunks.sort(key=lambda x: x[4] if x[4] else 0, reverse=True)
+            recent_chunks = recent_chunks[:10]
+            
+            # Fallback to legacy table if no round tables exist
+            if not recent_chunks:
+                cursor.execute('''
+                    SELECT round_num, chunk_id, chunk_hash, flat_size, created_at
+                    FROM chunk_metadata
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                ''')
+                recent_chunks = cursor.fetchall()
+            
             conn.close()
             
             # Report recent changes
@@ -876,33 +1098,70 @@ class ChunkManager:
         logger.info(f"🔄 Node {self.client_id}: Update change callback function")
     
     def get_all_chunks_info(self) -> List[ChunkInfo]:
-        """Get all chunk information for initialization report"""
+        """Get all chunk information from round-specific tables"""
         chunk_infos = []
         
         try:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT round_num, chunk_id, chunk_hash, flat_size, created_at
-                FROM chunk_metadata
-                ORDER BY round_num, chunk_id
-            ''')
+            # Get all round-specific metadata tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'chunk_metadata_r%'")
+            metadata_tables = [row[0] for row in cursor.fetchall()]
             
-            rows = cursor.fetchall()
+            for table in metadata_tables:
+                # Extract round number from table name
+                try:
+                    round_num = int(table.replace('chunk_metadata_r', ''))
+                except ValueError:
+                    continue
+                    
+                cursor.execute(f'''
+                    SELECT chunk_id, chunk_hash, flat_size, created_at
+                    FROM {table}
+                    ORDER BY chunk_id
+                ''')
+                
+                rows = cursor.fetchall()
+                
+                for chunk_id, chunk_hash, flat_size, created_at in rows:
+                    chunk_info = ChunkInfo(
+                        client_id=self.client_id,
+                        round_num=round_num,
+                        chunk_id=chunk_id,
+                        action=ChunkAction.ADD.value,
+                        chunk_hash=chunk_hash,
+                        chunk_size=flat_size,
+                        timestamp=time.time()
+                    )
+                    chunk_infos.append(chunk_info)
+            
+            # Fallback: check legacy table if no round tables exist
+            if not chunk_infos:
+                try:
+                    cursor.execute('''
+                        SELECT round_num, chunk_id, chunk_hash, flat_size, created_at
+                        FROM chunk_metadata
+                        ORDER BY round_num, chunk_id
+                    ''')
+                    
+                    rows = cursor.fetchall()
+                    
+                    for round_num, chunk_id, chunk_hash, flat_size, created_at in rows:
+                        chunk_info = ChunkInfo(
+                            client_id=self.client_id,
+                            round_num=round_num,
+                            chunk_id=chunk_id,
+                            action=ChunkAction.ADD.value,
+                            chunk_hash=chunk_hash,
+                            chunk_size=flat_size,
+                            timestamp=time.time()
+                        )
+                        chunk_infos.append(chunk_info)
+                except sqlite3.Error:
+                    pass  # Legacy table doesn't exist
+            
             conn.close()
-            
-            for round_num, chunk_id, chunk_hash, flat_size, created_at in rows:
-                chunk_info = ChunkInfo(
-                    client_id=self.client_id,
-                    round_num=round_num,
-                    chunk_id=chunk_id,
-                    action=ChunkAction.ADD.value,
-                    chunk_hash=chunk_hash,
-                    chunk_size=flat_size,
-                    timestamp=time.time()
-                )
-                chunk_infos.append(chunk_info)
                 
         except Exception as e:
             logger.error(f"❌ Node {self.client_id}: Failed to get all chunk information: {e}")
@@ -911,66 +1170,19 @@ class ChunkManager:
     
     # =================== BitTorrent Extension Methods ===================
     
-    def _init_bittorrent_tables(self):
-        """Initialize BitTorrent related database tables"""
-        conn = self._get_optimized_connection()
-        cursor = conn.cursor()
+    def _init_bittorrent_tables(self, round_num=0):
+        """[UPDATED] Initialize BitTorrent tables using round-specific design
         
-        # Create BitTorrent chunks table (independent from existing tables, avoid conflicts)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS bt_chunks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                round_num INTEGER NOT NULL,
-                source_client_id INTEGER NOT NULL,
-                chunk_id INTEGER NOT NULL,
-                chunk_hash TEXT NOT NULL,
-                holder_client_id INTEGER NOT NULL,
-                received_time REAL DEFAULT (strftime('%s', 'now')),
-                is_verified INTEGER DEFAULT 0,
-                UNIQUE(round_num, source_client_id, chunk_id, holder_client_id)
-            )
-        ''')
+        Args:
+            round_num: Round number for creating round-specific tables (default: 0)
+            
+        Note: This method now creates round-specific tables instead of legacy tables.
+        Removed unused bt_exchange_status table. Now delegates to _ensure_round_tables_exist.
+        """
+        logger.info(f"[ChunkManager] Initializing round-specific BitTorrent tables for round {round_num}")
         
-        # Create BitTorrent exchange status table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS bt_exchange_status (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                round_num INTEGER NOT NULL,
-                peer_id INTEGER NOT NULL,
-                chunk_key TEXT NOT NULL,
-                status TEXT NOT NULL,
-                request_time REAL,
-                complete_time REAL,
-                retry_count INTEGER DEFAULT 0,
-                error_msg TEXT,
-                size INTEGER,
-                UNIQUE(round_num, peer_id, chunk_key)
-            )
-        ''')
-        
-        # Create BitTorrent session table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS bt_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                round_num INTEGER NOT NULL,
-                start_time REAL NOT NULL,
-                end_time REAL,
-                status TEXT NOT NULL,
-                total_chunks_expected INTEGER,
-                total_chunks_received INTEGER DEFAULT 0,
-                bytes_uploaded INTEGER DEFAULT 0,
-                bytes_downloaded INTEGER DEFAULT 0,
-                UNIQUE(round_num)
-            )
-        ''')
-        
-        # Create indexes
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_round_holder ON bt_chunks(round_num, holder_client_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_source ON bt_chunks(round_num, source_client_id, chunk_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_hash ON bt_chunks(chunk_hash)')
-        
-        conn.commit()
-        conn.close()
+        # Use the existing round table creation method which now includes bt_sessions
+        self._ensure_round_tables_exist(round_num)
         logger.debug(f"[ChunkManager] BitTorrent tables initialized for client {self.client_id}")
     
     def get_global_bitfield(self, round_num=None):
@@ -989,35 +1201,40 @@ class ChunkManager:
         cursor = conn.cursor()
         
         try:
-            # Query locally saved chunks
-            cursor.execute('''
-                SELECT chunk_id FROM chunk_metadata
-                WHERE round_num = ?
-            ''', (round_num,))
+            # 🚀 NEW: Query from round-specific tables
+            metadata_table = f"chunk_metadata_r{round_num}"
+            bt_table = f"bt_chunks_r{round_num}"
             
-            local_chunks = cursor.fetchall()
-            logger.debug(f"[ChunkManager] Client {self.client_id}: Found {len(local_chunks)} local chunks for round {round_num}")
+            # Query locally saved chunks from round-specific table
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metadata_table,))
+            if cursor.fetchone():
+                cursor.execute(f'''
+                    SELECT chunk_id FROM {metadata_table}
+                ''')
+                
+                local_chunks = cursor.fetchall()
+                logger.debug(f"[ChunkManager] Client {self.client_id}: Found {len(local_chunks)} local chunks for round {round_num}")
+                
+                for (chunk_id,) in local_chunks:
+                    # Local chunks
+                    bitfield[(round_num, self.client_id, chunk_id)] = True
             
-            for (chunk_id,) in local_chunks:
-                # Local chunks
-                bitfield[(round_num, self.client_id, chunk_id)] = True
-                # Silently add local chunk to bitfield
-                pass
-            
-            # Query BitTorrent exchanged chunks (new table)
-            cursor.execute('''
-                SELECT source_client_id, chunk_id FROM bt_chunks
-                WHERE round_num = ? AND holder_client_id = ?
-            ''', (round_num, self.client_id))
+            # Query BitTorrent exchanged chunks from round-specific table
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (bt_table,))
+            if cursor.fetchone():
+                cursor.execute(f'''
+                    SELECT source_client_id, chunk_id FROM {bt_table}
+                    WHERE holder_client_id = ?
+                ''', (self.client_id,))
             
             for source_id, chunk_id in cursor.fetchall():
                 bitfield[(round_num, source_id, chunk_id)] = True
                 
         except sqlite3.OperationalError:
-            # If bt_chunks table doesn't exist, initialize it
-            logger.warning(f"[ChunkManager] BitTorrent tables not found, initializing...")
+            # If round-specific tables don't exist, create them
+            logger.warning(f"[ChunkManager] Round-specific tables not found for round {round_num}, creating...")
             conn.close()
-            self._init_bittorrent_tables()
+            self._ensure_round_tables_exist(round_num)
             return self.get_global_bitfield(round_num)
         
         conn.close()
@@ -1036,16 +1253,21 @@ class ChunkManager:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            # Write to bt_chunks table
-            cursor.execute('''
-                INSERT OR REPLACE INTO bt_chunks 
-                (round_num, source_client_id, chunk_id, chunk_hash, holder_client_id, is_verified)
-                VALUES (?, ?, ?, ?, ?, 1)
-            ''', (round_num, source_client_id, chunk_id, chunk_hash, self.client_id))
+            # 🚀 NEW: Save to round-specific tables
+            self._ensure_round_tables_exist(round_num)
             
-            # Write to chunk_data table (shared storage) - Use REPLACE to handle duplicate hashes
-            cursor.execute('''
-                INSERT OR REPLACE INTO chunk_data (chunk_hash, data)
+            # Write to round-specific bt_chunks table
+            bt_table = f"bt_chunks_r{round_num}"
+            cursor.execute(f'''
+                INSERT OR REPLACE INTO {bt_table} 
+                (source_client_id, chunk_id, chunk_hash, holder_client_id, is_verified)
+                VALUES (?, ?, ?, ?, 1)
+            ''', (source_client_id, chunk_id, chunk_hash, self.client_id))
+            
+            # Write to round-specific chunk_data table
+            data_table = f"chunk_data_r{round_num}"
+            cursor.execute(f'''
+                INSERT OR REPLACE INTO {data_table} (chunk_hash, data)
                 VALUES (?, ?)
             ''', (chunk_hash, pickle.dumps(chunk_data)))
             
@@ -1054,8 +1276,8 @@ class ChunkManager:
             
         except sqlite3.OperationalError as e:
             if "no such table" in str(e):
-                # Initialize BitTorrent tables
-                self._init_bittorrent_tables()
+                # Initialize BitTorrent tables for this round
+                self._init_bittorrent_tables(round_num)
                 # Retry
                 return self.save_remote_chunk(round_num, source_client_id, chunk_id, chunk_data)
             else:
@@ -1084,21 +1306,26 @@ class ChunkManager:
         cursor = conn.cursor()
         
         try:
+            # 🚀 NEW: Query from round-specific tables
+            metadata_table = f"chunk_metadata_r{round_num}"
+            bt_table = f"bt_chunks_r{round_num}"
+            data_table = f"chunk_data_r{round_num}"
+            
             # First query local chunks
             if source_client_id == self.client_id:
-                cursor.execute('''
-                    SELECT cd.data FROM chunk_metadata cm
-                    JOIN chunk_data cd ON cm.chunk_hash = cd.chunk_hash
-                    WHERE cm.round_num = ? AND cm.chunk_id = ?
-                ''', (round_num, chunk_id))
+                cursor.execute(f'''
+                    SELECT cd.data FROM {metadata_table} cm
+                    JOIN {data_table} cd ON cm.chunk_hash = cd.chunk_hash
+                    WHERE cm.chunk_id = ?
+                ''', (chunk_id,))
             else:
                 # Query BitTorrent exchanged chunks
-                cursor.execute('''
-                    SELECT cd.data FROM bt_chunks bc
-                    JOIN chunk_data cd ON bc.chunk_hash = cd.chunk_hash
-                    WHERE bc.round_num = ? AND bc.source_client_id = ? 
+                cursor.execute(f'''
+                    SELECT cd.data FROM {bt_table} bc
+                    JOIN {data_table} cd ON bc.chunk_hash = cd.chunk_hash
+                    WHERE bc.source_client_id = ? 
                     AND bc.chunk_id = ? AND bc.holder_client_id = ?
-                ''', (round_num, source_client_id, chunk_id, self.client_id))
+                ''', (source_client_id, chunk_id, self.client_id))
             
             result = cursor.fetchone()
             logger.debug(f"[ChunkManager] Client {self.client_id}: Query result for chunk ({round_num}, {source_client_id}, {chunk_id}): {result is not None}")
@@ -1131,47 +1358,76 @@ class ChunkManager:
             conn.close()
     
     def start_bittorrent_session(self, round_num, expected_chunks):
-        """Start BitTorrent exchange session"""
+        """Start BitTorrent exchange session (using round-specific tables)"""
         try:
+            # Ensure round-specific tables exist
+            self._ensure_round_tables_exist(round_num)
+            
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            cursor.execute('''
-                INSERT OR REPLACE INTO bt_sessions 
-                (round_num, start_time, status, total_chunks_expected)
-                VALUES (?, ?, 'active', ?)
-            ''', (round_num, time.time(), expected_chunks))
+            # Use round-specific session tracking table
+            session_table = f"bt_sessions_r{round_num}"
+            cursor.execute(f'''
+                CREATE TABLE IF NOT EXISTS {session_table} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    start_time REAL NOT NULL,
+                    status TEXT DEFAULT 'active',
+                    total_chunks_expected INTEGER,
+                    total_chunks_received INTEGER DEFAULT 0,
+                    end_time REAL
+                )
+            ''')
+            
+            cursor.execute(f'''
+                INSERT OR REPLACE INTO {session_table}
+                (start_time, status, total_chunks_expected)
+                VALUES (?, 'active', ?)
+            ''', (time.time(), expected_chunks))
             
             conn.commit()
             conn.close()
+            logger.debug(f"[ChunkManager] Started BitTorrent session for round {round_num} (round-specific table)")
             
-        except sqlite3.OperationalError:
-            # Initialize tables and retry
-            self._init_bittorrent_tables()
-            return self.start_bittorrent_session(round_num, expected_chunks)
+        except Exception as e:
+            logger.error(f"[ChunkManager] Failed to start BitTorrent session: {e}")
         
         logger.info(f"[ChunkManager] Started BitTorrent session for round {round_num}")
     
     def finish_bittorrent_session(self, round_num, status='completed'):
-        """End BitTorrent exchange session"""
+        """End BitTorrent exchange session (using round-specific tables)"""
         try:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            # Count received chunks
-            cursor.execute('''
-                SELECT COUNT(*) FROM bt_chunks
-                WHERE round_num = ? AND holder_client_id = ?
-            ''', (round_num, self.client_id))
+            # Count received chunks from round-specific table
+            bt_table = f"bt_chunks_r{round_num}"
+            cursor.execute(f'''
+                SELECT name FROM sqlite_master WHERE type='table' AND name = ?
+            ''', (bt_table,))
             
-            chunks_received = cursor.fetchone()[0]
+            chunks_received = 0
+            if cursor.fetchone():
+                cursor.execute(f'''
+                    SELECT COUNT(*) FROM {bt_table}
+                    WHERE holder_client_id = ?
+                ''', (self.client_id,))
+                chunks_received = cursor.fetchone()[0]
+            else:
+                # Fallback to legacy table
+                cursor.execute('''
+                    SELECT COUNT(*) FROM bt_chunks
+                    WHERE round_num = ? AND holder_client_id = ?
+                ''', (round_num, self.client_id))
+                chunks_received = cursor.fetchone()[0]
             
-            # Update session status
-            cursor.execute('''
-                UPDATE bt_sessions 
+            # Update session status in round-specific table
+            session_table = f"bt_sessions_r{round_num}"
+            cursor.execute(f'''
+                UPDATE {session_table}
                 SET end_time = ?, status = ?, total_chunks_received = ?
-                WHERE round_num = ?
-            ''', (time.time(), status, chunks_received, round_num))
+                WHERE id = 1
+            ''', (time.time(), status, chunks_received))
             
             conn.commit()
             conn.close()
@@ -1183,26 +1439,61 @@ class ChunkManager:
             pass
     
     def cleanup_bittorrent_data(self, keep_rounds=5):
-        """Clean old BitTorrent data"""
+        """Clean old BitTorrent data (using ultra-fast table drop method)"""
         try:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            # Find minimum round to keep
-            cursor.execute("SELECT MAX(round_num) FROM bt_sessions")
-            max_round = cursor.fetchone()[0]
+            # Find all BitTorrent session tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'bt_sessions_r%'")
+            session_tables = [row[0] for row in cursor.fetchall()]
             
-            if max_round is not None:
-                min_keep_round = max_round - keep_rounds + 1
+            # Find all BitTorrent chunk tables  
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'bt_chunks_r%'")
+            bt_tables = [row[0] for row in cursor.fetchall()]
+            
+            # Extract round numbers and sort
+            rounds = set()
+            for table in session_tables + bt_tables:
+                try:
+                    if table.startswith('bt_sessions_r'):
+                        round_num = int(table.replace('bt_sessions_r', ''))
+                    elif table.startswith('bt_chunks_r'):
+                        round_num = int(table.replace('bt_chunks_r', ''))
+                    rounds.add(round_num)
+                except ValueError:
+                    continue
+            
+            rounds = sorted(list(rounds), reverse=True)  # Newest first
+            
+            if len(rounds) <= keep_rounds:
+                logger.debug(f"🧹 Only {len(rounds)} BitTorrent rounds exist, no cleanup needed")
+                conn.close()
+                return
                 
-                # Delete old BitTorrent data
-                cursor.execute("DELETE FROM bt_chunks WHERE round_num < ?", (min_keep_round,))
-                cursor.execute("DELETE FROM bt_exchange_status WHERE round_num < ?", (min_keep_round,))
-                cursor.execute("DELETE FROM bt_sessions WHERE round_num < ?", (min_keep_round,))
-                
-                conn.commit()
-                logger.info(f"[ChunkManager] Cleaned BitTorrent data before round {min_keep_round}")
-                
+            # Rounds to delete (keep the most recent ones)
+            rounds_to_delete = rounds[keep_rounds:]
+            
+            start_time = time.time()
+            deleted_tables = 0
+            
+            for round_num in rounds_to_delete:
+                # Drop BitTorrent tables for old rounds
+                for table_type in ["bt_chunks", "bt_sessions"]:
+                    table_name = f"{table_type}_r{round_num}"
+                    try:
+                        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+                        deleted_tables += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to drop BitTorrent table {table_name}: {e}")
+            
+            conn.commit()
+            elapsed = time.time() - start_time
+            
+            logger.info(f"🧹✅ BitTorrent ultra-fast cleanup completed in {elapsed:.2f}s:")
+            logger.info(f"   - Deleted {len(rounds_to_delete)} BitTorrent rounds")
+            logger.info(f"   - Dropped {deleted_tables} tables")
+            
             conn.close()
             
         except sqlite3.OperationalError:
@@ -1223,26 +1514,35 @@ class ChunkManager:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            # Query clients with local chunk data (local chunks don't have source_client_id, they belong to this client)
-            cursor.execute('''
-                SELECT DISTINCT ? as client_id
-                FROM chunk_metadata 
-                WHERE round_num = ?
-                LIMIT 1
-            ''', (self.client_id, round_num))
+            # 🚀 NEW: Query from round-specific tables
+            metadata_table = f"chunk_metadata_r{round_num}"
+            bt_table = f"bt_chunks_r{round_num}"
             
-            local_result = cursor.fetchall()
-            local_clients = [row[0] for row in local_result] if local_result else []
+            local_clients = []
+            bt_clients = []
+            
+            # Query clients with local chunk data
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metadata_table,))
+            if cursor.fetchone():
+                cursor.execute(f'''
+                    SELECT DISTINCT ? as client_id
+                    FROM {metadata_table} 
+                    LIMIT 1
+                ''', (self.client_id,))
+                
+                local_result = cursor.fetchall()
+                local_clients = [row[0] for row in local_result] if local_result else []
             
             # Query clients in BitTorrent chunks
-            cursor.execute('''
-                SELECT DISTINCT source_client_id 
-                FROM bt_chunks 
-                WHERE round_num = ?
-                ORDER BY source_client_id
-            ''', (round_num,))
-            
-            bt_clients = [row[0] for row in cursor.fetchall()]
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (bt_table,))
+            if cursor.fetchone():
+                cursor.execute(f'''
+                    SELECT DISTINCT source_client_id 
+                    FROM {bt_table} 
+                    ORDER BY source_client_id
+                ''')
+                
+                bt_clients = [row[0] for row in cursor.fetchall()]
             
             # Merge and deduplicate
             all_clients = list(set(local_clients + bt_clients))
@@ -1272,25 +1572,52 @@ class ChunkManager:
             conn = self._get_optimized_connection()
             cursor = conn.cursor()
             
-            # Query all chunks for this client
+            # Query all chunks for this client (round-aware)
             if client_id == self.client_id:
-                # Local client - query local chunks
-                cursor.execute('''
-                    SELECT chunk_id, chunk_hash 
-                    FROM chunk_metadata 
-                    WHERE round_num = ?
-                    ORDER BY chunk_id
-                ''', (round_num,))
-                local_chunks = cursor.fetchall()
+                # Local client - query local chunks from round-specific table
+                metadata_table = f"chunk_metadata_r{round_num}"
+                cursor.execute(f'''
+                    SELECT name FROM sqlite_master WHERE type='table' AND name = ?
+                ''', (metadata_table,))
+                if cursor.fetchone():
+                    cursor.execute(f'''
+                        SELECT chunk_id, chunk_hash 
+                        FROM {metadata_table}
+                        ORDER BY chunk_id
+                    ''')
+                    local_chunks = cursor.fetchall()
+                else:
+                    # Fallback to legacy table
+                    cursor.execute('''
+                        SELECT chunk_id, chunk_hash 
+                        FROM chunk_metadata 
+                        WHERE round_num = ?
+                        ORDER BY chunk_id
+                    ''', (round_num,))
+                    local_chunks = cursor.fetchall()
             else:
-                # Remote client - query BitTorrent chunks
-                cursor.execute('''
-                    SELECT chunk_id, chunk_hash 
-                    FROM bt_chunks 
-                    WHERE source_client_id = ? AND round_num = ?
-                    ORDER BY chunk_id
-                ''', (client_id, round_num))
-                local_chunks = cursor.fetchall()
+                # Remote client - query BitTorrent chunks from round-specific table
+                bt_table = f"bt_chunks_r{round_num}"
+                cursor.execute(f'''
+                    SELECT name FROM sqlite_master WHERE type='table' AND name = ?
+                ''', (bt_table,))
+                if cursor.fetchone():
+                    cursor.execute(f'''
+                        SELECT chunk_id, chunk_hash 
+                        FROM {bt_table}
+                        WHERE source_client_id = ?
+                        ORDER BY chunk_id
+                    ''', (client_id,))
+                    local_chunks = cursor.fetchall()
+                else:
+                    # Fallback to legacy table
+                    cursor.execute('''
+                        SELECT chunk_id, chunk_hash 
+                        FROM bt_chunks 
+                        WHERE source_client_id = ? AND round_num = ?
+                        ORDER BY chunk_id
+                    ''', (client_id, round_num))
+                    local_chunks = cursor.fetchall()
             
             if not local_chunks:
                 logger.warning(f"[ChunkManager] No chunks found for client {client_id}, round {round_num}")
@@ -1302,12 +1629,37 @@ class ChunkManager:
             missing_chunks = []
             
             for chunk_id, chunk_hash in local_chunks:
-                # Get chunk data
-                cursor.execute('''
-                    SELECT data FROM chunk_data WHERE chunk_hash = ?
-                ''', (chunk_hash,))
+                # Get chunk data (try round-specific table first)
+                data_table = f"chunk_data_r{round_num}"
+                cursor.execute(f'''
+                    SELECT name FROM sqlite_master WHERE type='table' AND name = ?
+                ''', (data_table,))
                 
-                result = cursor.fetchone()
+                result = None
+                if cursor.fetchone():
+                    # Try round-specific table first
+                    cursor.execute(f'''
+                        SELECT data FROM {data_table} WHERE chunk_hash = ?
+                    ''', (chunk_hash,))
+                    result = cursor.fetchone()
+                
+                if not result:
+                    # Fallback to legacy table (prefer round-specific data)
+                    cursor.execute('''
+                        SELECT cd.data FROM chunk_data cd 
+                        JOIN chunk_metadata cm ON cd.chunk_hash = cm.chunk_hash 
+                        WHERE cd.chunk_hash = ? AND cm.round_num = ?
+                        LIMIT 1
+                    ''', (chunk_hash, round_num))
+                    result = cursor.fetchone()
+                    
+                    # Ultimate fallback: any chunk with this hash
+                    if not result:
+                        cursor.execute('''
+                            SELECT data FROM chunk_data WHERE chunk_hash = ? LIMIT 1
+                        ''', (chunk_hash,))
+                        result = cursor.fetchone()
+                
                 if result:
                     # Get raw byte data directly, no deserialization
                     chunk_data = result[0]
@@ -1335,13 +1687,28 @@ class ChunkManager:
                 numpy_chunk = pickle.loads(chunk_data)
                 numpy_chunks.append(numpy_chunk)
                 
-                # Get corresponding parts_info
-                cursor.execute('''
-                    SELECT parts_info FROM chunk_metadata 
-                    WHERE chunk_id = ? AND round_num = ?
-                ''', (chunk_id, round_num))
+                # Get corresponding parts_info (round-aware)
+                metadata_table = f"chunk_metadata_r{round_num}"
+                cursor.execute(f'''
+                    SELECT name FROM sqlite_master WHERE type='table' AND name = ?
+                ''', (metadata_table,))
                 
-                parts_result = cursor.fetchone()
+                parts_result = None
+                if cursor.fetchone():
+                    # Try round-specific table first
+                    cursor.execute(f'''
+                        SELECT parts_info FROM {metadata_table} WHERE chunk_id = ?
+                    ''', (chunk_id,))
+                    parts_result = cursor.fetchone()
+                
+                if not parts_result:
+                    # Fallback to legacy table
+                    cursor.execute('''
+                        SELECT parts_info FROM chunk_metadata 
+                        WHERE chunk_id = ? AND round_num = ?
+                    ''', (chunk_id, round_num))
+                    parts_result = cursor.fetchone()
+                
                 if parts_result:
                     parts_info = json.loads(parts_result[0])
                     parts_info_list.append((chunk_id, parts_info))
@@ -1459,18 +1826,36 @@ class ChunkManager:
             # Check if we have chunks from this client for this round
             # Note: sample_size column doesn't exist in schema, using fallback approach
             
+            # 🚀 NEW: Query from round-specific tables
             if client_id == self.client_id:
-                # Local client - check local chunks
-                cursor.execute('''
-                    SELECT COUNT(*) FROM chunk_metadata 
-                    WHERE round_num = ?
-                ''', (round_num,))
+                # Local client - check round-specific metadata table
+                metadata_table = f"chunk_metadata_r{round_num}"
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metadata_table,))
+                if cursor.fetchone():
+                    cursor.execute(f'''
+                        SELECT COUNT(*) FROM {metadata_table}
+                    ''')
+                else:
+                    # Fallback to legacy table
+                    cursor.execute('''
+                        SELECT COUNT(*) FROM chunk_metadata 
+                        WHERE round_num = ?
+                    ''', (round_num,))
             else:
-                # Remote client - check BitTorrent chunks
-                cursor.execute('''
-                    SELECT COUNT(*) FROM bt_chunks 
-                    WHERE round_num = ? AND source_client_id = ?
-                ''', (round_num, client_id))
+                # Remote client - check round-specific bt_chunks table
+                bt_table = f"bt_chunks_r{round_num}"
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (bt_table,))
+                if cursor.fetchone():
+                    cursor.execute(f'''
+                        SELECT COUNT(*) FROM {bt_table} 
+                        WHERE source_client_id = ?
+                    ''', (client_id,))
+                else:
+                    # Fallback to legacy table
+                    cursor.execute('''
+                        SELECT COUNT(*) FROM bt_chunks 
+                        WHERE round_num = ? AND source_client_id = ?
+                    ''', (round_num, client_id))
             
             result = cursor.fetchone()
             conn.close()

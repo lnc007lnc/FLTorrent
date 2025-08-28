@@ -908,8 +908,8 @@ class Client(BaseClient):
             if saved_hashes:
                 logger.info(f"✅ Client {self.ID}: Saved model as {len(saved_hashes)} chunks for round {self.state}")
                 
-                # Log storage statistics
-                stats = self.chunk_manager.get_storage_stats()
+                # Log storage statistics for current round
+                stats = self.chunk_manager.get_storage_stats(round_num=self.state)
                 logger.debug(f"📊 Client {self.ID}: Storage stats - "
                            f"Total chunks: {stats.get('unique_chunks', 0)}, "
                            f"Size: {stats.get('storage_size_mb', 0):.2f} MB")
@@ -1283,10 +1283,10 @@ class Client(BaseClient):
             # 4. Report to Server after completion
             self._report_bittorrent_completion()
             
-            # 🆕 CLEANUP: Set bt_manager to None after successful completion
-            logger.info(f"[BT] Client {self.ID}: BitTorrent exchange completed successfully, cleaning up manager")
+            # ✅ KEEP ALIVE: Keep bt_manager for serving other peers (轮次级生命周期管理)
+            logger.info(f"[BT] Client {self.ID}: BitTorrent download completed, but keeping manager alive for serving other peers")
             if hasattr(self, 'bt_manager'):
-                self.bt_manager = None
+                self.bt_manager.is_download_complete = True  # 标记下载完成，进入做种模式
             
         except Exception as e:
             import traceback
@@ -1298,10 +1298,9 @@ class Client(BaseClient):
                     logger.error(f"[BT] Client {self.ID}: {line}")
             self._report_bittorrent_completion_failure()
         finally:
-            # 🆕 CLEANUP: Always clean up bt_manager after exchange loop ends
-            logger.info(f"[BT] Client {self.ID}: Cleaning up BitTorrent manager after exchange loop")
-            if hasattr(self, 'bt_manager'):
-                self.bt_manager = None
+            # ✅ KEEP ALIVE: Keep bt_manager for serving other peers in this round
+            logger.info(f"[BT] Client {self.ID}: Exchange loop ended, but keeping BitTorrent manager for peer serving")
+            # bt_manager will be naturally replaced when next round starts
 
     def callback_funcs_for_bitfield(self, message):
         """Handle bitfield message"""
