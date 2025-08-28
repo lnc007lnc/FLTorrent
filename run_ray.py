@@ -63,7 +63,7 @@ class FLConfig:
     
     # === Basic Settings ===
     CLIENT_NUM: int = 100                     # Number of clients for CIFAR experiments
-    TOTAL_ROUNDS: int = 20                  # Fewer rounds for epoch-based training
+    TOTAL_ROUNDS: int = 30                  # Fewer rounds for epoch-based training
     CHUNK_NUM: int = 20                     # More chunks for ResNet layers
     IMPORTANCE_METHOD: str = "fisher"         # Chunk importance method: magnitude, l2_norm, snip, fisher
     
@@ -71,7 +71,7 @@ class FLConfig:
     # CNN Settings (current active for ResNet-18)
     DATASET: str = "CIFAR10@torchvision"    # CIFAR-10 dataset
     BATCH_SIZE: int = 32                    # Standard batch size for CIFAR-10
-    DATA_SPLIT_ALPHA: float = 0.1           # Non-IID data split parameter
+    DATA_SPLIT_ALPHA: float = 1.0           # Non-IID data split parameter
     
     # Transformer/NLP Settings (commented for future use)
     # DATASET: str = "shakespeare"            # Shakespeare text dataset
@@ -83,7 +83,7 @@ class FLConfig:
     MODEL_TYPE: str = "resnet18"            # ResNet-18 for CIFAR-10
     MODEL_HIDDEN: int = 512                 # Hidden layer size (not used for ResNet)
     MODEL_OUT_CHANNELS: int = 10            # CIFAR-10 classes
-    MODEL_DROPOUT: float = 1.0              # Dropout for regularization
+    MODEL_DROPOUT: float = 0.3              # Dropout for regularization
     
     # Transformer/NLP Model Settings (commented for future use)
     # MODEL_TYPE: str = "lstm"                # LSTM model for text
@@ -179,6 +179,66 @@ class FLConfig:
     # === Output Settings ===
     OUTPUT_DIR: str = "ray_v2_output"     # Output directory
     LOG_DIR: str = "logs"                 # Log directory
+    
+    # === Early Stopping Settings ===
+    EARLY_STOP_PATIENCE: int = 50         # Number of rounds to wait before stopping
+    EARLY_STOP_DELTA: float = 0.0         # Minimum improvement threshold
+    EARLY_STOP_MODE: str = "best"         # Improvement tracking mode
+    
+    # === Training Framework Settings ===
+    CRITERION_TYPE: str = "CrossEntropyLoss"  # Loss function: CrossEntropyLoss, character_loss
+    TRAINER_TYPE: str = "cvtrainer"           # Trainer type: cvtrainer, nlptrainer
+    EVAL_FREQ: int = 1                        # Evaluation frequency
+    EVAL_METRICS: List[str] = field(default_factory=lambda: ['acc', 'correct'])
+    EVAL_BEST_KEY: str = "val_acc"           # Key to track for best results
+    
+    # === Data Processing Settings ===
+    DATA_ROOT: str = "data/"                  # Data root directory
+    DATA_SPLITS: List[float] = field(default_factory=lambda: [0.6, 0.2, 0.2])  # Train/val/test splits
+    DATA_SUBSAMPLE: float = 1.0               # Data subsample ratio
+    DATA_SPLITTER: str = "lda"                # Data splitter method
+    DATA_TRANSFORM_MEAN: List[float] = field(default_factory=lambda: [0.4914, 0.4822, 0.4465])  # CIFAR-10 normalize mean
+    DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.2023, 0.1994, 0.2010])   # CIFAR-10 normalize std
+    DATA_AUTO_DOWNLOAD: bool = True           # Auto-download dataset
+    DATALOADER_NUM_WORKERS: int = 0           # DataLoader workers (0 for Docker compatibility)
+    
+    # === Device Performance Settings ===
+    DEVICE_GPU_RATIOS: Dict[str, float] = field(default_factory=lambda: {
+        "edge_server": 0.5,        # Edge server - high performance 50%
+        "smartphone_high": 0.35,   # High-end phone - medium performance 35% 
+        "smartphone_low": 0.25,    # Low-end phone - low performance 25%
+        "raspberry_pi": 0.25,      # Raspberry Pi - low performance 25%
+        "iot_device": 0.15,        # IoT device - lowest performance 15%
+    })
+    
+    # === Chunk Database Retention Settings ===
+    CHUNK_KEEP_ROUNDS: int = 2             # Number of recent rounds to keep in database
+    
+    # === Advanced FederatedScope Settings ===
+    BACKEND: str = "torch"                 # Backend framework: torch, tensorflow
+    FEDERATE_METHOD: str = "FedAvg"        # Federated method: FedAvg, FedProx, etc.
+    FEDERATE_MAKE_GLOBAL_EVAL: bool = True # Enable global evaluation
+    FEDERATE_SHARE_LOCAL_MODEL: bool = False # Share local model between clients
+    FEDERATE_ONLINE_AGGR: bool = False     # Online aggregation
+    FEDERATE_SAVE_TO: str = ""            # Save federated model path
+    FEDERATE_RESTORE_FROM: str = ""       # Restore federated model path
+    
+    # === Asynchronous Settings ===
+    ASYN_USE: bool = False                # Enable asynchronous training
+    ASYN_MIN_RECEIVED_NUM: int = 1        # Minimum received messages for async
+    ASYN_STALENESS_TOLERATION: int = 0    # Staleness tolerance
+    ASYN_TIME_BUDGET: int = -1            # Time budget for async training
+    
+    # === Quantization Settings ===
+    QUANTIZATION_METHOD: str = ""         # Quantization method: uniform, etc.
+    QUANTIZATION_NBITS: int = 8           # Number of bits for quantization
+    
+    # === Aggregator Settings ===
+    AGGREGATOR_ROBUST_RULE: str = "fedavg" # Robust aggregation rule
+    
+    # === Wandb Settings ===
+    WANDB_USE: bool = False               # Enable Weights & Biases logging
+    WANDB_CLIENT_TRAIN_INFO: bool = False # Log client training information
 
 # Edge device configuration profile library
 EDGE_DEVICE_PROFILES = {
@@ -186,7 +246,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_high",
         device_type="smartphone", 
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="1.0", memory_limit="3g", storage_limit="32g",
+        cpu_limit="1.0", memory_limit="4g", storage_limit="32g",
         bandwidth_up_kbps=50000, bandwidth_down_kbps=100000,
         latency_ms=20, packet_loss_rate=0.005, jitter_ms=5,
         training_speed_multiplier=1.0, availability_ratio=1.0,
@@ -197,7 +257,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_low", 
         device_type="smartphone",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.3", memory_limit="3g", storage_limit="8g",
+        cpu_limit="0.3", memory_limit="4g", storage_limit="8g",
         bandwidth_up_kbps=5000, bandwidth_down_kbps=20000,
         latency_ms=100, packet_loss_rate=0.02, jitter_ms=20,
         training_speed_multiplier=0.6, availability_ratio=1.0,
@@ -208,7 +268,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="raspberry_pi",
         device_type="edge_device",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.6", memory_limit="3g", storage_limit="64g",
+        cpu_limit="0.6", memory_limit="4g", storage_limit="64g",
         bandwidth_up_kbps=10000, bandwidth_down_kbps=50000,
         latency_ms=30, packet_loss_rate=0.01, jitter_ms=10,
         training_speed_multiplier=0.7, availability_ratio=1.0,
@@ -219,7 +279,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="iot_device",
         device_type="iot",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.1", memory_limit="3g", storage_limit="2g", 
+        cpu_limit="0.1", memory_limit="4g", storage_limit="2g", 
         bandwidth_up_kbps=128, bandwidth_down_kbps=512,
         latency_ms=300, packet_loss_rate=0.05, jitter_ms=50,
         training_speed_multiplier=0.3, availability_ratio=1.0,
@@ -230,7 +290,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="edge_server",
         device_type="edge_server", 
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="2.0", memory_limit="3g", storage_limit="100g",
+        cpu_limit="2.0", memory_limit="4g", storage_limit="100g",
         bandwidth_up_kbps=100000, bandwidth_down_kbps=1000000,
         latency_ms=10, packet_loss_rate=0.001, jitter_ms=2,
         training_speed_multiplier=1.0, availability_ratio=1.0,
@@ -1203,8 +1263,6 @@ class DockerFederatedScopeClient:
             self.config['dataloader']['batch_size'] = 8  # IoT devices use small batches
         elif profile.device_type == "smartphone_low":
             self.config['dataloader']['batch_size'] = 16  # Low-end phones moderate
-        else:
-            self.config['dataloader']['batch_size'] = 32  # High-end devices use original configuration
         
         # Adjust local update steps based on training speed
         base_steps = self.config['train']['local_update_steps']
@@ -1548,8 +1606,8 @@ class RayV2FederatedLearning:
             "_temp_dir": ray_temp_dir,  # Use shorter path to avoid socket path length issues
             "_system_config": {
                 "automatic_object_spilling_enabled": True,
-                "max_io_workers": 4,
-                "min_spilling_size": 100 * 1024 * 1024,  # 100MB
+                "max_io_workers": 8,
+                "min_spilling_size": 512 * 1024 * 1024,  # 1000MB
             }
         }
         
@@ -1595,7 +1653,13 @@ class RayV2FederatedLearning:
                 'client_num': CONFIG.CLIENT_NUM,
                 'mode': 'distributed',
                 'total_round_num': CONFIG.TOTAL_ROUNDS,
-                'sample_client_num': CONFIG.CLIENT_NUM
+                'sample_client_num': CONFIG.CLIENT_NUM,
+                'method': CONFIG.FEDERATE_METHOD,
+                'make_global_eval': CONFIG.FEDERATE_MAKE_GLOBAL_EVAL,
+                'share_local_model': CONFIG.FEDERATE_SHARE_LOCAL_MODEL,
+                'online_aggr': CONFIG.FEDERATE_ONLINE_AGGR,
+                'save_to': CONFIG.FEDERATE_SAVE_TO,
+                'restore_from': CONFIG.FEDERATE_RESTORE_FROM
             },
             
             'distribute': {
@@ -1609,22 +1673,22 @@ class RayV2FederatedLearning:
             },
             
             'data': {
-                'root': 'data/',
+                'root': CONFIG.DATA_ROOT,
                 'type': CONFIG.DATASET,
-                'splits': [0.6, 0.2, 0.2],  # Standard train/val/test splits
-                'subsample': 1.0,            # Use full CIFAR-10 dataset
-                'splitter': 'lda',  # Options: 'iid', 'lda', 'louvain', 'random', 'rel_type', 'scaffold', 'scaffold_lda', 'rand_chunk'
+                'splits': CONFIG.DATA_SPLITS,
+                'subsample': CONFIG.DATA_SUBSAMPLE,
+                'splitter': CONFIG.DATA_SPLITTER,
                 'splitter_args': [{'alpha': CONFIG.DATA_SPLIT_ALPHA}],
-                'transform': [                # Essential for CIFAR-10 PIL to tensor conversion
+                'transform': [
                     ['ToTensor'],
-                    ['Normalize', {'mean': [0.4914, 0.4822, 0.4465], 'std': [0.2023, 0.1994, 0.2010]}]
+                    ['Normalize', {'mean': CONFIG.DATA_TRANSFORM_MEAN, 'std': CONFIG.DATA_TRANSFORM_STD}]
                 ],
-                'args': [{'download': True}]  # Auto-download CIFAR-10 if missing
+                'args': [{'download': CONFIG.DATA_AUTO_DOWNLOAD}]
             },
             
             'dataloader': {
                 'batch_size': CONFIG.BATCH_SIZE,
-                'num_workers': 0             # Important: avoid multiprocessing issues in Docker
+                'num_workers': CONFIG.DATALOADER_NUM_WORKERS
             },
             
             'model': {
@@ -1651,19 +1715,23 @@ class RayV2FederatedLearning:
             },
             
             'criterion': {
-                'type': 'CrossEntropyLoss'   # Standard classification loss for CIFAR-10
-                # 'type': 'character_loss'     # Character-level loss for shakespeare (NLP only)
+                'type': CONFIG.CRITERION_TYPE
             },
             
             'trainer': {
-                'type': 'cvtrainer'          # CV trainer for image classification
-                # 'type': 'nlptrainer'         # NLP trainer for text tasks (commented)
+                'type': CONFIG.TRAINER_TYPE
             },
             
             'eval': {
-                'freq': 1,
-                'metrics': ['acc', 'correct'],
-                'best_res_update_round_wise_key': 'val_acc'
+                'freq': CONFIG.EVAL_FREQ,
+                'metrics': CONFIG.EVAL_METRICS,
+                'best_res_update_round_wise_key': CONFIG.EVAL_BEST_KEY
+            },
+            
+            'early_stop': {
+                'patience': CONFIG.EARLY_STOP_PATIENCE,
+                'delta': CONFIG.EARLY_STOP_DELTA,
+                'improve_indicator_mode': CONFIG.EARLY_STOP_MODE
             },
             
             'topology': {
@@ -1687,8 +1755,33 @@ class RayV2FederatedLearning:
                 'importance_method': CONFIG.IMPORTANCE_METHOD
             },
             
+            'chunk_keep_rounds': CONFIG.CHUNK_KEEP_ROUNDS,
+            
             'chunk_num': CONFIG.CHUNK_NUM,
             'chunk_importance_method': CONFIG.IMPORTANCE_METHOD,
+            
+            'backend': CONFIG.BACKEND,
+            
+            'asyn': {
+                'use': CONFIG.ASYN_USE,
+                'min_received_num': CONFIG.ASYN_MIN_RECEIVED_NUM,
+                'staleness_toleration': CONFIG.ASYN_STALENESS_TOLERATION,
+                'time_budget': CONFIG.ASYN_TIME_BUDGET
+            },
+            
+            'quantization': {
+                'method': CONFIG.QUANTIZATION_METHOD,
+                'nbits': CONFIG.QUANTIZATION_NBITS
+            },
+            
+            'aggregator': {
+                'robust_rule': CONFIG.AGGREGATOR_ROBUST_RULE
+            },
+            
+            'wandb': {
+                'use': CONFIG.WANDB_USE,
+                'client_train_info': CONFIG.WANDB_CLIENT_TRAIN_INFO
+            },
             
             'outdir': f'{CONFIG.OUTPUT_DIR}/server_output'
         }
@@ -1707,13 +1800,7 @@ class RayV2FederatedLearning:
         server_gpu = None
         
         # 🎮 Define GPU resource allocation ratios corresponding to device performance
-        device_gpu_ratios = {
-            "edge_server": 0.5,        # Edge server - high performance 50%
-            "smartphone_high": 0.35,   # High-end phone - medium performance 35% 
-            "smartphone_low": 0.25,    # Low-end phone - low performance 25%
-            "raspberry_pi": 0.25,      # Raspberry Pi - low performance 25%
-            "iot_device": 0.15,        # IoT device - lowest performance 15%
-        }
+        device_gpu_ratios = CONFIG.DEVICE_GPU_RATIOS
         
         # Calculate total GPU needed by all clients
         total_required_gpu = 0.0

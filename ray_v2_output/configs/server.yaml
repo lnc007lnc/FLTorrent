@@ -1,3 +1,11 @@
+aggregator:
+  robust_rule: fedavg
+asyn:
+  min_received_num: 1
+  staleness_toleration: 0
+  time_budget: -1
+  use: false
+backend: torch
 bittorrent:
   chunk_selection: rarest_first
   enable: true
@@ -5,13 +13,16 @@ bittorrent:
   timeout: 600.0
   verbose: true
 chunk:
-  importance_method: snip
-  num_chunks: 10
-chunk_importance_method: snip
-chunk_num: 10
+  importance_method: fisher
+  num_chunks: 20
+chunk_importance_method: fisher
+chunk_keep_rounds: 2
+chunk_num: 20
 criterion:
-  type: character_loss
+  type: CrossEntropyLoss
 data:
+  args:
+  - download: true
   root: data/
   splits:
   - 0.6
@@ -19,55 +30,82 @@ data:
   - 0.2
   splitter: lda
   splitter_args:
-  - alpha: 0.5
-  subsample: 0.5
-  type: shakespeare
+  - alpha: 1.0
+  subsample: 1.0
+  transform:
+  - - ToTensor
+  - - Normalize
+    - mean:
+      - 0.4914
+      - 0.4822
+      - 0.4465
+      std:
+      - 0.2023
+      - 0.1994
+      - 0.201
+  type: CIFAR10@torchvision
 dataloader:
-  batch_size: 8
+  batch_size: 32
+  num_workers: 0
 device: 0
 distribute:
   client_host: 127.0.0.1
   client_port: 50052
   data_idx: 0
   role: server
-  server_host: 0.0.0.0|172.24.158.88|50265
+  server_host: 0.0.0.0|172.16.16.14|28979
   server_port: 50051
   use: true
+early_stop:
+  delta: 0.0
+  improve_indicator_mode: best
+  patience: 50
 eval:
-  best_res_update_round_wise_key: test_acc
+  best_res_update_round_wise_key: val_acc
   freq: 1
   metrics:
   - acc
   - correct
 federate:
-  client_num: 2
+  client_num: 100
+  make_global_eval: true
+  method: FedAvg
   mode: distributed
-  sample_client_num: 2
-  total_round_num: 20
+  online_aggr: false
+  restore_from: ''
+  sample_client_num: 100
+  save_to: ''
+  share_local_model: false
+  total_round_num: 30
 grad:
-  grad_clip: 1.0
+  grad_clip: 5.0
 model:
-  dropout: 0.1
-  embed_size: 8
-  hidden: 256
-  in_channels: 80
-  out_channels: 80
-  type: lstm
+  dropout: 0.3
+  hidden: 512
+  in_channels: 3
+  out_channels: 10
+  type: resnet18
 outdir: ray_v2_output/server_output
+quantization:
+  method: ''
+  nbits: 8
 seed: 12345
 topology:
-  connections: 2
+  connections: 4
   timeout: 600.0
-  type: random
+  type: mesh
   use: true
   verbose: true
 train:
   batch_or_epoch: epoch
-  local_update_steps: 5
+  local_update_steps: 2
   optimizer:
-    lr: 0.001
-    type: Adam
-    weight_decay: 0.0001
+    lr: 0.01
+    type: SGD
+    weight_decay: 0.0005
 trainer:
-  type: nlptrainer
+  type: cvtrainer
 use_gpu: false
+wandb:
+  client_train_info: false
+  use: false

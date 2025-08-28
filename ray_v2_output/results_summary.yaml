@@ -1,17 +1,19 @@
 configuration:
-  chunk_num: 10
-  client_num: 2
-  dataset: shakespeare
-  importance_method: snip
-  model: lstm
-  total_rounds: 20
+  chunk_num: 20
+  client_num: 3
+  dataset: CIFAR10@torchvision
+  importance_method: fisher
+  model: resnet18
+  total_rounds: 2
 log_files:
   clients:
   - logs/client_1.log
   - logs/client_2.log
+  - logs/client_3.log
   server: logs/server.log
 output_directories:
   clients:
   - ray_v2_output/client_1_output
   - ray_v2_output/client_2_output
+  - ray_v2_output/client_3_output
   server: ray_v2_output/server_output
