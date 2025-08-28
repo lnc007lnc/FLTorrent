@@ -210,14 +210,15 @@ class FLConfig:
         "raspberry_pi": 0.25,      # Raspberry Pi - low performance 25%
         "iot_device": 0.15,        # IoT device - lowest performance 15%
     })
+    TARGET_UTILIZATION: float = 0.95      # Target GPU utilization (95%)
     
     # === Chunk Database Retention Settings ===
-    CHUNK_KEEP_ROUNDS: int = 2             # Number of recent rounds to keep in database
+    CHUNK_KEEP_ROUNDS: int = 20             # Number of recent rounds to keep in database
     
     # === Advanced FederatedScope Settings ===
     BACKEND: str = "torch"                 # Backend framework: torch, tensorflow
     FEDERATE_METHOD: str = "FedAvg"        # Federated method: FedAvg, FedProx, etc.
-    FEDERATE_MAKE_GLOBAL_EVAL: bool = True # Enable global evaluation
+    FEDERATE_MAKE_GLOBAL_EVAL: bool = False # Enable global evaluation
     FEDERATE_SHARE_LOCAL_MODEL: bool = False # Share local model between clients
     FEDERATE_ONLINE_AGGR: bool = False     # Online aggregation
     FEDERATE_SAVE_TO: str = ""            # Save federated model path
@@ -225,12 +226,12 @@ class FLConfig:
     
     # === Asynchronous Settings ===
     ASYN_USE: bool = False                # Enable asynchronous training
-    ASYN_MIN_RECEIVED_NUM: int = 1        # Minimum received messages for async
+    ASYN_MIN_RECEIVED_NUM: int = 2        # Minimum received messages for async (FederatedScope default)
     ASYN_STALENESS_TOLERATION: int = 0    # Staleness tolerance
-    ASYN_TIME_BUDGET: int = -1            # Time budget for async training
+    ASYN_TIME_BUDGET: int = 0             # Time budget for async training (FederatedScope default)
     
     # === Quantization Settings ===
-    QUANTIZATION_METHOD: str = ""         # Quantization method: uniform, etc.
+    QUANTIZATION_METHOD: str = "none"     # Quantization method: none, uniform, etc. (FederatedScope default)
     QUANTIZATION_NBITS: int = 8           # Number of bits for quantization
     
     # === Aggregator Settings ===
@@ -246,7 +247,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_high",
         device_type="smartphone", 
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="1.0", memory_limit="4g", storage_limit="32g",
+        cpu_limit="1.0", memory_limit="3g", storage_limit="32g",
         bandwidth_up_kbps=50000, bandwidth_down_kbps=100000,
         latency_ms=20, packet_loss_rate=0.005, jitter_ms=5,
         training_speed_multiplier=1.0, availability_ratio=1.0,
@@ -257,7 +258,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_low", 
         device_type="smartphone",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.3", memory_limit="4g", storage_limit="8g",
+        cpu_limit="0.3", memory_limit="3g", storage_limit="8g",
         bandwidth_up_kbps=5000, bandwidth_down_kbps=20000,
         latency_ms=100, packet_loss_rate=0.02, jitter_ms=20,
         training_speed_multiplier=0.6, availability_ratio=1.0,
@@ -268,7 +269,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="raspberry_pi",
         device_type="edge_device",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.6", memory_limit="4g", storage_limit="64g",
+        cpu_limit="0.6", memory_limit="3g", storage_limit="64g",
         bandwidth_up_kbps=10000, bandwidth_down_kbps=50000,
         latency_ms=30, packet_loss_rate=0.01, jitter_ms=10,
         training_speed_multiplier=0.7, availability_ratio=1.0,
@@ -279,7 +280,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="iot_device",
         device_type="iot",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.1", memory_limit="4g", storage_limit="2g", 
+        cpu_limit="0.1", memory_limit="3g", storage_limit="2g", 
         bandwidth_up_kbps=128, bandwidth_down_kbps=512,
         latency_ms=300, packet_loss_rate=0.05, jitter_ms=50,
         training_speed_multiplier=0.3, availability_ratio=1.0,
@@ -290,7 +291,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="edge_server",
         device_type="edge_server", 
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="2.0", memory_limit="4g", storage_limit="100g",
+        cpu_limit="2.0", memory_limit="3g", storage_limit="100g",
         bandwidth_up_kbps=100000, bandwidth_down_kbps=1000000,
         latency_ms=10, packet_loss_rate=0.001, jitter_ms=2,
         training_speed_multiplier=1.0, availability_ratio=1.0,
@@ -1818,7 +1819,7 @@ class RayV2FederatedLearning:
             total_required_gpu += required_gpu
         
         # 🎯 Smart scaling: always maintain 90-100% GPU utilization
-        target_utilization = 0.95  # Target 80% utilization (reduce resource competition)
+        target_utilization = CONFIG.TARGET_UTILIZATION  # Target GPU utilization (from CONFIG)
         target_gpu_usage = available_gpus * target_utilization
         scaling_factor = target_gpu_usage / total_required_gpu
         
