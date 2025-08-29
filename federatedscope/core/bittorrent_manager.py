@@ -834,39 +834,57 @@ class BitTorrentManager:
         )
         
     def _send_interested(self, peer_id: int):
-        """Send interested message - 使用传统消息系统（低频控制命令）"""
+        """Send interested message - 使用streaming通道"""
         self.interested_in.add(peer_id)
-        from federatedscope.core.message import Message
-        logger.info(f"[BT] Client {self.client_id}: Sending INTERESTED message to peer {peer_id} via traditional channel")
-        self.comm_manager.send(
-            Message(msg_type='interested',
-                   sender=self.client_id,
-                   receiver=[peer_id],
-                   state=self.round_num,
-                   content={})
-        )
+        
+        # 🚀 使用streaming通道发送INTERESTED消息
+        if self.use_streaming and self.streaming_manager:
+            success = self.streaming_manager.send_bittorrent_message(
+                peer_id=peer_id,
+                msg_type='interested',
+                round_num=self.round_num
+            )
+            
+            if success:
+                logger.info(f"[BT] Client {self.client_id}: STREAMING INTERESTED message SUCCESS to peer {peer_id}")
+            else:
+                logger.error(f"[BT] Client {self.client_id}: STREAMING INTERESTED message FAILED to peer {peer_id}")
+        else:
+            logger.error(f"[BT] Client {self.client_id}: No streaming manager available for INTERESTED to peer {peer_id}")
         
     def _send_unchoke(self, peer_id: int):
-        """Send unchoke message"""
-        from federatedscope.core.message import Message
-        self.comm_manager.send(
-            Message(msg_type='unchoke',
-                   sender=self.client_id,
-                   receiver=[peer_id],
-                   state=self.round_num,
-                   content={})
-        )
+        """Send unchoke message - 使用streaming通道"""
+        # 🚀 使用streaming通道发送UNCHOKE消息
+        if self.use_streaming and self.streaming_manager:
+            success = self.streaming_manager.send_bittorrent_message(
+                peer_id=peer_id,
+                msg_type='unchoke',
+                round_num=self.round_num
+            )
+            
+            if success:
+                logger.info(f"[BT] Client {self.client_id}: STREAMING UNCHOKE message SUCCESS to peer {peer_id}")
+            else:
+                logger.error(f"[BT] Client {self.client_id}: STREAMING UNCHOKE message FAILED to peer {peer_id}")
+        else:
+            logger.error(f"[BT] Client {self.client_id}: No streaming manager available for UNCHOKE to peer {peer_id}")
         
     def _send_choke(self, peer_id: int):
-        """Send choke message"""
-        from federatedscope.core.message import Message
-        self.comm_manager.send(
-            Message(msg_type='choke',
-                   sender=self.client_id,
-                   receiver=[peer_id],
-                   state=self.round_num,
-                   content={})
-        )
+        """Send choke message - 使用streaming通道"""
+        # 🚀 使用streaming通道发送CHOKE消息
+        if self.use_streaming and self.streaming_manager:
+            success = self.streaming_manager.send_bittorrent_message(
+                peer_id=peer_id,
+                msg_type='choke',
+                round_num=self.round_num
+            )
+            
+            if success:
+                logger.info(f"[BT] Client {self.client_id}: STREAMING CHOKE message SUCCESS to peer {peer_id}")
+            else:
+                logger.error(f"[BT] Client {self.client_id}: STREAMING CHOKE message FAILED to peer {peer_id}")
+        else:
+            logger.error(f"[BT] Client {self.client_id}: No streaming manager available for CHOKE to peer {peer_id}")
     
     def _broadcast_have(self, round_num: int, source_client_id: int, chunk_id: int):
         """Send have message to all neighbors (containing importance scores)"""
@@ -1041,25 +1059,34 @@ class BitTorrentManager:
         return True
     
     def _send_piece(self, peer_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data):
-        """Send chunk data - 🚀 智能选择streaming或传统方式"""
+        """🚀 优化4：智能发送策略 - 多重优化的chunk传输"""
         import pickle
         
-        # 序列化chunk数据为bytes
+        # 🚀 数据准备和预处理
+        send_start_time = time.time()
         serialized_data = pickle.dumps(chunk_data)
-        
-        # 对原始bytes计算校验和
         checksum = hashlib.sha256(serialized_data).hexdigest()
+        data_size = len(serialized_data)
         
-        logger.debug(f"[BT-SEND] Client {self.client_id}: Sending chunk {source_client_id}:{chunk_id}, size={len(serialized_data)}")
+        logger.debug(f"[BT-SEND] Client {self.client_id}: Preparing chunk {source_client_id}:{chunk_id}, size={data_size}B")
         
-        # 🔍 DEBUG LOG: 详细的piece发送日志
-        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: SENDING chunk PIECE to peer {peer_id}")
-        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Piece details - round={round_num}, source={source_client_id}, chunk={chunk_id}, size={len(serialized_data)}")
+        # 🚀 智能传输策略选择
+        use_streaming = self._should_use_streaming(peer_id, data_size)
+        transmission_method = "STREAMING" if use_streaming else "TRADITIONAL"
         
-        # 🚀 STREAMING OPTIMIZATION: 优先使用streaming通道
-        if self.use_streaming and self.streaming_manager:
-            logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Attempting STREAMING transmission to peer {peer_id}")
-            success = self.streaming_manager.send_bittorrent_message(
+        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: {transmission_method} transmission for chunk {source_client_id}:{chunk_id} to peer {peer_id}")
+        logger.debug(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Size={data_size}B, method={transmission_method}")
+        
+        # 🚀 多重回退机制
+        transmission_attempts = []
+        final_success = False
+        
+        # 🚀 尝试1：高性能Streaming传输
+        if use_streaming and self.streaming_manager:
+            streaming_start = time.time()
+            logger.debug(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Attempting streaming transmission to peer {peer_id}")
+            
+            streaming_success = self.streaming_manager.send_bittorrent_message(
                 peer_id=peer_id,
                 msg_type='piece',
                 round_num=round_num,
@@ -1067,47 +1094,198 @@ class BitTorrentManager:
                 chunk_id=chunk_id,
                 chunk_data=serialized_data,
                 checksum=checksum,
-                importance_score=0.0  # TODO: 集成importance评分
+                importance_score=self._calculate_chunk_importance(source_client_id, chunk_id)
             )
             
-            if success:
-                self.total_uploaded += len(serialized_data)
-                logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: STREAMING transmission SUCCESS to peer {peer_id}")
-                logger.debug(f"[BT-SEND] Client {self.client_id}: Sent chunk via streaming to peer {peer_id}")
-                return
+            streaming_time = time.time() - streaming_start
+            transmission_attempts.append({
+                'method': 'streaming',
+                'success': streaming_success,
+                'time': streaming_time
+            })
+            
+            if streaming_success:
+                self.total_uploaded += data_size
+                self._update_streaming_success_stats(peer_id, data_size, streaming_time)
+                final_success = True
+                
+                logger.info(f"📤 [BT-PIECE-SEND] ✅ Client {self.client_id}: Streaming SUCCESS to peer {peer_id} in {streaming_time:.3f}s")
+                logger.debug(f"[BT-SEND] Client {self.client_id}: Streaming throughput: {data_size/streaming_time:.0f}B/s")
+                
             else:
-                logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: STREAMING transmission FAILED, using traditional fallback")
-                logger.warning(f"[BT-SEND] Client {self.client_id}: Streaming failed, fallback to traditional")
+                logger.info(f"📤 [BT-PIECE-SEND] ❌ Client {self.client_id}: Streaming FAILED to peer {peer_id}, trying fallback")
+                self._update_streaming_failure_stats(peer_id)
+        
+        # 🚀 尝试2：传统消息传输（智能回退）
+        if not final_success:
+            traditional_start = time.time()
+            logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Using traditional message transmission to peer {peer_id}")
+            
+            try:
+                from federatedscope.core.message import Message, ChunkData
+                chunk_wrapper = ChunkData(serialized_data, checksum)
+                
+                message = Message(
+                    msg_type='piece',
+                    sender=self.client_id,
+                    receiver=[peer_id],
+                    state=round_num,
+                    content={
+                        'round_num': round_num,
+                        'source_client_id': source_client_id,
+                        'chunk_id': chunk_id,
+                        'data': chunk_wrapper,
+                        'checksum': checksum
+                    }
+                )
+                
+                self.comm_manager.send(message)
+                traditional_time = time.time() - traditional_start
+                
+                transmission_attempts.append({
+                    'method': 'traditional',
+                    'success': True,
+                    'time': traditional_time
+                })
+                
+                self.total_uploaded += data_size
+                self._update_traditional_success_stats(peer_id, data_size, traditional_time)
+                final_success = True
+                
+                logger.info(f"📤 [BT-PIECE-SEND] ✅ Client {self.client_id}: Traditional SUCCESS to peer {peer_id} in {traditional_time:.3f}s")
+                
+            except Exception as e:
+                traditional_time = time.time() - traditional_start
+                transmission_attempts.append({
+                    'method': 'traditional',
+                    'success': False,
+                    'time': traditional_time,
+                    'error': str(e)
+                })
+                
+                logger.error(f"📤 [BT-PIECE-SEND] ❌ Client {self.client_id}: Traditional transmission FAILED to peer {peer_id}: {e}")
+        
+        # 🚀 性能分析和自适应优化
+        total_send_time = time.time() - send_start_time
+        self._analyze_transmission_performance(peer_id, transmission_attempts, data_size, total_send_time)
+        
+        if not final_success:
+            logger.error(f"📤 [BT-PIECE-SEND] ❌ Client {self.client_id}: ALL transmission methods FAILED for chunk {source_client_id}:{chunk_id} to peer {peer_id}")
         else:
-            logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Using TRADITIONAL message transmission (streaming not available)")
+            logger.debug(f"[BT-SEND] Client {self.client_id}: Chunk transmission completed in {total_send_time:.3f}s")
+    
+    def _should_use_streaming(self, peer_id: int, data_size: int) -> bool:
+        """🚀 智能传输方式选择"""
+        if not self.use_streaming or not self.streaming_manager:
+            return False
         
-        # 🔧 FALLBACK: 传统消息方式（兼容性）
-        from federatedscope.core.message import Message, ChunkData
-        chunk_wrapper = ChunkData(serialized_data, checksum)
+        # 🚀 基于历史性能的智能选择
+        if not hasattr(self, 'peer_streaming_stats'):
+            self.peer_streaming_stats = {}
         
-        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Sending traditional piece message to peer {peer_id}")
+        if peer_id not in self.peer_streaming_stats:
+            # 初次连接，大数据优先使用streaming
+            return data_size > 1024  # 1KB以上使用streaming
         
-        message = Message(msg_type='piece',
-                         sender=self.client_id,
-                         receiver=[peer_id],
-                         state=round_num,
-                         content={
-                             'round_num': round_num,
-                             'source_client_id': source_client_id,
-                             'chunk_id': chunk_id,
-                             'data': chunk_wrapper,  # 🚀 ChunkData直接传输bytes
-                             'checksum': checksum
-                         })
+        stats = self.peer_streaming_stats[peer_id]
+        streaming_success_rate = stats.get('streaming_success_rate', 0.0)
+        traditional_avg_time = stats.get('traditional_avg_time', float('inf'))
+        streaming_avg_time = stats.get('streaming_avg_time', float('inf'))
         
-        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Traditional piece message details - sender={message.sender}, receiver={message.receiver}")
+        # 🚀 智能决策逻辑
+        if streaming_success_rate < 0.5:  # 成功率低于50%
+            return False
+        elif streaming_avg_time < traditional_avg_time * 0.8:  # streaming明显更快
+            return True
+        elif data_size > 10240:  # 大于10KB，优先streaming
+            return True
+        else:
+            return streaming_success_rate > 0.8  # 高成功率时使用streaming
+    
+    def _calculate_chunk_importance(self, source_client_id: int, chunk_id: int) -> float:
+        """🚀 计算chunk重要性评分"""
+        # TODO: 集成更复杂的importance评分算法
+        # 目前返回基础评分
+        return 1.0
+    
+    def _update_streaming_success_stats(self, peer_id: int, data_size: int, transmission_time: float):
+        """🚀 更新streaming成功统计"""
+        if not hasattr(self, 'peer_streaming_stats'):
+            self.peer_streaming_stats = {}
         
-        self.comm_manager.send(message)
+        if peer_id not in self.peer_streaming_stats:
+            self.peer_streaming_stats[peer_id] = {
+                'streaming_attempts': 0,
+                'streaming_successes': 0,
+                'streaming_total_time': 0.0,
+                'streaming_success_rate': 0.0,
+                'streaming_avg_time': 0.0
+            }
         
-        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Traditional piece message SENT to comm_manager for peer {peer_id}")
+        stats = self.peer_streaming_stats[peer_id]
+        stats['streaming_attempts'] += 1
+        stats['streaming_successes'] += 1
+        stats['streaming_total_time'] += transmission_time
+        stats['streaming_success_rate'] = stats['streaming_successes'] / stats['streaming_attempts']
+        stats['streaming_avg_time'] = stats['streaming_total_time'] / stats['streaming_successes']
+    
+    def _update_streaming_failure_stats(self, peer_id: int):
+        """🚀 更新streaming失败统计"""
+        if not hasattr(self, 'peer_streaming_stats'):
+            self.peer_streaming_stats = {}
         
-        # Update upload statistics
-        self.total_uploaded += len(serialized_data)
-        logger.debug(f"[BT-SEND] Client {self.client_id}: Sent chunk via traditional message to peer {peer_id}")
+        if peer_id not in self.peer_streaming_stats:
+            self.peer_streaming_stats[peer_id] = {
+                'streaming_attempts': 0,
+                'streaming_successes': 0,
+                'streaming_total_time': 0.0,
+                'streaming_success_rate': 0.0,
+                'streaming_avg_time': 0.0
+            }
+        
+        stats = self.peer_streaming_stats[peer_id]
+        stats['streaming_attempts'] += 1
+        stats['streaming_success_rate'] = stats['streaming_successes'] / stats['streaming_attempts']
+    
+    def _update_traditional_success_stats(self, peer_id: int, data_size: int, transmission_time: float):
+        """🚀 更新traditional成功统计"""
+        if not hasattr(self, 'peer_streaming_stats'):
+            self.peer_streaming_stats = {}
+        
+        if peer_id not in self.peer_streaming_stats:
+            self.peer_streaming_stats[peer_id] = {}
+        
+        stats = self.peer_streaming_stats[peer_id]
+        if 'traditional_attempts' not in stats:
+            stats.update({
+                'traditional_attempts': 0,
+                'traditional_successes': 0,
+                'traditional_total_time': 0.0,
+                'traditional_avg_time': 0.0
+            })
+        
+        stats['traditional_attempts'] += 1
+        stats['traditional_successes'] += 1
+        stats['traditional_total_time'] += transmission_time
+        stats['traditional_avg_time'] = stats['traditional_total_time'] / stats['traditional_successes']
+    
+    def _analyze_transmission_performance(self, peer_id: int, attempts: list, data_size: int, total_time: float):
+        """🚀 性能分析和自适应优化"""
+        if not attempts:
+            return
+        
+        # 记录详细的传输性能
+        successful_attempts = [a for a in attempts if a['success']]
+        if successful_attempts:
+            best_attempt = min(successful_attempts, key=lambda x: x['time'])
+            throughput = data_size / total_time if total_time > 0 else 0
+            
+            logger.debug(f"[BT-PERF] Client {self.client_id}: Best transmission to peer {peer_id}: "
+                        f"{best_attempt['method']} in {best_attempt['time']:.3f}s, "
+                        f"throughput: {throughput:.0f}B/s")
+        
+        # 🚀 自适应参数调整 (未来可扩展)
+        # 根据性能数据调整传输策略、批处理大小等
         
     def _has_interesting_chunks(self, peer_id: int) -> bool:
         """Check if peer has chunks I need"""

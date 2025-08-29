@@ -205,7 +205,7 @@ class Client(BaseClient):
         
         try:
             from federatedscope.core.streaming_channel_manager import StreamingChannelManager
-            self._streaming_manager = StreamingChannelManager(self.ID)
+            self._streaming_manager = StreamingChannelManager(self.ID, client_instance=self)
             logger.info(f"[StreamingManager] Initialized streaming channel manager for client {self.ID}")
         except Exception as e:
             logger.warning(f"[StreamingManager] Failed to initialize streaming manager: {e}")
@@ -581,6 +581,21 @@ class Client(BaseClient):
         # 🔧 CRITICAL FIX: Update streaming manager with correct client ID
         if hasattr(self, '_streaming_manager') and self._streaming_manager:
             self._streaming_manager.client_id = self.ID
+            
+        # 🚀 CRITICAL FIX: Set chunk_manager reference to gRPC server for chunk data access
+        if hasattr(self, 'comm_manager') and hasattr(self.comm_manager, 'server_funcs'):
+            # Make sure chunk_manager is initialized
+            if not hasattr(self, 'chunk_manager'):
+                from federatedscope.core.chunk_manager import ChunkManager
+                self.chunk_manager = ChunkManager(
+                    client_id=self.ID,
+                    change_callback=self._send_chunk_info_to_server
+                )
+                logger.info(f"[Client {self.ID}] Initialized chunk_manager for chunk data access")
+            
+            # Set chunk_manager reference to gRPC server
+            self.comm_manager.server_funcs.chunk_manager = self.chunk_manager
+            logger.info(f"[Client {self.ID}] ✅ Set chunk_manager reference to gRPC server for chunk data access")
             # Also update client_id for all existing channels
             for peer_id, channel in self._streaming_manager.channels.items():
                 channel.client_id = self.ID
