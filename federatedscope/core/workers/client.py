@@ -198,6 +198,18 @@ class Client(BaseClient):
         # Link connection monitor to communication manager
         if hasattr(self.comm_manager, 'connection_monitor'):
             self.comm_manager.connection_monitor = self.connection_monitor
+            
+        # ============ 🚀 gRPC Streaming Channel Manager ============
+        self.topology_neighbors = []  # Store topology neighbor information
+        self.neighbor_addresses = {}  # Store neighbor address information
+        
+        try:
+            from federatedscope.core.streaming_channel_manager import StreamingChannelManager
+            self._streaming_manager = StreamingChannelManager(self.ID)
+            logger.info(f"[StreamingManager] Initialized streaming channel manager for client {self.ID}")
+        except Exception as e:
+            logger.warning(f"[StreamingManager] Failed to initialize streaming manager: {e}")
+            self._streaming_manager = None
         
         # Start connection monitoring for distributed mode
         if self.mode == 'distributed':
@@ -565,6 +577,14 @@ class Client(BaseClient):
         # Update connection monitor with correct client ID
         if hasattr(self, 'connection_monitor') and self.connection_monitor:
             self.connection_monitor.client_id = self.ID
+            
+        # 🔧 CRITICAL FIX: Update streaming manager with correct client ID
+        if hasattr(self, '_streaming_manager') and self._streaming_manager:
+            self._streaming_manager.client_id = self.ID
+            # Also update client_id for all existing channels
+            for peer_id, channel in self._streaming_manager.channels.items():
+                channel.client_id = self.ID
+            logger.info(f"[StreamingManager] Updated client_id from -1 to {self.ID} for streaming channels")
         
         # Send initial chunk information to server
         self.send_initial_chunk_info()
@@ -734,6 +754,43 @@ class Client(BaseClient):
             self.topology_neighbors = neighbors_to_connect
             self.neighbor_addresses = neighbor_addresses  # 🔧 Save address information
             logger.info(f"[BT] Client {self.ID}: Saved topology neighbors for BitTorrent: {self.topology_neighbors}")
+            
+            # 🚀 STREAMING OPTIMIZATION: 异步创建streaming通道，不阻塞拓扑构建
+            if hasattr(self, '_streaming_manager') and self._streaming_manager:
+                logger.info(f"[StreamingTopology] Client {self.ID}: Starting async streaming channel creation")
+                
+                # 构建neighbor地址映射: {peer_id: (host, port)}
+                streaming_addresses = {}
+                for neighbor_id in neighbors_to_connect:
+                    if neighbor_id in neighbor_addresses:
+                        addr_info = neighbor_addresses[neighbor_id]
+                        if isinstance(addr_info, dict) and 'host' in addr_info and 'port' in addr_info:
+                            streaming_addresses[neighbor_id] = (addr_info['host'], addr_info['port'])
+                        elif isinstance(addr_info, (list, tuple)) and len(addr_info) >= 2:
+                            streaming_addresses[neighbor_id] = (addr_info[0], addr_info[1])
+                
+                if streaming_addresses:
+                    # 🔧 关键修复：在独立线程中创建streaming通道，避免阻塞拓扑构建
+                    import threading
+                    def create_streaming_channels_async():
+                        try:
+                            logger.info(f"[StreamingTopology] Client {self.ID}: Creating streaming channels in background thread")
+                            self._streaming_manager.create_channels_for_topology(streaming_addresses)
+                            logger.info(f"[StreamingTopology] Client {self.ID}: Successfully created streaming channels for {len(streaming_addresses)} neighbors")
+                        except Exception as e:
+                            logger.warning(f"[StreamingTopology] Client {self.ID}: Streaming channel creation failed: {e}")
+                    
+                    streaming_thread = threading.Thread(
+                        target=create_streaming_channels_async,
+                        daemon=True,
+                        name=f"StreamingSetup-{self.ID}"
+                    )
+                    streaming_thread.start()
+                    logger.info(f"[StreamingTopology] Client {self.ID}: Started streaming setup in background, continuing with topology construction")
+                else:
+                    logger.warning(f"[StreamingTopology] Client {self.ID}: No valid neighbor addresses for streaming channels")
+            else:
+                logger.debug(f"[StreamingTopology] Client {self.ID}: Streaming manager not available")
             
             if not neighbors_to_connect:
                 logger.info(f"   No neighbors to connect for Client {self.ID}")
@@ -1192,7 +1249,9 @@ class Client(BaseClient):
             round_num,  # 🔴 Pass current round number
             self.chunk_manager,
             self.comm_manager,
-            neighbors
+            neighbors,
+            self._cfg,  # 🆕 Pass configuration object
+            self._streaming_manager  # 🚀 Pass streaming manager
         )
         
         # Directly start chunk exchange, no tracker needed
@@ -1394,12 +1453,25 @@ class Client(BaseClient):
         
     def callback_funcs_for_request(self, message):
         """Handle chunk request"""
+        # 🔍 DEBUG LOG: 详细的接收日志 - 扩展显示完整消息信息
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: RECEIVED chunk REQUEST from peer {message.sender}")
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: 📋 FULL MESSAGE DEBUG:")
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - msg_type: {message.msg_type}")  
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - sender: {message.sender}")
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - receiver: {message.receiver}")
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - state: {message.state}")
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - timestamp: {getattr(message, 'timestamp', 'N/A')}")
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - content: {message.content}")
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: Processing request for chunk ({message.content['round_num']}, {message.content['source_client_id']}, {message.content['chunk_id']})")
+        
         logger.debug(f"[BT] Client {self.ID}: Received request from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
         if not hasattr(self, 'bt_manager') or self.bt_manager is None:
             logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering request message from {message.sender}")
             self.bt_message_buffer.append(('request', message))
             return
+        
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: Calling bt_manager.handle_request for peer {message.sender}")
             
         # 🔴 Pass round_num to handle_request
         self.bt_manager.handle_request(
@@ -1409,14 +1481,23 @@ class Client(BaseClient):
             message.content['chunk_id']
         )
         
+        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: bt_manager.handle_request COMPLETED for peer {message.sender}")
+        
     def callback_funcs_for_piece(self, message):
         """Handle chunk data"""
+        # 🔍 DEBUG LOG: 详细的piece接收日志
+        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: RECEIVED chunk PIECE from peer {message.sender}")
+        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: Piece content keys = {list(message.content.keys())}")
+        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: Processing piece for chunk ({message.content['round_num']}, {message.content['source_client_id']}, {message.content['chunk_id']})")
+        
         logger.debug(f"[BT] Client {self.ID}: Received piece from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
         if not hasattr(self, 'bt_manager') or self.bt_manager is None:
             logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering piece message from {message.sender}")
             self.bt_message_buffer.append(('piece', message))
             return
+        
+        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: Calling bt_manager.handle_piece for peer {message.sender}")
             
         self.bt_manager.handle_piece(
             message.sender,
@@ -1426,6 +1507,8 @@ class Client(BaseClient):
             message.content['data'],
             message.content['checksum']
         )
+        
+        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: bt_manager.handle_piece COMPLETED for peer {message.sender}")
         
     def callback_funcs_for_cancel(self, message):
         """Handle cancel message"""

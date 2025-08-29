@@ -9,6 +9,28 @@ def b64serializer(x):
     return base64.b64encode(pickle.dumps(x)).decode('ascii')
 
 
+class ChunkData:
+    """🚀 Specialized chunk data wrapper for direct bytes transmission"""
+    
+    def __init__(self, raw_bytes: bytes, checksum: str):
+        """
+        Args:
+            raw_bytes: Pickled chunk data bytes
+            checksum: SHA256 checksum of raw_bytes
+        """
+        self.raw_bytes = raw_bytes
+        self.checksum = checksum
+        
+    def __len__(self):
+        return len(self.raw_bytes)
+        
+    def validate(self):
+        """Quick validation of checksum"""
+        import hashlib
+        calculated = hashlib.sha256(self.raw_bytes).hexdigest()
+        return calculated == self.checksum
+
+
 class Message(object):
     """
     The data exchanged during an FL course are abstracted as 'Message' in
@@ -198,6 +220,9 @@ class Message(object):
             elif type(value) == bool:
                 # Convert boolean to string for protobuf compatibility
                 m_single.str_value = str(value)
+            elif isinstance(value, ChunkData):
+                # 🚀 ChunkData: 直接传输原始bytes，不做Base64编码
+                m_single.bytes_value = value.raw_bytes
             else:
                 raise ValueError(
                     'The data type {} has not been supported.'.format(

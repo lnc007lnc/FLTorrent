@@ -34,6 +34,10 @@ def extend_bittorrent_cfg(cfg):
     cfg.bittorrent.regular_unchoke_interval = 10.0  # Regular unchoke interval (seconds)
     cfg.bittorrent.end_game_threshold = 10  # Remaining chunk threshold for entering End Game mode
     
+    # 🆕 Concurrent request management configuration
+    cfg.bittorrent.max_active_requests = 20  # Maximum concurrent active requests per client
+    cfg.bittorrent.max_pending_queue = 40    # Maximum pending request queue size
+    
     # Completion strategy configuration
     cfg.bittorrent.min_completion_ratio = 0.8  # Minimum completion ratio allowed to continue
     cfg.bittorrent.require_full_completion = True  # Whether to require all clients to complete fully
@@ -76,6 +80,16 @@ def assert_bittorrent_cfg(cfg):
     assert cfg.bittorrent.max_upload_slots > 0, \
         f"cfg.bittorrent.max_upload_slots must be positive, but got {cfg.bittorrent.max_upload_slots}"
     
+    # 🆕 Validate concurrent request parameters
+    assert cfg.bittorrent.max_active_requests > 0, \
+        f"cfg.bittorrent.max_active_requests must be positive, but got {cfg.bittorrent.max_active_requests}"
+    
+    assert cfg.bittorrent.max_pending_queue > 0, \
+        f"cfg.bittorrent.max_pending_queue must be positive, but got {cfg.bittorrent.max_pending_queue}"
+    
+    assert cfg.bittorrent.max_pending_queue >= cfg.bittorrent.max_active_requests, \
+        f"cfg.bittorrent.max_pending_queue ({cfg.bittorrent.max_pending_queue}) should be >= max_active_requests ({cfg.bittorrent.max_active_requests})"
+    
     assert 0.0 < cfg.bittorrent.min_completion_ratio <= 1.0, \
         f"cfg.bittorrent.min_completion_ratio must be in (0.0, 1.0], but got {cfg.bittorrent.min_completion_ratio}"
     
@@ -95,6 +109,8 @@ def assert_bittorrent_cfg(cfg):
         if cfg.bittorrent.verbose:
             logger.info(f"BitTorrent configuration: timeout={cfg.bittorrent.timeout}s, "
                        f"upload_slots={cfg.bittorrent.max_upload_slots}, "
+                       f"active_requests={cfg.bittorrent.max_active_requests}, "
+                       f"pending_queue={cfg.bittorrent.max_pending_queue}, "
                        f"completion_ratio={cfg.bittorrent.min_completion_ratio}")
 
 

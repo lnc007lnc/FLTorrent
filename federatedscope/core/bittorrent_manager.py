@@ -8,21 +8,192 @@ import hashlib
 import random
 import logging
 import threading
+import queue
 from typing import Dict, Set, List, Tuple, Optional, Any
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 
+class ChunkWriteQueue:
+    """🚀 OPTIMIZATION 3: Single writer thread for SQLite operations with queue-based architecture"""
+    
+    def __init__(self, client_id: int, chunk_manager):
+        self.client_id = client_id
+        self.chunk_manager = chunk_manager
+        self.write_queue = queue.Queue()
+        self.writer_thread = None
+        self.is_running = False
+        
+    def start_writer_thread(self):
+        """Start the single writer thread"""
+        if self.is_running:
+            return
+            
+        self.is_running = True
+        self.writer_thread = threading.Thread(
+            target=self._writer_loop,
+            daemon=True,
+            name=f"ChunkWriter-{self.client_id}"
+        )
+        self.writer_thread.start()
+        logger.info(f"[ChunkWriteQueue] Started single writer thread for client {self.client_id}")
+        
+    def stop_writer_thread(self, force_immediate=False, max_wait_time=30.0):
+        """
+        🚀 优雅关闭写入线程：等待队列处理完成，避免数据丢失
+        Args:
+            force_immediate: 是否强制立即关闭（紧急情况）
+            max_wait_time: 最大等待时间（秒）
+        """
+        if not self.is_running:
+            return
+            
+        queue_size = self.write_queue.qsize()
+        if queue_size > 0 and not force_immediate:
+            logger.info(f"[ChunkWriteQueue] 优雅关闭：等待{queue_size}个chunk完成写入...")
+        
+        self.is_running = False
+        
+        if force_immediate:
+            # 紧急关闭：立即停止
+            self.write_queue.put(None)  # 发送关闭信号
+            if self.writer_thread and self.writer_thread.is_alive():
+                self.writer_thread.join(timeout=2.0)
+            logger.warning(f"[ChunkWriteQueue] 强制关闭写入线程，可能有{queue_size}个chunk丢失")
+        else:
+            # 优雅关闭：等待队列处理完成
+            self.write_queue.put(None)  # 发送关闭信号
+            
+            if self.writer_thread and self.writer_thread.is_alive():
+                logger.info(f"[ChunkWriteQueue] 等待后台写入完成（最多{max_wait_time}秒）...")
+                self.writer_thread.join(timeout=max_wait_time)
+                
+                if self.writer_thread.is_alive():
+                    logger.error(f"[ChunkWriteQueue] 写入线程未在{max_wait_time}秒内完成，强制结束")
+                else:
+                    logger.info(f"[ChunkWriteQueue] 后台写入线程优雅关闭完成")
+            
+        logger.info(f"[ChunkWriteQueue] 写入线程已停止 for client {self.client_id}")
+        
+    def enqueue_chunk_write(self, round_num: int, source_client_id: int, chunk_id: int, 
+                          chunk_data: bytes, checksum: str, timestamp: float):
+        """Enqueue chunk write operation"""
+        if not self.is_running:
+            logger.warning(f"[ChunkWriteQueue] Writer thread not running, starting...")
+            self.start_writer_thread()
+            
+        write_task = {
+            'type': 'chunk_write',
+            'round_num': round_num,
+            'source_client_id': source_client_id,
+            'chunk_id': chunk_id,
+            'chunk_data': chunk_data,
+            'checksum': checksum,
+            'timestamp': timestamp
+        }
+        
+        try:
+            self.write_queue.put(write_task, timeout=1.0)
+            logger.debug(f"[ChunkWriteQueue] Enqueued chunk write: {source_client_id}:{chunk_id}")
+        except queue.Full:
+            logger.error(f"[ChunkWriteQueue] Write queue full, dropping chunk {source_client_id}:{chunk_id}")
+            
+    def _writer_loop(self):
+        """Background writer thread loop - single SQLite writer with graceful shutdown"""
+        logger.debug(f"[ChunkWriteQueue] Writer thread started for client {self.client_id}")
+        processed_count = 0
+        
+        while self.is_running or not self.write_queue.empty():  # 🚀 继续处理直到队列为空
+            try:
+                # Block until task available or timeout
+                task = self.write_queue.get(timeout=1.0)
+                
+                if task is None:  # Sentinel for shutdown
+                    logger.debug(f"[ChunkWriteQueue] 收到关闭信号，剩余队列: {self.write_queue.qsize()}")
+                    # 不立即break，继续处理剩余任务
+                    if self.write_queue.empty():
+                        break
+                    else:
+                        continue
+                    
+                if task['type'] == 'chunk_write':
+                    success = self._process_chunk_write(task)
+                    if success:
+                        processed_count += 1
+                        if processed_count % 10 == 0:  # 每处理10个chunk记录一次进度
+                            logger.debug(f"[ChunkWriteQueue] 已处理{processed_count}个chunk，剩余队列: {self.write_queue.qsize()}")
+                    
+                self.write_queue.task_done()
+                
+            except queue.Empty:
+                # 超时：如果已停止运行且队列为空，退出
+                if not self.is_running and self.write_queue.empty():
+                    break
+                continue
+            except Exception as e:
+                logger.error(f"[ChunkWriteQueue] Writer thread error: {e}")
+                self.write_queue.task_done()  # 标记任务完成避免死锁
+                time.sleep(0.1)  # Brief pause on error
+                
+        logger.info(f"[ChunkWriteQueue] Writer thread优雅退出，共处理{processed_count}个chunk for client {self.client_id}")
+        
+    def _process_chunk_write(self, task: Dict):
+        """Process chunk write task with heavy validation in background"""
+        try:
+            round_num = task['round_num']
+            source_client_id = task['source_client_id']
+            chunk_id = task['chunk_id']
+            chunk_data = task['chunk_data']
+            checksum = task['checksum']
+            
+            # 🚀 Heavy validation in background thread
+            calculated_checksum = hashlib.sha256(chunk_data).hexdigest()
+            
+            if calculated_checksum != checksum:
+                logger.error(f"[ChunkWriteQueue] Background checksum validation failed for chunk {source_client_id}:{chunk_id}")
+                return False
+                
+            # Deserialize in background
+            import pickle
+            try:
+                deserialized_data = pickle.loads(chunk_data)
+            except Exception as e:
+                logger.error(f"[ChunkWriteQueue] Background deserialization failed: {e}")
+                return False
+                
+            # Write to database (single writer, no contention)
+            self.chunk_manager.save_remote_chunk(round_num, source_client_id, chunk_id, deserialized_data)
+            
+            logger.debug(f"[ChunkWriteQueue] Background write completed for chunk {source_client_id}:{chunk_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[ChunkWriteQueue] Failed to process chunk write: {e}")
+            return False
+
+
 class BitTorrentManager:
     """Manage BitTorrent protocol core logic (including critical bug fixes)"""
     
-    def __init__(self, client_id: int, round_num: int, chunk_manager, comm_manager, neighbors: List[int]):
+    def __init__(self, client_id: int, round_num: int, chunk_manager, comm_manager, neighbors: List[int], cfg=None, streaming_manager=None):
         self.client_id = client_id
         self.round_num = round_num  # 🔴 Critical: current round
         self.chunk_manager = chunk_manager
         self.comm_manager = comm_manager
         self.neighbors = neighbors  # 🔧 Fix: directly pass neighbor list
+        self.cfg = cfg  # 🆕 Configuration object
+        
+        # 🚀 STREAMING OPTIMIZATION: gRPC streaming通道管理器
+        self.streaming_manager = streaming_manager
+        self.use_streaming = streaming_manager is not None
+        if self.use_streaming:
+            logger.info(f"[BT] Client {client_id}: BitTorrent will use gRPC streaming channels")
+        else:
+            logger.info(f"[BT] Client {client_id}: BitTorrent will use traditional message passing")
+        
+        # 🚀 OPTIMIZATION 3: Initialize single writer thread for SQLite operations
+        self.chunk_write_queue = ChunkWriteQueue(client_id, chunk_manager)
         
         # BitTorrent status
         self.peer_bitfields: Dict[int, Dict] = {}  # {peer_id: bitfield}
@@ -55,13 +226,21 @@ class BitTorrentManager:
         self.retry_count: Dict[Tuple, int] = {}  # {(source_id, chunk_id): count}
         
         # 🆕 Dual pool request management system - solves priority inversion and duplicate selection issues
-        self.MAX_ACTIVE_REQUESTS = 2  # Active request pool size: actual concurrent request count sent
-        self.MAX_PENDING_QUEUE = 2    # Pending queue pool size: pre-selected chunk queue size
+        # Use configuration values if available, otherwise fall back to defaults
+        if cfg and hasattr(cfg, 'bittorrent'):
+            self.MAX_ACTIVE_REQUESTS = cfg.bittorrent.max_active_requests
+            self.MAX_PENDING_QUEUE = cfg.bittorrent.max_pending_queue
+            self.MAX_UPLOAD_SLOTS = cfg.bittorrent.max_upload_slots
+        else:
+            # Fallback defaults
+            self.MAX_ACTIVE_REQUESTS = 10  # Active request pool size: actual concurrent request count sent
+            self.MAX_PENDING_QUEUE = 20   # Pending queue pool size: pre-selected chunk queue size
+            self.MAX_UPLOAD_SLOTS = 4     # Default upload slots
+        
         self.pending_queue: List[Tuple] = []  # Pending queue: chunk list sorted by importance
         
         # 🔧 Bug fix 4: ensure minimum unchoke count
         self.MIN_UNCHOKE_SLOTS = 1  # Keep at least 1 unchoke to prevent complete deadlock
-        self.MAX_UPLOAD_SLOTS = 4
         
         # 🔧 Fix: no background threads, check timeouts through message callbacks
         self.last_timeout_check = time.time()
@@ -75,11 +254,15 @@ class BitTorrentManager:
         self.is_stopped = False  # Stop flag for exchange termination
         
         logger.info(f"[BT] BitTorrentManager initialized for client {client_id}, round {round_num}")
+        logger.info(f"[BT] Client {client_id}: Concurrent settings - Active requests: {self.MAX_ACTIVE_REQUESTS}, Pending queue: {self.MAX_PENDING_QUEUE}, Upload slots: {self.MAX_UPLOAD_SLOTS}")
         
     def start_exchange(self):
         """Start BitTorrent chunk exchange process (no Tracker needed)"""
         logger.info(f"[BT] Client {self.client_id}: Starting BitTorrent exchange")
         logger.info(f"[BT] Client {self.client_id}: Neighbors: {self.neighbors}")
+        
+        # 🚀 OPTIMIZATION 3: Start single writer thread
+        self.chunk_write_queue.start_writer_thread()
         
         # 1. Send bitfield directly to all topology neighbors
         for neighbor_id in self.neighbors:
@@ -154,17 +337,25 @@ class BitTorrentManager:
         
     def handle_request(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int):
         """Handle chunk requests"""
+        # 🔍 DEBUG LOG: 详细的请求处理日志
+        logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: HANDLE_REQUEST called from peer {sender_id}")
+        logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: Request details - round={round_num}, source={source_client_id}, chunk={chunk_id}")
+        
         # 🔧 CRITICAL FIX: Check if exchange is stopped
         if self.is_stopped:
+            logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: IGNORING request - exchange STOPPED")
             logger.debug(f"[BT] Client {self.client_id}: Ignoring request from peer {sender_id} - exchange stopped")
             return
         logger.debug(f"[BT-HANDLE] Client {self.client_id}: Handling request from {sender_id} for chunk {source_client_id}:{chunk_id}")
         
         # 🔴 Verify round matching
         if round_num != self.round_num:
+            logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: ROUND MISMATCH - Request round {round_num} vs BitTorrent round {self.round_num}")
             logger.warning(f"[BT-HANDLE] Client {self.client_id}: Round mismatch - Request round {round_num} vs BitTorrent round {self.round_num}")
             logger.warning(f"[BT-HANDLE] Client {self.client_id}: Skipping request due to round mismatch")
             return
+            
+        logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: Round check PASSED - processing request")
             
         if sender_id not in self.choked_peers:
             logger.debug(f"[BT-HANDLE] Client {self.client_id}: Peer {sender_id} is not choked, processing request")
@@ -188,63 +379,51 @@ class BitTorrentManager:
         else:
             logger.info(f"[BT-HANDLE] Client {self.client_id}: Peer {sender_id} is choked, ignoring request")
             
-    def handle_piece(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data: bytes, checksum: str):
+    def handle_piece(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data, checksum: str):
         """
-        Handle received chunk data (with integrity verification)
-        🔴 Critical change: verify round_num matching
+        🚀 OPTIMIZATION 2: 轻量级chunk接收回调
+        处理ChunkData对象，只做快速验证+入队，重工作移到后台线程
         """
         # 🔧 CRITICAL FIX: Check if exchange is stopped
         if self.is_stopped:
             logger.debug(f"[BT] Client {self.client_id}: Ignoring piece from peer {sender_id} - exchange stopped")
             return
-        logger.debug(f"[BT-PIECE] Client {self.client_id}: Received piece from {sender_id} for chunk {source_client_id}:{chunk_id} (piece_round={round_num}, bt_round={self.round_num}, timestamp={time.time():.3f})")
         
-        # 🔴 Verify if rounds match
+        logger.debug(f"[BT-PIECE] Client {self.client_id}: 轻量级回调处理 chunk {source_client_id}:{chunk_id} from {sender_id}")
+        
+        # 🔴 Verify if rounds match (quick check)
         if round_num != self.round_num:
             logger.warning(f"[BT-PIECE] Client {self.client_id}: Round mismatch - Piece round {round_num} vs BitTorrent round {self.round_num}")
-            logger.warning(f"[BT-PIECE] Client {self.client_id}: Rejecting piece due to round mismatch")
+            return False
+        
+        # 🚀 处理ChunkData对象，提取原始bytes
+        from federatedscope.core.message import ChunkData
+        if isinstance(chunk_data, ChunkData):
+            raw_bytes = chunk_data.raw_bytes
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: 收到ChunkData，原始bytes大小: {len(raw_bytes)}")
+        elif isinstance(chunk_data, bytes):
+            raw_bytes = chunk_data
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: 收到直接bytes: {len(raw_bytes)}")
+        else:
+            logger.error(f"[BT-PIECE] Client {self.client_id}: 期望ChunkData或bytes，收到 {type(chunk_data)}")
             return False
             
-        # 🔧 Fix: chunk_data is now base64 encoded string, need to decode before verification
-        logger.debug(f"[BT-PIECE] Client {self.client_id}: Received encoded chunk data, type={type(chunk_data)}, size={len(chunk_data)}")
-        
-        # Decode base64 data
-        try:
-            import base64
-            import pickle
-            decoded_data = base64.b64decode(chunk_data.encode('utf-8'))
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: Decoded base64 data, size={len(decoded_data)}")
-        except Exception as e:
-            logger.error(f"[BT-PIECE] Client {self.client_id}: Failed to decode base64 data: {e}")
+        # 快速大小合理性检查（指纹检查）
+        if len(raw_bytes) == 0 or len(raw_bytes) > 50 * 1024 * 1024:  # 0字节或>50MB可疑
+            logger.error(f"[BT-PIECE] Client {self.client_id}: 可疑chunk大小: {len(raw_bytes)} bytes")
             return False
         
-        # Calculate hash of decoded serialized data
-        calculated_checksum = hashlib.sha256(decoded_data).hexdigest()
-        logger.debug(f"[BT-PIECE] Client {self.client_id}: Checksum verification - calculated={calculated_checksum[:8]}..., received={checksum[:8]}..., size={len(decoded_data)}")
+        # 🚀 OPTIMIZATION 2: 入队后台处理，不阻塞
+        self.chunk_write_queue.enqueue_chunk_write(
+            round_num=round_num,
+            source_client_id=source_client_id,
+            chunk_id=chunk_id,
+            chunk_data=raw_bytes,  # 原始bytes
+            checksum=checksum,
+            timestamp=time.time()
+        )
         
-        if calculated_checksum != checksum:
-            logger.error(f"[BT-PIECE] Client {self.client_id}: Chunk integrity check failed for {source_client_id}:{chunk_id}")
-            logger.error(f"[BT-PIECE] Client {self.client_id}: Expected={checksum}, Got={calculated_checksum}")
-            # Re-request this chunk
-            chunk_key = (round_num, source_client_id, chunk_id)
-            # 🔧 FIX: Atomic retry count increment (thread-safe dict operations)
-            self.retry_count[chunk_key] = self.retry_count.get(chunk_key, 0) + 1
-            logger.warning(f"[BT-PIECE] Client {self.client_id}: Retry count for chunk {chunk_key}: {self.retry_count[chunk_key]}")
-            return False
-        
-        # 🔧 Deserialize to get original chunk data
-        try:
-            deserialized_data = pickle.loads(decoded_data)
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: Successfully deserialized chunk data, type={type(deserialized_data)}")
-        except Exception as e:
-            logger.error(f"[BT-PIECE] Client {self.client_id}: Failed to deserialize chunk data: {e}")
-            return False
-        
-        # Save to local database
-        # 🔴 Pass round_num to save method, use deserialized data
-        self.chunk_manager.save_remote_chunk(round_num, source_client_id, chunk_id, deserialized_data)
-        
-        # Clear pending requests
+        # 🚀 Immediately clear pending requests (optimistic, background will handle validation)
         chunk_key = (round_num, source_client_id, chunk_id)
         if chunk_key in self.pending_requests:
             logger.debug(f"[BT-PIECE] Client {self.client_id}: Clearing pending request for chunk {chunk_key}")
@@ -253,20 +432,17 @@ class BitTorrentManager:
             
             # 🆕 Dual pool system: transfer requests from queue pool to active pool
             self._transfer_from_queue_to_active()
-        else:
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: No pending request found for chunk {chunk_key}")
         
-        # Send have messages to all neighbors
-        # 🔴 Pass round_num information
+        # 🚀 Send have message immediately (optimistic broadcast)
         logger.debug(f"[BT-PIECE] Client {self.client_id}: Broadcasting have message for chunk {source_client_id}:{chunk_id}")
         self._broadcast_have(round_num, source_client_id, chunk_id)
         
-        # Update download rate and activity time
-        self._update_download_rate(sender_id, len(decoded_data))
+        # Update download statistics (lightweight)
+        self._update_download_rate(sender_id, len(chunk_data))
         self.last_activity[sender_id] = time.time()
-        self.total_downloaded += len(decoded_data)
+        self.total_downloaded += len(chunk_data)
         
-        logger.debug(f"[BT] Client {self.client_id}: Received chunk {source_client_id}:{chunk_id} from peer {sender_id}")
+        logger.debug(f"[BT] Client {self.client_id}: Queued chunk {source_client_id}:{chunk_id} from peer {sender_id} for background processing")
         return True
         
     def handle_have(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int, importance_score: float = 0.0):
@@ -577,6 +753,9 @@ class BitTorrentManager:
         # 🔧 FIX: Use thread-safe copy to avoid "dictionary changed size during iteration"
         peer_bitfields_copy = dict(self.peer_bitfields)
         for peer_id, bitfield in peer_bitfields_copy.items():
+            # 🔧 CRITICAL FIX: 排除自己，不能向自己发送请求
+            if peer_id == self.client_id:
+                continue
             if chunk_key in bitfield and bitfield[chunk_key]:
                 return peer_id
         return None
@@ -625,6 +804,24 @@ class BitTorrentManager:
         
         logger.info(f"[BT] Client {self.client_id}: Sending {len(bitfield_list)} chunks in bitfield to peer {peer_id}")
         
+        # 🚀 STREAMING OPTIMIZATION: 优先使用streaming通道发送bitfield
+        if self.use_streaming and self.streaming_manager:
+            logger.info(f"[BT] Client {self.client_id}: Attempting STREAMING bitfield transmission to peer {peer_id}")
+            success = self.streaming_manager.send_bittorrent_message(
+                peer_id=peer_id,
+                msg_type='bitfield',
+                round_num=self.round_num,
+                bitfield=bitfield_list
+            )
+            
+            if success:
+                logger.info(f"[BT] Client {self.client_id}: STREAMING bitfield transmission SUCCESS to peer {peer_id}")
+                return
+            else:
+                logger.info(f"[BT] Client {self.client_id}: STREAMING bitfield transmission FAILED, using traditional fallback")
+        
+        # 传统方式发送bitfield（流通道失败时的回退）
+        logger.info(f"[BT] Client {self.client_id}: Using TRADITIONAL bitfield transmission to peer {peer_id}")
         self.comm_manager.send(
             Message(msg_type='bitfield',
                    sender=self.client_id,
@@ -637,9 +834,10 @@ class BitTorrentManager:
         )
         
     def _send_interested(self, peer_id: int):
-        """Send interested message"""
+        """Send interested message - 使用传统消息系统（低频控制命令）"""
         self.interested_in.add(peer_id)
         from federatedscope.core.message import Message
+        logger.info(f"[BT] Client {self.client_id}: Sending INTERESTED message to peer {peer_id} via traditional channel")
         self.comm_manager.send(
             Message(msg_type='interested',
                    sender=self.client_id,
@@ -686,18 +884,39 @@ class BitTorrentManager:
                 logger.debug(f"[BT] Client {self.client_id}: Broadcasting have with importance {importance_score:.4f} for own chunk {chunk_id}")
         
         for neighbor_id in self.neighbors:
-            self.comm_manager.send(
-                Message(msg_type='have',
-                       sender=self.client_id,
-                       receiver=[neighbor_id],
-                       state=round_num,
-                       content={
-                           'round_num': round_num,
-                           'source_client_id': source_client_id,
-                           'chunk_id': chunk_id,
-                           'importance_score': importance_score  # 🆕 Add importance score
-                       })
-            )
+            # 🚀 STREAMING OPTIMIZATION: 优先使用streaming通道发送HAVE消息
+            sent_via_streaming = False
+            if self.use_streaming and self.streaming_manager:
+                success = self.streaming_manager.send_bittorrent_message(
+                    peer_id=neighbor_id,
+                    msg_type='have',
+                    round_num=round_num,
+                    source_client_id=source_client_id,
+                    chunk_id=chunk_id,
+                    importance_score=importance_score
+                )
+                
+                if success:
+                    sent_via_streaming = True
+                    logger.debug(f"[BT] Client {self.client_id}: HAVE message sent via STREAMING to peer {neighbor_id}")
+                else:
+                    logger.debug(f"[BT] Client {self.client_id}: HAVE message STREAMING failed to peer {neighbor_id}, using fallback")
+            
+            # 传统方式发送HAVE消息（流通道失败时的回退）
+            if not sent_via_streaming:
+                logger.debug(f"[BT] Client {self.client_id}: HAVE message sent via TRADITIONAL channel to peer {neighbor_id}")
+                self.comm_manager.send(
+                    Message(msg_type='have',
+                           sender=self.client_id,
+                           receiver=[neighbor_id],
+                           state=round_num,
+                           content={
+                               'round_num': round_num,
+                               'source_client_id': source_client_id,
+                               'chunk_id': chunk_id,
+                               'importance_score': importance_score  # 🆕 Add importance score
+                           })
+                )
                 
     def check_timeouts(self):
         """🔧 Fix: non-blocking timeout check, called during message processing"""
@@ -781,48 +1000,114 @@ class BitTorrentManager:
         logger.debug(f"[BT-REQ] Client {self.client_id}: Active pool: {len(self.pending_requests)}/{self.MAX_ACTIVE_REQUESTS}, Queue: {len(self.pending_queue)}/{self.MAX_PENDING_QUEUE}")
         
         from federatedscope.core.message import Message
-        self.comm_manager.send(
-            Message(msg_type='request',
-                   sender=self.client_id,
-                   receiver=[peer_id],
-                   state=self.round_num,
-                   content={
-                       'round_num': self.round_num,  # 🔴 Requested round
-                       'source_client_id': source_id,
-                       'chunk_id': chunk_id
-                   })
-        )
+        
+        # 🔍 DEBUG LOG: 添加详细的发送日志
+        logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Sending chunk REQUEST to peer {peer_id} for chunk ({self.round_num}, {source_id}, {chunk_id})")
+        
+        # 🚀 STREAMING OPTIMIZATION: 优先使用streaming通道发送请求
+        if self.use_streaming and self.streaming_manager:
+            logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Attempting STREAMING request transmission to peer {peer_id}")
+            success = self.streaming_manager.send_bittorrent_message(
+                peer_id=peer_id,
+                msg_type='request',
+                round_num=self.round_num,
+                source_client_id=source_id,
+                chunk_id=chunk_id
+            )
+            
+            if success:
+                logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: STREAMING request transmission SUCCESS to peer {peer_id}")
+                return True
+            else:
+                logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: STREAMING request transmission FAILED, using traditional fallback")
+        
+        # 传统方式发送请求（流通道失败时的回退）
+        logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Using TRADITIONAL request transmission to peer {peer_id}")
+        message = Message(msg_type='request',
+                         sender=self.client_id,
+                         receiver=[peer_id],
+                         state=self.round_num,
+                         content={
+                             'round_num': self.round_num,  # 🔴 Requested round
+                             'source_client_id': source_id,
+                             'chunk_id': chunk_id
+                         })
+        
+        logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Message details - sender={message.sender}, receiver={message.receiver}, content={message.content}")
+        
+        self.comm_manager.send(message)
+        
+        logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Request message SENT to comm_manager for peer {peer_id}")
         return True
     
     def _send_piece(self, peer_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data):
-        """Send chunk data"""
-        # 🔧 Fix: pre-serialize chunk_data and base64 encode to avoid data type changes during network transmission
+        """Send chunk data - 🚀 智能选择streaming或传统方式"""
         import pickle
-        import base64
+        
+        # 序列化chunk数据为bytes
         serialized_data = pickle.dumps(chunk_data)
-        encoded_data = base64.b64encode(serialized_data).decode('utf-8')
+        
+        # 对原始bytes计算校验和
         checksum = hashlib.sha256(serialized_data).hexdigest()
         
-        logger.debug(f"[BT-SEND] Client {self.client_id}: Serializing chunk {source_client_id}:{chunk_id}, original_type={type(chunk_data)}, serialized_size={len(serialized_data)}, encoded_size={len(encoded_data)}")
+        logger.debug(f"[BT-SEND] Client {self.client_id}: Sending chunk {source_client_id}:{chunk_id}, size={len(serialized_data)}")
         
-        # 🔴 Message contains round information
-        from federatedscope.core.message import Message
-        self.comm_manager.send(
-            Message(msg_type='piece',
-                   sender=self.client_id,
-                   receiver=[peer_id],
-                   state=round_num,
-                   content={
-                       'round_num': round_num,  # 🔴 Round chunk belongs to
-                       'source_client_id': source_client_id,
-                       'chunk_id': chunk_id,
-                       'data': encoded_data,  # 🔧 Send base64 encoded string
-                       'checksum': checksum
-                   })
-        )
+        # 🔍 DEBUG LOG: 详细的piece发送日志
+        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: SENDING chunk PIECE to peer {peer_id}")
+        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Piece details - round={round_num}, source={source_client_id}, chunk={chunk_id}, size={len(serialized_data)}")
+        
+        # 🚀 STREAMING OPTIMIZATION: 优先使用streaming通道
+        if self.use_streaming and self.streaming_manager:
+            logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Attempting STREAMING transmission to peer {peer_id}")
+            success = self.streaming_manager.send_bittorrent_message(
+                peer_id=peer_id,
+                msg_type='piece',
+                round_num=round_num,
+                source_client_id=source_client_id,
+                chunk_id=chunk_id,
+                chunk_data=serialized_data,
+                checksum=checksum,
+                importance_score=0.0  # TODO: 集成importance评分
+            )
+            
+            if success:
+                self.total_uploaded += len(serialized_data)
+                logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: STREAMING transmission SUCCESS to peer {peer_id}")
+                logger.debug(f"[BT-SEND] Client {self.client_id}: Sent chunk via streaming to peer {peer_id}")
+                return
+            else:
+                logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: STREAMING transmission FAILED, using traditional fallback")
+                logger.warning(f"[BT-SEND] Client {self.client_id}: Streaming failed, fallback to traditional")
+        else:
+            logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Using TRADITIONAL message transmission (streaming not available)")
+        
+        # 🔧 FALLBACK: 传统消息方式（兼容性）
+        from federatedscope.core.message import Message, ChunkData
+        chunk_wrapper = ChunkData(serialized_data, checksum)
+        
+        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Sending traditional piece message to peer {peer_id}")
+        
+        message = Message(msg_type='piece',
+                         sender=self.client_id,
+                         receiver=[peer_id],
+                         state=round_num,
+                         content={
+                             'round_num': round_num,
+                             'source_client_id': source_client_id,
+                             'chunk_id': chunk_id,
+                             'data': chunk_wrapper,  # 🚀 ChunkData直接传输bytes
+                             'checksum': checksum
+                         })
+        
+        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Traditional piece message details - sender={message.sender}, receiver={message.receiver}")
+        
+        self.comm_manager.send(message)
+        
+        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Traditional piece message SENT to comm_manager for peer {peer_id}")
         
         # Update upload statistics
         self.total_uploaded += len(serialized_data)
+        logger.debug(f"[BT-SEND] Client {self.client_id}: Sent chunk via traditional message to peer {peer_id}")
         
     def _has_interesting_chunks(self, peer_id: int) -> bool:
         """Check if peer has chunks I need"""
@@ -900,6 +1185,16 @@ class BitTorrentManager:
         # Set stop flag
         self.is_stopped = True
         
+        # 🚀 OPTIMIZATION 3: 优雅关闭写入线程，确保数据完整性
+        queue_size = self.chunk_write_queue.write_queue.qsize()
+        if queue_size > 0:
+            logger.info(f"[BT] Client {self.client_id}: 检测到{queue_size}个pending chunk，等待后台写入完成...")
+            # 正常情况：等待队列处理完成（最多30秒）
+            self.chunk_write_queue.stop_writer_thread(force_immediate=False, max_wait_time=30.0)
+        else:
+            # 队列为空：可以立即关闭
+            self.chunk_write_queue.stop_writer_thread(force_immediate=True)
+        
         # Clear all pending operations
         self.pending_requests.clear()
         self.retry_count.clear()
@@ -922,3 +1217,23 @@ class BitTorrentManager:
         mb_downloaded = self.total_downloaded / (1024 * 1024)
         mb_uploaded = self.total_uploaded / (1024 * 1024)
         logger.info(f"[BT] Client {self.client_id}: Final stats - Downloaded: {mb_downloaded:.2f} MB, Uploaded: {mb_uploaded:.2f} MB")
+        
+    def emergency_stop(self):
+        """🚨 紧急停止：立即关闭所有操作，用于系统异常退出"""
+        logger.warning(f"[BT] Client {self.client_id}: Emergency stop triggered!")
+        
+        self.is_stopped = True
+        
+        # 紧急关闭写入线程，可能丢失数据
+        queue_size = self.chunk_write_queue.write_queue.qsize()
+        if queue_size > 0:
+            logger.warning(f"[BT] Client {self.client_id}: 紧急关闭，{queue_size}个chunk可能丢失")
+        
+        self.chunk_write_queue.stop_writer_thread(force_immediate=True)
+        
+        # 清理所有状态
+        self.pending_requests.clear()
+        self.retry_count.clear()
+        self.peer_bitfields.clear()
+        
+        logger.warning(f"[BT] Client {self.client_id}: Emergency stop completed")

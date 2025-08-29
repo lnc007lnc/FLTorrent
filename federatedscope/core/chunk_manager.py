@@ -1435,10 +1435,15 @@ class ChunkManager:
     
     def save_remote_chunk(self, round_num, source_client_id, chunk_id, chunk_data):
         """
-        Fix: Save BitTorrent exchanged chunk to new table, avoid schema conflicts
+        🚀 OPTIMIZED: Save BitTorrent exchanged chunk to round-specific database
+        Note: chunk_data is already deserialized object, ready to store
         """
         import hashlib
-        chunk_hash = hashlib.sha256(chunk_data).hexdigest()
+        import pickle
+        
+        # Serialize for storage and hash calculation
+        serialized_data = pickle.dumps(chunk_data)
+        chunk_hash = hashlib.sha256(serialized_data).hexdigest()
         
         # 🚀 NEW: Ensure round-specific database exists
         try:
@@ -1455,14 +1460,16 @@ class ChunkManager:
                 VALUES (?, ?, ?, ?, 1)
             ''', (source_client_id, chunk_id, chunk_hash, self.client_id))
             
-            # Write to chunk_data table in round-specific database
+            # Write to chunk_data table in round-specific database  
             cursor.execute('''
                 INSERT OR REPLACE INTO chunk_data (chunk_hash, data)
                 VALUES (?, ?)
-            ''', (chunk_hash, pickle.dumps(chunk_data)))
+            ''', (chunk_hash, serialized_data))  # 🚀 Use pre-serialized data
             
             conn.commit()
             conn.close()
+            
+            logger.debug(f"[ChunkManager] Saved chunk {source_client_id}:{chunk_id} to round {round_num} database")
             
         except sqlite3.OperationalError as e:
             if "no such table" in str(e):
