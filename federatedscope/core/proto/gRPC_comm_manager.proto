@@ -1,7 +1,17 @@
 syntax = "proto3";
 
 service gRPCComServeFunc {
+    // 🚀 原有的Unary RPC (兼容性)
     rpc sendMessage (MessageRequest) returns (MessageResponse) {};
+    
+    // 🚀 新增：双向流式RPC用于chunk传输
+    rpc streamChunks (stream ChunkStreamRequest) returns (stream ChunkStreamResponse) {};
+    
+    // 🚀 新增：服务端流式RPC用于批量chunk下载
+    rpc downloadChunks (ChunkBatchRequest) returns (stream ChunkStreamResponse) {};
+    
+    // 🚀 新增：客户端流式RPC用于批量chunk上传  
+    rpc uploadChunks (stream ChunkStreamRequest) returns (ChunkBatchResponse) {};
 }
 
 message MessageRequest{
@@ -22,6 +32,7 @@ message mSingle{
         float float_value = 1;
         int32 int_value = 2;
         string str_value = 3;
+        bytes bytes_value = 4;  // 🚀 Add bytes support for chunk data
     }
 }
 
@@ -39,4 +50,63 @@ message mDict_keyIsInt{
 
 message MessageResponse{
     string msg = 1;
+}
+
+// 🚀 Streaming chunk messages for optimized BitTorrent transfer
+message ChunkStreamRequest {
+    int32 sender_id = 1;
+    int32 receiver_id = 2;  
+    int32 round_num = 3;
+    int32 source_client_id = 4;
+    int32 chunk_id = 5;
+    bytes chunk_data = 6;        // 直接bytes，无额外序列化
+    string checksum = 7;
+    int64 timestamp = 8;
+    ChunkType chunk_type = 9;    // chunk类型：REQUEST/PIECE/HAVE/CANCEL
+    float importance_score = 10; // chunk重要性评分
+}
+
+message ChunkStreamResponse {
+    int32 sender_id = 1;
+    int32 receiver_id = 2;
+    bool success = 3;
+    string error_message = 4;
+    int32 round_num = 5;
+    int32 chunk_id = 6;
+    ChunkResponseType response_type = 7; // ACK/NACK/HAVE/INTERESTED
+    bytes response_data = 8;     // 可选：响应数据
+}
+
+message ChunkBatchRequest {
+    int32 client_id = 1;
+    int32 round_num = 2;
+    repeated ChunkRequest chunk_requests = 3;
+}
+
+message ChunkRequest {
+    int32 source_client_id = 1;
+    int32 chunk_id = 2;
+    float importance_score = 3;
+}
+
+message ChunkBatchResponse {
+    int32 client_id = 1;
+    int32 successful_chunks = 2;
+    int32 failed_chunks = 3;
+    repeated string error_messages = 4;
+}
+
+enum ChunkType {
+    CHUNK_REQUEST = 0;    // 请求chunk
+    CHUNK_PIECE = 1;      // chunk数据
+    CHUNK_HAVE = 2;       // 拥有通知
+    CHUNK_CANCEL = 3;     // 取消请求
+    CHUNK_BITFIELD = 4;   // bitfield更新
+}
+
+enum ChunkResponseType {
+    CHUNK_ACK = 0;        // 确认收到
+    CHUNK_NACK = 1;       // 拒绝/错误
+    CHUNK_HAVE_RESP = 2;  // have响应
+    CHUNK_INTERESTED = 3; // 感兴趣响应
 }
