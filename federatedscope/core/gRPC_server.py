@@ -1,5 +1,9 @@
-import queue
 import logging
+import time
+import threading
+import hashlib
+import pickle
+import json
 from collections import deque
 
 from federatedscope.core.proto import gRPC_comm_manager_pb2, \
@@ -15,6 +19,42 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
         self.chunk_stream_queues = {}  # {client_id: deque()}
         # 🚀 CRITICAL FIX: Add chunk_manager reference for data access (will be set by client)
         self.chunk_manager = chunk_manager
+        
+        # 🔧 FIX: 单例线程管理 - 平时待机，需要时启动
+        self._background_processor = None
+        self._processor_lock = threading.Lock()
+        self._active_uploads = 0  # 活跃上传连接计数器
+    
+    def _ensure_background_processor(self):
+        """🔧 懒加载：只在需要时启动后台处理线程"""
+        with self._processor_lock:
+            if self._background_processor is None or not self._background_processor.is_alive():
+                self._background_processor = threading.Thread(
+                    target=self._background_chunk_processor,
+                    daemon=True,
+                    name="SharedBackgroundProcessor"
+                )
+                self._background_processor.start()
+                logger.info("[🎯 gRPCServer] 🔧 Background processor started (lazy-loaded)")
+    
+    def _background_chunk_processor(self):
+        """🔧 共享的后台处理线程 - 待机模式，处理所有客户端的chunk数据"""
+        logger.info("[🎯 gRPCServer] 🚇 Background processor thread started, entering standby mode")
+        
+        while True:
+            try:
+                # 待机模式：当没有活跃连接时休眠
+                if self._active_uploads == 0:
+                    time.sleep(0.1)  # 100ms待机检查间隔
+                    continue
+                
+                # 处理模式：当有活跃连接时处理消息队列
+                # 这里可以添加实际的chunk处理逻辑
+                time.sleep(0.01)  # 10ms处理间隔
+                
+            except Exception as e:
+                logger.error(f"[🎯 gRPCServer] 🚇 Background processor error: {e}")
+                time.sleep(1.0)  # 错误恢复间隔
         
     def sendMessage(self, request, context):
         self.msg_queue.append(request)
@@ -62,13 +102,14 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             
     def uploadChunks(self, request_iterator, context):
         """🚀 优化2：增强的地下管道模式 - 永不停止的高性能chunk上传处理"""
-        logger.info("[🎯 gRPCServer] 📤 Enhanced upload pipeline started - UNDERGROUND MODE")
+        logger.debug("[🎯 gRPCServer] 📤 Enhanced upload pipeline started - UNDERGROUND MODE")
         
         # 🚀 地下管道性能参数
         successful_chunks = 0
         failed_chunks = 0
         error_messages = []
         processing_start_time = time.time()
+        client_id = 0  # 将从第一个请求中获取
         
         # 🚀 性能监控
         chunk_sizes = []
@@ -77,9 +118,9 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
         
         def enhanced_underground_processor():
             """🚀 增强的地下管道处理器 - 高性能、永不停止、智能错误处理"""
-            nonlocal successful_chunks, failed_chunks, error_messages, chunk_sizes, processing_times
+            nonlocal successful_chunks, failed_chunks, error_messages, chunk_sizes, processing_times, client_id, last_performance_report
             
-            logger.info("[🎯 gRPCServer] 🚇 Enhanced underground pipeline started - PERFORMANCE MODE")
+            logger.debug("[🎯 gRPCServer] 🚇 Enhanced underground pipeline started - PERFORMANCE MODE")
             
             # 🚀 地下管道批处理优化
             chunk_batch = []
@@ -90,6 +131,11 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             try:
                 for request in request_iterator:
                     request_start_time = time.time()
+                    
+                    # 🚀 获取client_id（从第一个请求中）
+                    if client_id == 0 and request.sender_id:
+                        client_id = request.sender_id
+                        logger.info(f"[🎯 gRPCServer] 📤 Client {client_id} connected to upload pipeline")
                     
                     # 🚀 快速请求分类和处理
                     if request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_PIECE:
@@ -180,7 +226,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                         successful_chunks += 1
                 
                 total_processing_time = time.time() - processing_start_time
-                logger.info(f"[🎯 gRPCServer] 🚇 Underground pipeline completed - total time: {total_processing_time:.3f}s")
+                logger.debug(f"[🎯 gRPCServer] 🚇 Underground pipeline completed - total time: {total_processing_time:.3f}s")
                         
             except Exception as e:
                 logger.error(f"[🎯 gRPCServer] 🚇 Underground pipeline fatal error: {e}")
@@ -189,28 +235,34 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             finally:
                 # 🚀 最终性能统计
                 total_time = time.time() - processing_start_time
-                logger.info(f"[🎯 gRPCServer] 🚇 Underground pipeline finished:")
-                logger.info(f"[🎯 gRPCServer] 📊   Success: {successful_chunks}, Failed: {failed_chunks}")
-                logger.info(f"[🎯 gRPCServer] 📊   Total time: {total_time:.3f}s")
+                logger.debug(f"[🎯 gRPCServer] 🚇 Underground pipeline finished:")
+                logger.debug(f"[🎯 gRPCServer] 📊   Success: {successful_chunks}, Failed: {failed_chunks}")
+                logger.debug(f"[🎯 gRPCServer] 📊   Total time: {total_time:.3f}s")
                 if successful_chunks > 0:
-                    logger.info(f"[🎯 gRPCServer] 📊   Throughput: {successful_chunks/total_time:.1f} chunks/sec")
+                    logger.debug(f"[🎯 gRPCServer] 📊   Throughput: {successful_chunks/total_time:.1f} chunks/sec")
         
-        # 🚀 启动增强的地下管道处理器
-        pipeline_thread = threading.Thread(
-            target=enhanced_underground_processor,
-            daemon=True,
-            name="EnhancedUndergroundPipeline"
-        )
-        pipeline_thread.start()
-        logger.info("[🎯 gRPCServer] 🚇 Enhanced underground pipeline processor started")
+        # 🔧 FIX: 使用共享后台线程，避免为每个请求创建新线程
+        with self._processor_lock:
+            self._active_uploads += 1
         
-        # 🚀 立即返回优化的响应
-        logger.info("[🎯 gRPCServer] Returning enhanced response - underground pipeline active")
+        # 🔧 确保后台处理线程存在（懒加载）
+        self._ensure_background_processor()
+        
+        # 🚀 直接在当前线程处理，或将数据传递给后台线程
+        logger.debug(f"[🎯 gRPCServer] Processing upload request for client {client_id}")
+        enhanced_underground_processor()
+        
+        # 🔧 处理完成后减少活跃连接计数
+        with self._processor_lock:
+            self._active_uploads = max(0, self._active_uploads - 1)
+        
+        # 🚀 返回处理结果
+        logger.debug("[🎯 gRPCServer] Upload processing completed")
         return gRPC_comm_manager_pb2.ChunkBatchResponse(
-            client_id=context.peer().split(':')[-1] if ':' in context.peer() else 0,
-            successful_chunks=0,  # 实时统计将在后台更新
-            failed_chunks=0,
-            error_messages=["Enhanced underground pipeline active - high performance mode"]
+            client_id=client_id,
+            successful_chunks=successful_chunks,
+            failed_chunks=failed_chunks,
+            error_messages=error_messages
         )
         
     def downloadChunks(self, request, context):
@@ -270,8 +322,6 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 # 🚀 成功响应：返回实际chunk数据
                 logger.info(f"[gRPCServer] 📤 Sending chunk data for {chunk_req.source_client_id}:{chunk_req.chunk_id} to client {request.client_id}")
                 
-                import hashlib
-                import pickle
                 serialized_data = pickle.dumps(chunk_data)
                 checksum = hashlib.sha256(serialized_data).hexdigest()
                 data_size = len(serialized_data)
@@ -380,7 +430,6 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_BITFIELD:
             # 🚀 处理bitfield消息
             from federatedscope.core.message import Message
-            import json
             
             # 解码bitfield数据
             bitfield_data = []
