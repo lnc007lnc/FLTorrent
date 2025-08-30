@@ -100,6 +100,66 @@ class ChunkWriteQueue:
             logger.debug(f"[ChunkWriteQueue] Enqueued chunk write: {source_client_id}:{chunk_id}")
         except queue.Full:
             logger.error(f"[ChunkWriteQueue] Write queue full, dropping chunk {source_client_id}:{chunk_id}")
+    
+    def search_pending_chunk(self, round_num: int, source_client_id: int, chunk_id: int):
+        """
+        🚀 NEW: 在写入队列中搜索pending的chunk数据
+        Args:
+            round_num: 轮次号
+            source_client_id: 来源客户端ID
+            chunk_id: chunk ID
+        Returns:
+            chunk_data: 如果找到返回反序列化的chunk数据，否则返回None
+        """
+        if not self.is_running or self.write_queue.empty():
+            return None
+            
+        # 创建队列副本以安全遍历（避免并发修改）
+        import copy
+        try:
+            # 获取队列快照（线程安全）
+            queue_snapshot = []
+            temp_queue = queue.Queue()
+            
+            # 将队列中的任务转移到临时队列，同时复制到快照
+            while not self.write_queue.empty():
+                try:
+                    task = self.write_queue.get_nowait()
+                    queue_snapshot.append(copy.deepcopy(task))
+                    temp_queue.put(task)
+                except queue.Empty:
+                    break
+            
+            # 将任务放回原队列
+            while not temp_queue.empty():
+                try:
+                    task = temp_queue.get_nowait()
+                    self.write_queue.put(task)
+                except queue.Empty:
+                    break
+            
+            # 在快照中搜索匹配的chunk
+            for task in queue_snapshot:
+                if (task.get('type') == 'chunk_write' and
+                    task.get('round_num') == round_num and
+                    task.get('source_client_id') == source_client_id and
+                    task.get('chunk_id') == chunk_id):
+                    
+                    # 找到匹配的chunk，反序列化chunk_data
+                    import pickle
+                    try:
+                        chunk_data = pickle.loads(task['chunk_data'])
+                        logger.debug(f"[ChunkWriteQueue] 🎯 Found chunk in write queue: {source_client_id}:{chunk_id}")
+                        return chunk_data
+                    except Exception as e:
+                        logger.error(f"[ChunkWriteQueue] Failed to deserialize pending chunk: {e}")
+                        return None
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"[ChunkWriteQueue] Error searching pending chunk: {e}")
+            return None
             
     def _writer_loop(self):
         """Background writer thread loop - single SQLite writer with graceful shutdown"""
@@ -205,6 +265,9 @@ class BitTorrentManager:
         
         # 🚀 OPTIMIZATION 3: Initialize single writer thread for SQLite operations
         self.chunk_write_queue = ChunkWriteQueue(client_id, chunk_manager, streaming_manager)
+        
+        # 🚀 NEW: 让ChunkManager能够访问ChunkWriteQueue
+        chunk_manager.set_chunk_write_queue(self.chunk_write_queue)
         
         # BitTorrent status
         self.peer_bitfields: Dict[int, Dict] = {}  # {peer_id: bitfield}
@@ -1064,7 +1127,7 @@ class BitTorrentManager:
                 round_num=self.round_num,
                 source_client_id=source_id,
                 chunk_id=chunk_id,
-                importance_score=self._calculate_chunk_importance(source_id, chunk_id)
+                importance_score=self._get_chunk_importance_score((self.round_num, source_id, chunk_id))
             )
             
             if success:
@@ -1115,7 +1178,7 @@ class BitTorrentManager:
                 chunk_id=chunk_id,
                 chunk_data=serialized_data,
                 checksum=checksum,
-                importance_score=self._calculate_chunk_importance(source_client_id, chunk_id)
+                importance_score=self._get_chunk_importance_score((round_num, source_client_id, chunk_id))
             )
             
             streaming_time = time.time() - streaming_start
@@ -1223,11 +1286,6 @@ class BitTorrentManager:
         else:
             return streaming_success_rate > 0.8  # 高成功率时使用streaming
     
-    def _calculate_chunk_importance(self, source_client_id: int, chunk_id: int) -> float:
-        """🚀 计算chunk重要性评分"""
-        # TODO: 集成更复杂的importance评分算法
-        # 目前返回基础评分
-        return 1.0
     
     def _update_streaming_success_stats(self, peer_id: int, data_size: int, transmission_time: float):
         """🚀 更新streaming成功统计"""

@@ -46,6 +46,7 @@ class ChunkManager:
         """
         self.client_id = client_id
         self.change_callback = change_callback
+        self.chunk_write_queue = None  # 🚀 NEW: 引用到ChunkWriteQueue
         
         # Create database directory by node name: /tmp/client_X/
         client_name = f"client_{client_id}"
@@ -93,6 +94,15 @@ class ChunkManager:
         cursor.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
         
         return conn
+    
+    def set_chunk_write_queue(self, chunk_write_queue):
+        """
+        🚀 NEW: 设置ChunkWriteQueue引用，用于在数据库查询失败时检查待写队列
+        Args:
+            chunk_write_queue: ChunkWriteQueue实例
+        """
+        self.chunk_write_queue = chunk_write_queue
+        logger.debug(f"[ChunkManager] Set chunk_write_queue reference for client {self.client_id}")
     
     def _get_round_db_path(self, round_num: int) -> str:
         """Get database file path for specific round
@@ -1497,12 +1507,15 @@ class ChunkManager:
     
     def get_chunk_data(self, round_num, source_client_id, chunk_id):
         """
-        New: Get chunk data (for sending to other peers)
+        🚀 ENHANCED: Get chunk data with fallback to write queue
         """
         # 🚀 NEW: Check if round-specific database exists
         db_path = self._get_round_db_path(round_num)
         if not os.path.exists(db_path):
             logger.debug(f"No database found for round {round_num}")
+            # 🚀 NEW: 数据库不存在时，也尝试从写入队列查找
+            if self.chunk_write_queue:
+                return self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
             return None
         
         conn = self._get_optimized_connection(round_num)
@@ -1526,31 +1539,70 @@ class ChunkManager:
                 ''', (source_client_id, chunk_id, self.client_id))
             
             result = cursor.fetchone()
-            logger.debug(f"[ChunkManager] Client {self.client_id}: Query result for chunk ({round_num}, {source_client_id}, {chunk_id}): {result is not None}")
+            logger.debug(f"[ChunkManager] Client {self.client_id}: Database query result for chunk ({round_num}, {source_client_id}, {chunk_id}): {result is not None}")
+            
             if result:
                 try:
                     chunk_data = pickle.loads(result[0])
-                    logger.debug(f"[ChunkManager] Client {self.client_id}: Successfully unpickled chunk data, size: {len(result[0])} bytes")
+                    logger.debug(f"[ChunkManager] Client {self.client_id}: Successfully unpickled chunk data from database, size: {len(result[0])} bytes")
                     return chunk_data
                 except Exception as pickle_error:
                     logger.error(f"[ChunkManager] Client {self.client_id}: Failed to unpickle chunk data: {pickle_error}")
                     return None
             else:
-                logger.debug(f"[ChunkManager] Client {self.client_id}: No result found for chunk ({round_num}, {source_client_id}, {chunk_id})")
+                # 🚀 NEW: 数据库中没找到，尝试从写入队列查找
+                logger.debug(f"[ChunkManager] Client {self.client_id}: No result in database, checking write queue...")
+                if self.chunk_write_queue:
+                    pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
+                    if pending_chunk is not None:
+                        logger.debug(f"[ChunkManager] 🎯 Client {self.client_id}: Found chunk ({round_num}, {source_client_id}, {chunk_id}) in write queue!")
+                        return pending_chunk
+                    else:
+                        logger.debug(f"[ChunkManager] Client {self.client_id}: Chunk not found in write queue either")
+                
+                logger.debug(f"[ChunkManager] Client {self.client_id}: Chunk ({round_num}, {source_client_id}, {chunk_id}) not found anywhere")
                 return None
             
         except sqlite3.OperationalError as e:
-            # Database operation error, record detailed information
+            # Database operation error, try write queue as fallback
             logger.error(f"[ChunkManager] Client {self.client_id}: SQLite OperationalError in get_chunk_data: {e}")
             logger.error(f"[ChunkManager] Client {self.client_id}: Query params: round_num={round_num}, source_client_id={source_client_id}, chunk_id={chunk_id}")
+            
+            # 🚀 NEW: 数据库错误时的回退机制
+            if self.chunk_write_queue:
+                logger.debug(f"[ChunkManager] Client {self.client_id}: Trying write queue due to database error...")
+                pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
+                if pending_chunk is not None:
+                    logger.info(f"[ChunkManager] 🎯 Client {self.client_id}: Found chunk in write queue after database error!")
+                    return pending_chunk
+            
             return None
         except sqlite3.DatabaseError as e:
             # Database error
             logger.error(f"[ChunkManager] Client {self.client_id}: SQLite DatabaseError in get_chunk_data: {e}")
+            
+            # 🚀 NEW: 数据库错误时的回退机制
+            if self.chunk_write_queue:
+                pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
+                if pending_chunk is not None:
+                    logger.info(f"[ChunkManager] 🎯 Client {self.client_id}: Found chunk in write queue after database error!")
+                    return pending_chunk
+            
             return None
         except Exception as e:
             # Other exception
             logger.error(f"[ChunkManager] Client {self.client_id}: Unexpected error in get_chunk_data: {e}")
+            
+            # 🚀 NEW: 通用错误时的回退机制
+            if self.chunk_write_queue:
+                try:
+                    pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
+                    if pending_chunk is not None:
+                        logger.info(f"[ChunkManager] 🎯 Client {self.client_id}: Found chunk in write queue after unexpected error!")
+                        return pending_chunk
+                except Exception as queue_error:
+                    logger.error(f"[ChunkManager] Client {self.client_id}: Error accessing write queue: {queue_error}")
+            
             return None
         finally:
             conn.close()
