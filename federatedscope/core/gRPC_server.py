@@ -10,7 +10,7 @@ from federatedscope.core.proto import gRPC_comm_manager_pb2, \
     gRPC_comm_manager_pb2_grpc
 
 logger = logging.getLogger(__name__)
-
+logger.setLevel(logging.INFO)
 
 class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
     def __init__(self, chunk_manager=None):
@@ -63,11 +63,11 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
     def streamChunks(self, request_iterator, context):
         """🚀 双向streaming RPC for chunk control messages"""
         logger.debug("[gRPCServer] streamChunks method called")
-        logger.info(f"[🔍 gRPCServer] streamChunks called from peer: {context.peer()}")
+        logger.debug(f"[🔍 gRPCServer] streamChunks called from peer: {context.peer()}")
         
         try:
             for request in request_iterator:
-                logger.info(f"[🔍 gRPCServer] Received request: sender_id={request.sender_id}, receiver_id={request.receiver_id}, chunk_type={request.chunk_type}, from peer: {context.peer()}")
+                logger.debug(f"[🔍 gRPCServer] Received request: sender_id={request.sender_id}, receiver_id={request.receiver_id}, chunk_type={request.chunk_type}, from peer: {context.peer()}")
                 # Process control messages (HAVE, BITFIELD, REQUEST, CANCEL)
                 if request.chunk_type in [gRPC_comm_manager_pb2.ChunkType.CHUNK_HAVE,
                                          gRPC_comm_manager_pb2.ChunkType.CHUNK_BITFIELD,
@@ -79,7 +79,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                         converted_msg = self._convert_chunk_to_message(request)
                         # Only queue the message if it's meant for a specific receiver
                         self.msg_queue.append(converted_msg)
-                        logger.info(f"[🎯 gRPCServer] Routing REQUEST from {request.sender_id} to {request.receiver_id}")
+                        logger.debug(f"[🎯 gRPCServer] Routing REQUEST from {request.sender_id} to {request.receiver_id}")
                     else:
                         # Other messages (HAVE, BITFIELD, CANCEL) can be processed normally
                         self.msg_queue.append(self._convert_chunk_to_message(request))
@@ -183,7 +183,11 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                     elif request.chunk_type in [
                         gRPC_comm_manager_pb2.ChunkType.CHUNK_HAVE,
                         gRPC_comm_manager_pb2.ChunkType.CHUNK_BITFIELD,
-                        gRPC_comm_manager_pb2.ChunkType.CHUNK_CANCEL
+                        gRPC_comm_manager_pb2.ChunkType.CHUNK_CANCEL,
+                        # 🔧 添加新的BitTorrent控制消息类型
+                        gRPC_comm_manager_pb2.ChunkType.CHUNK_INTERESTED_REQ,
+                        gRPC_comm_manager_pb2.ChunkType.CHUNK_UNCHOKE_REQ,
+                        gRPC_comm_manager_pb2.ChunkType.CHUNK_CHOKE_REQ
                     ]:
                         # 🚀 控制消息快速处理通道
                         logger.debug(f"[🎯 gRPCServer] 🚇 Processing control message - type={request.chunk_type}")
@@ -208,18 +212,18 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                     
                     # 🚀 定期性能报告
                     current_time = time.time()
-                    if current_time - last_performance_report > 30.0:  # 每30秒报告
+                    if current_time - last_performance_report > 120.0:  # 每2分钟报告
                         if chunk_sizes:
                             avg_chunk_size = sum(chunk_sizes) / len(chunk_sizes)
                             avg_processing_time = sum(processing_times) / len(processing_times)
                             logger.info(f"[🎯 gRPCServer] 📊 Underground pipeline performance:")
                             logger.info(f"[🎯 gRPCServer] 📊   {successful_chunks} chunks processed, {failed_chunks} failed")
-                            logger.info(f"[🎯 gRPCServer] 📊   Avg chunk size: {avg_chunk_size:.0f}B, processing time: {avg_processing_time:.3f}s")
+                            logger.debug(f"[🎯 gRPCServer] 📊   Avg chunk size: {avg_chunk_size:.0f}B, processing time: {avg_processing_time:.3f}s")
                         last_performance_report = current_time
                 
                 # 🚀 处理剩余的批处理数据
                 if chunk_batch:
-                    logger.info(f"[🎯 gRPCServer] 🚇 Processing final batch: {len(chunk_batch)} chunks")
+                    logger.debug(f"[🎯 gRPCServer] 🚇 Processing final batch: {len(chunk_batch)} chunks")
                     for chunk_req in chunk_batch:
                         converted_msg = self._convert_chunk_to_message(chunk_req)
                         self.msg_queue.append(converted_msg)
@@ -309,8 +313,8 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 if error_message:
                     logger.warning(f"[gRPCServer] 📤 Sending NACK for chunk {chunk_req.source_client_id}:{chunk_req.chunk_id}: {error_message}")
                     yield gRPC_comm_manager_pb2.ChunkStreamResponse(
-                        sender_id=chunk_req.source_client_id,
-                        receiver_id=request.client_id,
+                        sender_id=request.client_id,
+                        receiver_id=request.sender_id,
                         success=False,
                         response_type=gRPC_comm_manager_pb2.ChunkResponseType.CHUNK_NACK,
                         round_num=request.round_num,
@@ -320,7 +324,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                     continue
                 
                 # 🚀 成功响应：返回实际chunk数据
-                logger.info(f"[gRPCServer] 📤 Sending chunk data for {chunk_req.source_client_id}:{chunk_req.chunk_id} to client {request.client_id}")
+                logger.debug(f"[gRPCServer] 📤 Sending chunk data for {chunk_req.source_client_id}:{chunk_req.chunk_id} to client {request.client_id}")
                 
                 serialized_data = pickle.dumps(chunk_data)
                 checksum = hashlib.sha256(serialized_data).hexdigest()
@@ -329,8 +333,8 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 logger.debug(f"[gRPCServer] 📤 Chunk data prepared: size={data_size}B, checksum={checksum[:8]}...")
                 
                 yield gRPC_comm_manager_pb2.ChunkStreamResponse(
-                    sender_id=chunk_req.source_client_id,
-                    receiver_id=request.client_id,
+                    sender_id=request.client_id,
+                    receiver_id=request.sender_id,
                     success=True,
                     response_type=gRPC_comm_manager_pb2.ChunkResponseType.CHUNK_ACK,
                     round_num=request.round_num,
@@ -380,13 +384,13 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 }
             )
             
-            logger.info(f"[🔧 gRPCServer] Created traditional message: type={traditional_msg.msg_type}, sender={traditional_msg.sender}")
-            logger.info(f"[🔧 gRPCServer] Message content keys: {list(traditional_msg.content.keys())}")
+            logger.debug(f"[🔧 gRPCServer] Created traditional message: type={traditional_msg.msg_type}, sender={traditional_msg.sender}")
+            logger.debug(f"[🔧 gRPCServer] Message content keys: {list(traditional_msg.content.keys())}")
             
             # 将Message对象转换为protobuf格式
             message_request = traditional_msg.transform(to_list=True)
             
-            logger.info(f"[🔧 gRPCServer] Successfully converted CHUNK_PIECE to MessageRequest")
+            logger.debug(f"[🔧 gRPCServer] Successfully converted CHUNK_PIECE to MessageRequest")
             return message_request
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_REQUEST:
@@ -424,7 +428,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 }
             )
             
-            logger.info(f"[🔧 gRPCServer] Converting CHUNK_HAVE to traditional message format")
+            logger.debug(f"[🔧 gRPCServer] Converting CHUNK_HAVE to traditional message format")
             return traditional_msg.transform(to_list=True)
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_BITFIELD:
@@ -450,7 +454,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 }
             )
             
-            logger.info(f"[🔧 gRPCServer] Converting CHUNK_BITFIELD to traditional message format, chunks: {len(bitfield_data)}")
+            logger.debug(f"[🔧 gRPCServer] Converting CHUNK_BITFIELD to traditional message format, chunks: {len(bitfield_data)}")
             return traditional_msg.transform(to_list=True)
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_CANCEL:
@@ -469,7 +473,61 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 }
             )
             
-            logger.info(f"[🔧 gRPCServer] Converting CHUNK_CANCEL to traditional message format")
+            logger.debug(f"[🔧 gRPCServer] Converting CHUNK_CANCEL to traditional message format")
+            return traditional_msg.transform(to_list=True)
+            
+        elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_INTERESTED_REQ:
+            # 🔧 处理interested消息
+            from federatedscope.core.message import Message
+            
+            traditional_msg = Message(
+                msg_type='interested',
+                sender=chunk_request.sender_id,
+                receiver=[chunk_request.receiver_id],
+                state=chunk_request.round_num,
+                content={
+                    'round_num': chunk_request.round_num,
+                    'peer_id': chunk_request.sender_id
+                }
+            )
+            
+            logger.debug(f"[🔧 gRPCServer] Converting CHUNK_INTERESTED_REQ to traditional message format")
+            return traditional_msg.transform(to_list=True)
+            
+        elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_UNCHOKE_REQ:
+            # 🔧 处理unchoke消息
+            from federatedscope.core.message import Message
+            
+            traditional_msg = Message(
+                msg_type='unchoke',
+                sender=chunk_request.sender_id,
+                receiver=[chunk_request.receiver_id],
+                state=chunk_request.round_num,
+                content={
+                    'round_num': chunk_request.round_num,
+                    'peer_id': chunk_request.sender_id
+                }
+            )
+            
+            logger.debug(f"[🔧 gRPCServer] Converting CHUNK_UNCHOKE_REQ to traditional message format")
+            return traditional_msg.transform(to_list=True)
+            
+        elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_CHOKE_REQ:
+            # 🔧 处理choke消息
+            from federatedscope.core.message import Message
+            
+            traditional_msg = Message(
+                msg_type='choke',
+                sender=chunk_request.sender_id,
+                receiver=[chunk_request.receiver_id],
+                state=chunk_request.round_num,
+                content={
+                    'round_num': chunk_request.round_num,
+                    'peer_id': chunk_request.sender_id
+                }
+            )
+            
+            logger.debug(f"[🔧 gRPCServer] Converting CHUNK_CHOKE_REQ to traditional message format")
             return traditional_msg.transform(to_list=True)
             
         else:

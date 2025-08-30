@@ -103,11 +103,15 @@ enum ChunkType {
     CHUNK_HAVE = 2;       // 拥有通知
     CHUNK_CANCEL = 3;     // 取消请求
     CHUNK_BITFIELD = 4;   // bitfield更新
+    // 🔧 新增：BitTorrent协议控制消息类型
+    CHUNK_INTERESTED_REQ = 5; // 表示对peer感兴趣
+    CHUNK_UNCHOKE_REQ = 6;    // 允许下载
+    CHUNK_CHOKE_REQ = 7;      // 禁止下载
 }
 
 enum ChunkResponseType {
     CHUNK_ACK = 0;        // 确认收到
     CHUNK_NACK = 1;       // 拒绝/错误
     CHUNK_HAVE_RESP = 2;  // have响应
-    CHUNK_INTERESTED = 3; // 感兴趣响应
+    CHUNK_INTERESTED_RESP = 3; // 感兴趣响应
 }

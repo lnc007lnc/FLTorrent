@@ -13,17 +13,19 @@ from typing import Dict, Set, List, Tuple, Optional, Any
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
-
+logger.setLevel(logging.INFO)
 
 class ChunkWriteQueue:
     """🚀 OPTIMIZATION 3: Single writer thread for SQLite operations with queue-based architecture"""
     
-    def __init__(self, client_id: int, chunk_manager):
+    def __init__(self, client_id: int, chunk_manager, streaming_manager=None):
         self.client_id = client_id
         self.chunk_manager = chunk_manager
+        self.streaming_manager = streaming_manager  # 🔧 添加streaming manager引用
         self.write_queue = queue.Queue()
         self.writer_thread = None
         self.is_running = False
+        
         
     def start_writer_thread(self):
         """Start the single writer thread"""
@@ -37,7 +39,7 @@ class ChunkWriteQueue:
             name=f"ChunkWriter-{self.client_id}"
         )
         self.writer_thread.start()
-        logger.info(f"[ChunkWriteQueue] Started single writer thread for client {self.client_id}")
+        logger.debug(f"[ChunkWriteQueue] Started single writer thread for client {self.client_id}")
         
     def stop_writer_thread(self, force_immediate=False, max_wait_time=30.0):
         """
@@ -51,7 +53,7 @@ class ChunkWriteQueue:
             
         queue_size = self.write_queue.qsize()
         if queue_size > 0 and not force_immediate:
-            logger.info(f"[ChunkWriteQueue] 优雅关闭：等待{queue_size}个chunk完成写入...")
+            logger.debug(f"[ChunkWriteQueue] 优雅关闭：等待{queue_size}个chunk完成写入...")
         
         self.is_running = False
         
@@ -66,15 +68,15 @@ class ChunkWriteQueue:
             self.write_queue.put(None)  # 发送关闭信号
             
             if self.writer_thread and self.writer_thread.is_alive():
-                logger.info(f"[ChunkWriteQueue] 等待后台写入完成（最多{max_wait_time}秒）...")
+                logger.debug(f"[ChunkWriteQueue] 等待后台写入完成（最多{max_wait_time}秒）...")
                 self.writer_thread.join(timeout=max_wait_time)
                 
                 if self.writer_thread.is_alive():
                     logger.error(f"[ChunkWriteQueue] 写入线程未在{max_wait_time}秒内完成，强制结束")
                 else:
-                    logger.info(f"[ChunkWriteQueue] 后台写入线程优雅关闭完成")
+                    logger.debug(f"[ChunkWriteQueue] 后台写入线程优雅关闭完成")
             
-        logger.info(f"[ChunkWriteQueue] 写入线程已停止 for client {self.client_id}")
+        logger.debug(f"[ChunkWriteQueue] 写入线程已停止 for client {self.client_id}")
         
     def enqueue_chunk_write(self, round_num: int, source_client_id: int, chunk_id: int, 
                           chunk_data: bytes, checksum: str, timestamp: float):
@@ -121,7 +123,7 @@ class ChunkWriteQueue:
                     success = self._process_chunk_write(task)
                     if success:
                         processed_count += 1
-                        if processed_count % 10 == 0:  # 每处理10个chunk记录一次进度
+                        if processed_count % 50 == 0:  # 每处理50个chunk记录一次进度
                             logger.debug(f"[ChunkWriteQueue] 已处理{processed_count}个chunk，剩余队列: {self.write_queue.qsize()}")
                     
                 self.write_queue.task_done()
@@ -136,7 +138,7 @@ class ChunkWriteQueue:
                 self.write_queue.task_done()  # 标记任务完成避免死锁
                 time.sleep(0.1)  # Brief pause on error
                 
-        logger.info(f"[ChunkWriteQueue] Writer thread优雅退出，共处理{processed_count}个chunk for client {self.client_id}")
+        logger.debug(f"[ChunkWriteQueue] Writer thread优雅退出，共处理{processed_count}个chunk for client {self.client_id}")
         
     def _process_chunk_write(self, task: Dict):
         """Process chunk write task with heavy validation in background"""
@@ -165,6 +167,15 @@ class ChunkWriteQueue:
             # Write to database (single writer, no contention)
             self.chunk_manager.save_remote_chunk(round_num, source_client_id, chunk_id, deserialized_data)
             
+            # 🔧 CRITICAL FIX: 在chunk真正保存成功后，通知streaming manager更新状态
+            if self.streaming_manager and hasattr(self.streaming_manager, 'channels'):
+                chunk_key = (round_num, source_client_id, chunk_id)
+                # 通知所有streaming channels该chunk已完成
+                for channel in self.streaming_manager.channels.values():
+                    if hasattr(channel, 'mark_chunk_completed'):
+                        channel.mark_chunk_completed(round_num, source_client_id, chunk_id)
+                logger.debug(f"[ChunkWriteQueue] 🔧 Notified streaming channels that chunk {source_client_id}:{chunk_id} is completed")
+            
             logger.debug(f"[ChunkWriteQueue] Background write completed for chunk {source_client_id}:{chunk_id}")
             return True
             
@@ -188,12 +199,12 @@ class BitTorrentManager:
         self.streaming_manager = streaming_manager
         self.use_streaming = streaming_manager is not None
         if self.use_streaming:
-            logger.info(f"[BT] Client {client_id}: BitTorrent will use gRPC streaming channels")
+            logger.debug(f"[BT] Client {client_id}: BitTorrent will use gRPC streaming channels")
         else:
-            logger.info(f"[BT] Client {client_id}: BitTorrent will use traditional message passing")
+            logger.debug(f"[BT] Client {client_id}: BitTorrent will use traditional message passing")
         
         # 🚀 OPTIMIZATION 3: Initialize single writer thread for SQLite operations
-        self.chunk_write_queue = ChunkWriteQueue(client_id, chunk_manager)
+        self.chunk_write_queue = ChunkWriteQueue(client_id, chunk_manager, streaming_manager)
         
         # BitTorrent status
         self.peer_bitfields: Dict[int, Dict] = {}  # {peer_id: bitfield}
@@ -225,6 +236,10 @@ class BitTorrentManager:
         self.max_retries = 3  # Maximum retry count
         self.retry_count: Dict[Tuple, int] = {}  # {(source_id, chunk_id): count}
         
+        # 🚀 OPTIMIZATION: Cache importance scores to avoid repeated database queries
+        self._importance_cache: Dict[int, Dict[int, float]] = {}  # {round_num: {chunk_id: importance_score}}
+        self._cache_initialized: Set[int] = set()  # Track which rounds have been cached
+        
         # 🆕 Dual pool request management system - solves priority inversion and duplicate selection issues
         # Use configuration values if available, otherwise fall back to defaults
         if cfg and hasattr(cfg, 'bittorrent'):
@@ -253,20 +268,20 @@ class BitTorrentManager:
         # 🔧 CRITICAL FIX: Exchange state management
         self.is_stopped = False  # Stop flag for exchange termination
         
-        logger.info(f"[BT] BitTorrentManager initialized for client {client_id}, round {round_num}")
-        logger.info(f"[BT] Client {client_id}: Concurrent settings - Active requests: {self.MAX_ACTIVE_REQUESTS}, Pending queue: {self.MAX_PENDING_QUEUE}, Upload slots: {self.MAX_UPLOAD_SLOTS}")
+        logger.debug(f"[BT] BitTorrentManager initialized for client {client_id}, round {round_num}")
+        logger.debug(f"[BT] Client {client_id}: Concurrent settings - Active requests: {self.MAX_ACTIVE_REQUESTS}, Pending queue: {self.MAX_PENDING_QUEUE}, Upload slots: {self.MAX_UPLOAD_SLOTS}")
         
     def start_exchange(self):
         """Start BitTorrent chunk exchange process (no Tracker needed)"""
         logger.info(f"[BT] Client {self.client_id}: Starting BitTorrent exchange")
-        logger.info(f"[BT] Client {self.client_id}: Neighbors: {self.neighbors}")
+        logger.debug(f"[BT] Client {self.client_id}: Neighbors: {self.neighbors}")
         
         # 🚀 OPTIMIZATION 3: Start single writer thread
         self.chunk_write_queue.start_writer_thread()
         
         # 1. Send bitfield directly to all topology neighbors
         for neighbor_id in self.neighbors:
-            logger.info(f"[BT] Client {self.client_id}: Sending bitfield to neighbor {neighbor_id}")
+            logger.debug(f"[BT] Client {self.client_id}: Sending bitfield to neighbor {neighbor_id}")
             self._send_bitfield(neighbor_id)
         
         # 2. Start periodic unchoke algorithm (every 10 seconds)
@@ -326,7 +341,7 @@ class BitTorrentManager:
             logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has interesting chunks, sending interested")
             self._send_interested(sender_id)
         else:
-            logger.info(f"[BT] Client {self.client_id}: Peer {sender_id} has no interesting chunks")
+            logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has no interesting chunks")
             
     def handle_interested(self, sender_id: int):
         """Handle interested messages"""
@@ -338,24 +353,24 @@ class BitTorrentManager:
     def handle_request(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int):
         """Handle chunk requests"""
         # 🔍 DEBUG LOG: 详细的请求处理日志
-        logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: HANDLE_REQUEST called from peer {sender_id}")
-        logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: Request details - round={round_num}, source={source_client_id}, chunk={chunk_id}")
+        logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: HANDLE_REQUEST called from peer {sender_id}")
+        logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: Request details - round={round_num}, source={source_client_id}, chunk={chunk_id}")
         
         # 🔧 CRITICAL FIX: Check if exchange is stopped
         if self.is_stopped:
-            logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: IGNORING request - exchange STOPPED")
+            logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: IGNORING request - exchange STOPPED")
             logger.debug(f"[BT] Client {self.client_id}: Ignoring request from peer {sender_id} - exchange stopped")
             return
         logger.debug(f"[BT-HANDLE] Client {self.client_id}: Handling request from {sender_id} for chunk {source_client_id}:{chunk_id}")
         
         # 🔴 Verify round matching
         if round_num != self.round_num:
-            logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: ROUND MISMATCH - Request round {round_num} vs BitTorrent round {self.round_num}")
+            logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: ROUND MISMATCH - Request round {round_num} vs BitTorrent round {self.round_num}")
             logger.warning(f"[BT-HANDLE] Client {self.client_id}: Round mismatch - Request round {round_num} vs BitTorrent round {self.round_num}")
             logger.warning(f"[BT-HANDLE] Client {self.client_id}: Skipping request due to round mismatch")
             return
             
-        logger.info(f"⚡ [BT-HANDLE] Client {self.client_id}: Round check PASSED - processing request")
+        logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: Round check PASSED - processing request")
             
         if sender_id not in self.choked_peers:
             logger.debug(f"[BT-HANDLE] Client {self.client_id}: Peer {sender_id} is not choked, processing request")
@@ -374,73 +389,85 @@ class BitTorrentManager:
                 self._send_piece(sender_id, round_num, source_client_id, chunk_id, chunk_data)
                 logger.debug(f"[BT-HANDLE] Client {self.client_id}: Successfully sent chunk {source_client_id}:{chunk_id} to peer {sender_id}")
             else:
-                logger.warning(f"[BT-HANDLE] Client {self.client_id}: Chunk {source_client_id}:{chunk_id} not found in database (round={round_num})")
+                logger.warning(f"[BT-HANDLE] Client {self.client_id}: Chunk {source_client_id}:{chunk_id} not found in database (round={round_num} Requested by {sender_id})")
                 logger.warning(f"[BT-HANDLE] Client {self.client_id}: Database query returned: {chunk_data}")
         else:
-            logger.info(f"[BT-HANDLE] Client {self.client_id}: Peer {sender_id} is choked, ignoring request")
+            logger.debug(f"[BT-HANDLE] Client {self.client_id}: Peer {sender_id} is choked, ignoring request")
             
     def handle_piece(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data, checksum: str):
         """
-        🚀 OPTIMIZATION 2: 轻量级chunk接收回调
-        处理ChunkData对象，只做快速验证+入队，重工作移到后台线程
+        🔧 优化：轻量级chunk接收回调 - 避免重复统计和处理
         """
         # 🔧 CRITICAL FIX: Check if exchange is stopped
         if self.is_stopped:
             logger.debug(f"[BT] Client {self.client_id}: Ignoring piece from peer {sender_id} - exchange stopped")
             return
         
-        logger.debug(f"[BT-PIECE] Client {self.client_id}: 轻量级回调处理 chunk {source_client_id}:{chunk_id} from {sender_id}")
+        logger.debug(f"[BT-PIECE] Client {self.client_id}: Processing chunk {source_client_id}:{chunk_id} from peer {sender_id}")
         
         # 🔴 Verify if rounds match (quick check)
         if round_num != self.round_num:
             logger.warning(f"[BT-PIECE] Client {self.client_id}: Round mismatch - Piece round {round_num} vs BitTorrent round {self.round_num}")
             return False
         
+        # 🔧 防重复处理检查
+        chunk_key = (round_num, source_client_id, chunk_id)
+        if not hasattr(self, 'processed_pieces'):
+            self.processed_pieces = set()
+        
+        if chunk_key in self.processed_pieces:
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: 🚫 Duplicate piece blocked for chunk {source_client_id}:{chunk_id}")
+            return True  # 已处理过，直接返回成功
+        
         # 🚀 处理ChunkData对象，提取原始bytes
         from federatedscope.core.message import ChunkData
         if isinstance(chunk_data, ChunkData):
             raw_bytes = chunk_data.raw_bytes
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: 收到ChunkData，原始bytes大小: {len(raw_bytes)}")
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: ChunkData received, size: {len(raw_bytes)}B")
         elif isinstance(chunk_data, bytes):
             raw_bytes = chunk_data
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: 收到直接bytes: {len(raw_bytes)}")
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: Raw bytes received: {len(raw_bytes)}B")
         else:
-            logger.error(f"[BT-PIECE] Client {self.client_id}: 期望ChunkData或bytes，收到 {type(chunk_data)}")
+            logger.error(f"[BT-PIECE] Client {self.client_id}: Unexpected data type: {type(chunk_data)}")
             return False
             
-        # 快速大小合理性检查（指纹检查）
+        # 快速大小合理性检查
         if len(raw_bytes) == 0 or len(raw_bytes) > 50 * 1024 * 1024:  # 0字节或>50MB可疑
-            logger.error(f"[BT-PIECE] Client {self.client_id}: 可疑chunk大小: {len(raw_bytes)} bytes")
+            logger.error(f"[BT-PIECE] Client {self.client_id}: Suspicious chunk size: {len(raw_bytes)} bytes")
             return False
         
-        # 🚀 OPTIMIZATION 2: 入队后台处理，不阻塞
+        # 🔧 标记为已处理，防止重复
+        self.processed_pieces.add(chunk_key)
+        
+        # 🚀 后台队列处理，只统计一次
         self.chunk_write_queue.enqueue_chunk_write(
             round_num=round_num,
             source_client_id=source_client_id,
             chunk_id=chunk_id,
-            chunk_data=raw_bytes,  # 原始bytes
+            chunk_data=raw_bytes,
             checksum=checksum,
             timestamp=time.time()
         )
         
-        # 🚀 Immediately clear pending requests (optimistic, background will handle validation)
-        chunk_key = (round_num, source_client_id, chunk_id)
+        # 🚀 清理pending请求状态
         if chunk_key in self.pending_requests:
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: Clearing pending request for chunk {chunk_key}")
             del self.pending_requests[chunk_key]
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: Active pool: {len(self.pending_requests)}/{self.MAX_ACTIVE_REQUESTS}, Queue: {len(self.pending_queue)}/{self.MAX_PENDING_QUEUE}")
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: Cleared pending request for chunk {chunk_key}")
+        
+        # 🔧 统一的下载统计 (只在成功处理时统计一次)
+        self.total_downloaded += len(raw_bytes)
+        logger.debug(f"[BT-PIECE] Client {self.client_id}: ✅ Processed unique chunk {source_client_id}:{chunk_id} ({len(raw_bytes)}B)")
             
-            # 🆕 Dual pool system: transfer requests from queue pool to active pool
-            self._transfer_from_queue_to_active()
+        # 🆕 Dual pool system: transfer requests from queue pool to active pool
+        self._transfer_from_queue_to_active()
         
         # 🚀 Send have message immediately (optimistic broadcast)
         logger.debug(f"[BT-PIECE] Client {self.client_id}: Broadcasting have message for chunk {source_client_id}:{chunk_id}")
         self._broadcast_have(round_num, source_client_id, chunk_id)
         
-        # Update download statistics (lightweight)
+        # Update download statistics (lightweight) - 注意：不在这里重复统计total_downloaded
         self._update_download_rate(sender_id, len(chunk_data))
         self.last_activity[sender_id] = time.time()
-        self.total_downloaded += len(chunk_data)
         
         logger.debug(f"[BT] Client {self.client_id}: Queued chunk {source_client_id}:{chunk_id} from peer {sender_id} for background processing")
         return True
@@ -512,11 +539,11 @@ class BitTorrentManager:
         
         if not chunk_availability:
             if not hasattr(self, '_logged_no_chunks'):
-                logger.info(f"[BT] Client {self.client_id}: No chunks available from peers. Peer count: {len(self.peer_bitfields)}")
+                logger.debug(f"[BT] Client {self.client_id}: No chunks available from peers. Peer count: {len(self.peer_bitfields)}")
                 # 🔧 FIX: Use thread-safe copy for logging iteration
                 peer_bitfields_copy = dict(self.peer_bitfields)
                 for peer_id, bitfield in peer_bitfields_copy.items():
-                    logger.info(f"[BT] Client {self.client_id}: Peer {peer_id} bitfield size: {len(bitfield)}")
+                    logger.debug(f"[BT] Client {self.client_id}: Peer {peer_id} bitfield size: {len(bitfield)}")
                 self._logged_no_chunks = True
         elif not needed_chunks:
             total_available = len(chunk_availability)
@@ -525,7 +552,7 @@ class BitTorrentManager:
             logger.debug(f"[BT] Client {self.client_id}: No needed chunks - Total: {total_available}, Already have: {have_count}, Pending: {pending_count}")
             
             if not hasattr(self, '_logged_all_chunks'):
-                logger.info(f"[BT] Client {self.client_id}: All chunks handled - My chunks: {len(my_bitfield)}, Pending requests: {len(self.pending_requests)}")
+                logger.debug(f"[BT] Client {self.client_id}: All chunks handled - My chunks: {len(my_bitfield)}, Pending requests: {len(self.pending_requests)}")
                 self._logged_all_chunks = True
         
         if needed_chunks:
@@ -557,19 +584,23 @@ class BitTorrentManager:
             # 4. Select by rarity among chunks with similar importance
             if len(similar_importance_chunks) == 1:
                 selected = similar_importance_chunks[0]
-                logger.info(f"[BT] Client {self.client_id}: Selected chunk {selected['chunk_key']} by importance priority (importance: {selected['importance']:.4f}, rarity: {selected['availability']})")
+                logger.debug(f"[BT] Client {self.client_id}: Selected chunk {selected['chunk_key']} by importance priority (importance: {selected['importance']:.4f}, rarity: {selected['availability']})")
                 return selected['chunk_key']
             else:
                 # Sort by rarity (fewer peers owning = more rare)
                 similar_importance_chunks.sort(key=lambda x: (x['availability'], random.random()))
                 selected = similar_importance_chunks[0]
-                logger.info(f"[BT] Client {self.client_id}: Selected chunk {selected['chunk_key']} by rarity among high-importance chunks (importance: {selected['importance']:.4f}, rarity: {selected['availability']})")
+                logger.debug(f"[BT] Client {self.client_id}: Selected chunk {selected['chunk_key']} by rarity among high-importance chunks (importance: {selected['importance']:.4f}, rarity: {selected['availability']})")
                 return selected['chunk_key']
         
         return None
     
     def _transfer_from_queue_to_active(self):
-        """Transfer requests from pending queue to active pool"""
+        """🔧 智能双池系统：自动补充队列并转移到活跃池"""
+        # 🆕 监控队列长度，自动补充
+        if len(self.pending_queue) == 0:
+            self._fill_pending_queue()
+        
         while (len(self.pending_requests) < self.MAX_ACTIVE_REQUESTS and 
                len(self.pending_queue) > 0):
             
@@ -612,7 +643,7 @@ class BitTorrentManager:
         chunk_availability = {}
         # 🔧 FIX: Create thread-safe copy to avoid "dictionary changed size during iteration"
         peer_bitfields_copy = dict(self.peer_bitfields)  # Shallow copy for thread safety
-        for peer_id, bitfield in peer_bitfields_copy.items():
+        for bitfield in peer_bitfields_copy.values():
             # 🔧 FIX: Also make bitfield copy in case it's modified during iteration
             bitfield_copy = dict(bitfield) if isinstance(bitfield, dict) else bitfield
             for chunk_key, has_chunk in bitfield_copy.items():
@@ -642,7 +673,7 @@ class BitTorrentManager:
             for i, chunk in enumerate(needed_chunks[:self.MAX_PENDING_QUEUE]):
                 self.pending_queue.append(chunk['chunk_key'])
             
-            logger.info(f"[BT-POOL] Client {self.client_id}: Filled pending queue with {len(self.pending_queue)} chunks (from {len(needed_chunks)} candidates)")
+            logger.debug(f"[BT-POOL] Client {self.client_id}: Filled pending queue with {len(self.pending_queue)} chunks (from {len(needed_chunks)} candidates)")
             
             # Output details of first few high importance chunks
             for i, chunk in enumerate(needed_chunks[:3]):
@@ -650,23 +681,48 @@ class BitTorrentManager:
         else:
             logger.debug(f"[BT-POOL] Client {self.client_id}: No chunks available to fill queue")
     
+    def _get_cached_importance_scores(self, round_num: int) -> Dict[int, float]:
+        """Get cached importance scores for own chunks in the given round"""
+        if round_num not in self._cache_initialized:
+            # Initialize cache for this round
+            chunk_importance_scores = self.chunk_manager.get_chunk_importance_scores(round_num)
+            self._importance_cache[round_num] = {
+                chunk_id: chunk_data.get('importance_score', 0.0)
+                for chunk_id, chunk_data in chunk_importance_scores.items()
+            }
+            self._cache_initialized.add(round_num)
+            logger.debug(f"[BT] Client {self.client_id}: Cached importance scores for {len(chunk_importance_scores)} chunks in round {round_num}")
+        
+        return self._importance_cache.get(round_num, {})
+    
+    def clear_importance_cache(self, keep_rounds: Optional[Set[int]] = None):
+        """Clear importance cache, optionally keeping specified rounds"""
+        if keep_rounds is None:
+            keep_rounds = {self.round_num}  # Keep current round by default
+        
+        rounds_to_remove = set(self._importance_cache.keys()) - keep_rounds
+        for round_num in rounds_to_remove:
+            if round_num in self._importance_cache:
+                del self._importance_cache[round_num]
+            self._cache_initialized.discard(round_num)
+        
+        if rounds_to_remove:
+            logger.debug(f"[BT] Client {self.client_id}: Cleared importance cache for rounds {rounds_to_remove}")
+    
     def _get_chunk_importance_score(self, chunk_key: Tuple[int, int, int]) -> float:
-        """Get chunk importance score"""
+        """Get chunk importance score with caching optimization"""
         round_num, source_client_id, chunk_id = chunk_key
         
-        # 🆕 Get from all known importance scores
-        # 1. First check if it's own chunk
+        # 🚀 OPTIMIZATION: Use cached importance scores for own chunks
         if source_client_id == self.client_id:
-            chunk_importance_scores = self.chunk_manager.get_chunk_importance_scores(round_num)
-            if chunk_id in chunk_importance_scores:
-                chunk_data = chunk_importance_scores[chunk_id]
-                return chunk_data.get('importance_score', 0.0)
+            cached_scores = self._get_cached_importance_scores(round_num)
+            return cached_scores.get(chunk_id, 0.0)
         
-        # 2. Get importance score from peer's bitfield
+        # 2. Get importance score from peer's bitfield (for other clients' chunks)
         if hasattr(self, 'peer_importance_scores'):
             # 🔧 FIX: Create thread-safe copy to avoid "dictionary changed size during iteration"
             peer_importance_scores_copy = dict(self.peer_importance_scores)
-            for peer_id, peer_scores in peer_importance_scores_copy.items():
+            for peer_scores in peer_importance_scores_copy.values():
                 if chunk_key in peer_scores:
                     return peer_scores[chunk_key]
         
@@ -729,7 +785,7 @@ class BitTorrentManager:
             self._send_unchoke(self.optimistic_unchoke_peer)
             self.unchoked_peers.add(self.optimistic_unchoke_peer)
             self.ever_unchoked.add(self.optimistic_unchoke_peer)
-            logger.info(f"[BT] Optimistic unchoke for peer {self.optimistic_unchoke_peer}")
+            logger.debug(f"[BT] Optimistic unchoke for peer {self.optimistic_unchoke_peer}")
             
     def _is_central_node(self) -> bool:
         """🐛 Bug fix 27: determine if node is center of star topology"""
@@ -766,15 +822,15 @@ class BitTorrentManager:
         
         # 🔧 Fix: convert bitfield to serializable format
         my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
-        logger.info(f"[BT] Client {self.client_id}: My bitfield for round {self.round_num}: {len(my_bitfield)} chunks")
+        logger.debug(f"[BT] Client {self.client_id}: My bitfield for round {self.round_num}: {len(my_bitfield)} chunks")
         
-        # 🆕 Get chunk importance scores for current round
-        chunk_importance_scores = self.chunk_manager.get_chunk_importance_scores(self.round_num)
-        logger.debug(f"[BT] Client {self.client_id}: Got {len(chunk_importance_scores)} importance scores for round {self.round_num}")
+        # 🚀 OPTIMIZATION: Get cached importance scores for current round
+        cached_importance_scores = self._get_cached_importance_scores(self.round_num)
+        logger.debug(f"[BT] Client {self.client_id}: Using cached importance scores for {len(cached_importance_scores)} chunks in round {self.round_num}")
         
         # 🔧 Debug: detailed output of chunks I own
         if my_bitfield:
-            logger.info(f"[BT] Client {self.client_id}: My chunks for round {self.round_num}:")
+            logger.debug(f"[BT] Client {self.client_id}: My chunks for round {self.round_num}:")
             for chunk_key, has_chunk in my_bitfield.items():
                 if has_chunk:
                     round_num, source_id, chunk_id = chunk_key
@@ -787,13 +843,12 @@ class BitTorrentManager:
         bitfield_list = []
         for (round_num, source_id, chunk_id), has_chunk in my_bitfield.items():
             if has_chunk:
-                # 🆕 Get chunk importance scores
+                # 🚀 OPTIMIZATION: Use cached importance scores
                 importance_score = 0.0
-                if source_id == self.client_id and chunk_id in chunk_importance_scores:
-                    # Own chunk, use locally saved importance score
-                    chunk_data = chunk_importance_scores[chunk_id]
-                    importance_score = chunk_data.get('importance_score', 0.0)
-                    logger.debug(f"[BT] Client {self.client_id}: Using local importance {importance_score:.4f} for own chunk {chunk_id}")
+                if source_id == self.client_id:
+                    # Own chunk, use cached importance score
+                    importance_score = cached_importance_scores.get(chunk_id, 0.0)
+                    logger.debug(f"[BT] Client {self.client_id}: Using cached importance {importance_score:.4f} for own chunk {chunk_id}")
                 
                 bitfield_list.append({
                     'round': round_num,
@@ -802,11 +857,11 @@ class BitTorrentManager:
                     'importance_score': importance_score  # 🆕 Add importance score
                 })
         
-        logger.info(f"[BT] Client {self.client_id}: Sending {len(bitfield_list)} chunks in bitfield to peer {peer_id}")
+        logger.debug(f"[BT] Client {self.client_id}: Sending {len(bitfield_list)} chunks in bitfield to peer {peer_id}")
         
         # 🚀 STREAMING OPTIMIZATION: 优先使用streaming通道发送bitfield
         if self.use_streaming and self.streaming_manager:
-            logger.info(f"[BT] Client {self.client_id}: Attempting STREAMING bitfield transmission to peer {peer_id}")
+            logger.debug(f"[BT] Client {self.client_id}: Attempting STREAMING bitfield transmission to peer {peer_id}")
             success = self.streaming_manager.send_bittorrent_message(
                 peer_id=peer_id,
                 msg_type='bitfield',
@@ -815,13 +870,13 @@ class BitTorrentManager:
             )
             
             if success:
-                logger.info(f"[BT] Client {self.client_id}: STREAMING bitfield transmission SUCCESS to peer {peer_id}")
+                logger.debug(f"[BT] Client {self.client_id}: STREAMING bitfield transmission SUCCESS to peer {peer_id}")
                 return
             else:
-                logger.info(f"[BT] Client {self.client_id}: STREAMING bitfield transmission FAILED, using traditional fallback")
+                logger.debug(f"[BT] Client {self.client_id}: STREAMING bitfield transmission FAILED, using traditional fallback")
         
         # 传统方式发送bitfield（流通道失败时的回退）
-        logger.info(f"[BT] Client {self.client_id}: Using TRADITIONAL bitfield transmission to peer {peer_id}")
+        logger.debug(f"[BT] Client {self.client_id}: Using TRADITIONAL bitfield transmission to peer {peer_id}")
         self.comm_manager.send(
             Message(msg_type='bitfield',
                    sender=self.client_id,
@@ -846,7 +901,7 @@ class BitTorrentManager:
             )
             
             if success:
-                logger.info(f"[BT] Client {self.client_id}: STREAMING INTERESTED message SUCCESS to peer {peer_id}")
+                logger.debug(f"[BT] Client {self.client_id}: STREAMING INTERESTED message SUCCESS to peer {peer_id}")
             else:
                 logger.error(f"[BT] Client {self.client_id}: STREAMING INTERESTED message FAILED to peer {peer_id}")
         else:
@@ -863,7 +918,7 @@ class BitTorrentManager:
             )
             
             if success:
-                logger.info(f"[BT] Client {self.client_id}: STREAMING UNCHOKE message SUCCESS to peer {peer_id}")
+                logger.debug(f"[BT] Client {self.client_id}: STREAMING UNCHOKE message SUCCESS to peer {peer_id}")
             else:
                 logger.error(f"[BT] Client {self.client_id}: STREAMING UNCHOKE message FAILED to peer {peer_id}")
         else:
@@ -880,9 +935,9 @@ class BitTorrentManager:
             )
             
             if success:
-                logger.info(f"[BT] Client {self.client_id}: STREAMING CHOKE message SUCCESS to peer {peer_id}")
+                logger.debug(f"[BT] Client {self.client_id}: STREAMING CHOKE message SUCCESS to peer {peer_id}")
             else:
-                logger.error(f"[BT] Client {self.client_id}: STREAMING CHOKE message FAILED to peer {peer_id}")
+                logger.debug(f"[BT] Client {self.client_id}: STREAMING CHOKE message FAILED to peer {peer_id}")
         else:
             logger.error(f"[BT] Client {self.client_id}: No streaming manager available for CHOKE to peer {peer_id}")
     
@@ -891,15 +946,13 @@ class BitTorrentManager:
         # 🔴 have message contains round information
         from federatedscope.core.message import Message
         
-        # 🆕 Get chunk importance scores
+        # 🚀 OPTIMIZATION: Get importance scores using cache
         importance_score = 0.0
         if source_client_id == self.client_id:
-            # Own chunk, get importance score from database
-            chunk_importance_scores = self.chunk_manager.get_chunk_importance_scores(round_num)
-            if chunk_id in chunk_importance_scores:
-                chunk_data = chunk_importance_scores[chunk_id]
-                importance_score = chunk_data.get('importance_score', 0.0)
-                logger.debug(f"[BT] Client {self.client_id}: Broadcasting have with importance {importance_score:.4f} for own chunk {chunk_id}")
+            # Own chunk, get importance score from cache
+            cached_importance_scores = self._get_cached_importance_scores(round_num)
+            importance_score = cached_importance_scores.get(chunk_id, 0.0)
+            logger.debug(f"[BT] Client {self.client_id}: Broadcasting have with cached importance {importance_score:.4f} for own chunk {chunk_id}")
         
         for neighbor_id in self.neighbors:
             # 🚀 STREAMING OPTIMIZATION: 优先使用streaming通道发送HAVE消息
@@ -916,7 +969,6 @@ class BitTorrentManager:
                 
                 if success:
                     sent_via_streaming = True
-                    logger.debug(f"[BT] Client {self.client_id}: HAVE message sent via STREAMING to peer {neighbor_id}")
                 else:
                     logger.debug(f"[BT] Client {self.client_id}: HAVE message STREAMING failed to peer {neighbor_id}, using fallback")
             
@@ -941,7 +993,7 @@ class BitTorrentManager:
         current_time = time.time()
         
         # Check once per second
-        if current_time - self.last_timeout_check < 1.0:
+        if current_time - self.last_timeout_check < 5.0:
             return
         
         self.last_timeout_check = current_time
@@ -965,7 +1017,7 @@ class BitTorrentManager:
             
             if retry_count < self.max_retries:
                 # Re-request
-                logger.warning(f"[BT] Request timeout for chunk {chunk_key}, retrying ({retry_count+1}/{self.max_retries})")
+                logger.warning(f"[BT] Request timeout for chunk {chunk_key}, retrying ({retry_count+1}/{self.max_retries}), last peer {peer_id}")
                 
                 # Request from other peers
                 alternative_peers = self._find_alternative_peers(chunk_key, exclude=peer_id)
@@ -997,66 +1049,35 @@ class BitTorrentManager:
                     del self.retry_count[chunk_key]
                         
     def _send_request(self, peer_id: int, source_id: int, chunk_id: int):
-        """Send chunk request (dual pool management system)"""
-        # 🔴 chunk_key contains round information
+        """🔧 重构：只使用Streaming层处理chunk请求 - 统一入口，避免重复"""
         chunk_key = (self.round_num, source_id, chunk_id)
         
-        # 🔧 CRITICAL FIX: Check for duplicate requests to prevent network flooding
-        if chunk_key in self.pending_requests:
-            existing_peer, existing_time = self.pending_requests[chunk_key]
-            logger.debug(f"[BT-REQ] Client {self.client_id}: DUPLICATE REQUEST PREVENTED for chunk {source_id}:{chunk_id} - already pending from peer {existing_peer} for {time.time() - existing_time:.1f}s")
-            return False
+        logger.debug(f"[BT-REQ] Client {self.client_id}: Requesting chunk {source_id}:{chunk_id} from peer {peer_id}")
         
-        # 🆕 Check if active pool is full
-        if len(self.pending_requests) >= self.MAX_ACTIVE_REQUESTS:
-            logger.debug(f"[BT-REQ] Client {self.client_id}: ACTIVE POOL FULL ({len(self.pending_requests)}/{self.MAX_ACTIVE_REQUESTS}), skipping request for chunk {source_id}:{chunk_id}")
-            return False
-        
-        self.pending_requests[chunk_key] = (peer_id, time.time())
-        
-        logger.debug(f"[BT-REQ] Client {self.client_id}: Sending request to peer {peer_id} for chunk {source_id}:{chunk_id}")
-        logger.debug(f"[BT-REQ] Client {self.client_id}: Active pool: {len(self.pending_requests)}/{self.MAX_ACTIVE_REQUESTS}, Queue: {len(self.pending_queue)}/{self.MAX_PENDING_QUEUE}")
-        
-        from federatedscope.core.message import Message
-        
-        # 🔍 DEBUG LOG: 添加详细的发送日志
-        logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Sending chunk REQUEST to peer {peer_id} for chunk ({self.round_num}, {source_id}, {chunk_id})")
-        
-        # 🚀 STREAMING OPTIMIZATION: 优先使用streaming通道发送请求
+        # 🚀 只使用Streaming层处理所有chunk请求（去重由Streaming层负责）
         if self.use_streaming and self.streaming_manager:
-            logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Attempting STREAMING request transmission to peer {peer_id}")
-            success = self.streaming_manager.send_bittorrent_message(
+            logger.debug(f"[BT-REQ] Client {self.client_id}: Delegating to streaming layer for chunk {source_id}:{chunk_id}")
+            
+            # 委托给Streaming管理器处理，包括去重、批量优化等
+            success = self.streaming_manager.send_chunk_request(
                 peer_id=peer_id,
-                msg_type='request',
                 round_num=self.round_num,
                 source_client_id=source_id,
-                chunk_id=chunk_id
+                chunk_id=chunk_id,
+                importance_score=self._calculate_chunk_importance(source_id, chunk_id)
             )
             
             if success:
-                logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: STREAMING request transmission SUCCESS to peer {peer_id}")
+                # 🔧 只在streaming成功时记录到pending_requests（用于超时管理）
+                self.pending_requests[chunk_key] = (peer_id, time.time())
+                logger.debug(f"[BT-REQ] Client {self.client_id}: Request delegated to streaming for {source_id}:{chunk_id}")
                 return True
             else:
-                logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: STREAMING request transmission FAILED, using traditional fallback")
-        
-        # 传统方式发送请求（流通道失败时的回退）
-        logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Using TRADITIONAL request transmission to peer {peer_id}")
-        message = Message(msg_type='request',
-                         sender=self.client_id,
-                         receiver=[peer_id],
-                         state=self.round_num,
-                         content={
-                             'round_num': self.round_num,  # 🔴 Requested round
-                             'source_client_id': source_id,
-                             'chunk_id': chunk_id
-                         })
-        
-        logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Message details - sender={message.sender}, receiver={message.receiver}, content={message.content}")
-        
-        self.comm_manager.send(message)
-        
-        logger.info(f"🚀 [BT-REQ-SEND] Client {self.client_id}: Request message SENT to comm_manager for peer {peer_id}")
-        return True
+                logger.warning(f"[BT-REQ] Client {self.client_id}: Streaming layer rejected request for {source_id}:{chunk_id}")
+                return False
+        else:
+            logger.error(f"[BT-REQ] Client {self.client_id}: No streaming available, cannot request {source_id}:{chunk_id}")
+            return False
     
     def _send_piece(self, peer_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data):
         """🚀 优化4：智能发送策略 - 多重优化的chunk传输"""
@@ -1074,7 +1095,7 @@ class BitTorrentManager:
         use_streaming = self._should_use_streaming(peer_id, data_size)
         transmission_method = "STREAMING" if use_streaming else "TRADITIONAL"
         
-        logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: {transmission_method} transmission for chunk {source_client_id}:{chunk_id} to peer {peer_id}")
+        logger.debug(f"📤 [BT-PIECE-SEND] Client {self.client_id}: {transmission_method} transmission for chunk {source_client_id}:{chunk_id} to peer {peer_id}")
         logger.debug(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Size={data_size}B, method={transmission_method}")
         
         # 🚀 多重回退机制
@@ -1109,17 +1130,17 @@ class BitTorrentManager:
                 self._update_streaming_success_stats(peer_id, data_size, streaming_time)
                 final_success = True
                 
-                logger.info(f"📤 [BT-PIECE-SEND] ✅ Client {self.client_id}: Streaming SUCCESS to peer {peer_id} in {streaming_time:.3f}s")
+                logger.debug(f"📤 [BT-PIECE-SEND] ✅ Client {self.client_id}: Streaming SUCCESS to peer {peer_id} in {streaming_time:.3f}s")
                 logger.debug(f"[BT-SEND] Client {self.client_id}: Streaming throughput: {data_size/streaming_time:.0f}B/s")
                 
             else:
-                logger.info(f"📤 [BT-PIECE-SEND] ❌ Client {self.client_id}: Streaming FAILED to peer {peer_id}, trying fallback")
+                logger.debug(f"📤 [BT-PIECE-SEND] ❌ Client {self.client_id}: Streaming FAILED to peer {peer_id}, trying fallback")
                 self._update_streaming_failure_stats(peer_id)
         
         # 🚀 尝试2：传统消息传输（智能回退）
         if not final_success:
             traditional_start = time.time()
-            logger.info(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Using traditional message transmission to peer {peer_id}")
+            logger.debug(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Using traditional message transmission to peer {peer_id}")
             
             try:
                 from federatedscope.core.message import Message, ChunkData
@@ -1152,7 +1173,7 @@ class BitTorrentManager:
                 self._update_traditional_success_stats(peer_id, data_size, traditional_time)
                 final_success = True
                 
-                logger.info(f"📤 [BT-PIECE-SEND] ✅ Client {self.client_id}: Traditional SUCCESS to peer {peer_id} in {traditional_time:.3f}s")
+                logger.debug(f"📤 [BT-PIECE-SEND] ✅ Client {self.client_id}: Traditional SUCCESS to peer {peer_id} in {traditional_time:.3f}s")
                 
             except Exception as e:
                 traditional_time = time.time() - traditional_start
@@ -1311,14 +1332,17 @@ class BitTorrentManager:
             self.ever_unchoked.add(peer_id)
             
     def _schedule_regular_unchoke(self):
-        """Schedule regular unchoke"""
-        # In actual implementation, this should be called through timer or message loop
+        """🚀 性能优化：立即执行第一次unchoke，加快启动速度"""
         self.last_unchoke_time = time.time()
+        # 立即执行第一次unchoke，不等待10秒
+        self._regular_unchoke_algorithm()
+        logger.debug(f"[BT] Client {self.client_id}: Initial unchoke completed")
         
     def _schedule_optimistic_unchoke(self):
-        """Schedule optimistic unchoke"""
-        # In actual implementation, this should be called through timer or message loop
-        pass
+        """🚀 性能优化：立即执行第一次optimistic unchoke"""
+        # 立即执行第一次optimistic unchoke
+        self._optimistic_unchoke()
+        logger.debug(f"[BT] Client {self.client_id}: Initial optimistic unchoke completed")
         
     def _update_download_rate(self, peer_id: int, bytes_received: int):
         """Update download rate statistics"""
@@ -1358,7 +1382,7 @@ class BitTorrentManager:
         This method is called when server timeout occurs or new round begins
         to prevent interference with next round BitTorrent operations
         """
-        logger.info(f"[BT] Client {self.client_id}: Stopping BitTorrent exchange for round {self.round_num}")
+        logger.debug(f"[BT] Client {self.client_id}: Stopping BitTorrent exchange for round {self.round_num}")
         
         # Set stop flag
         self.is_stopped = True
@@ -1366,7 +1390,7 @@ class BitTorrentManager:
         # 🚀 OPTIMIZATION 3: 优雅关闭写入线程，确保数据完整性
         queue_size = self.chunk_write_queue.write_queue.qsize()
         if queue_size > 0:
-            logger.info(f"[BT] Client {self.client_id}: 检测到{queue_size}个pending chunk，等待后台写入完成...")
+            logger.debug(f"[BT] Client {self.client_id}: 检测到{queue_size}个pending chunk，等待后台写入完成...")
             # 正常情况：等待队列处理完成（最多30秒）
             self.chunk_write_queue.stop_writer_thread(force_immediate=False, max_wait_time=30.0)
         else:
@@ -1389,6 +1413,25 @@ class BitTorrentManager:
         # Clear rate tracking
         self.download_rate.clear()
         self.upload_rate.clear()
+        
+        # 🔧 CRITICAL FIX: Clear processed_pieces to prevent memory leak
+        if hasattr(self, 'processed_pieces'):
+            pieces_count = len(self.processed_pieces)
+            self.processed_pieces.clear()
+            logger.debug(f"[BT] Client {self.client_id}: Cleared {pieces_count} processed_pieces")
+        
+        # 🔧 CRITICAL FIX: Clear streaming channel deduplication sets
+        if self.streaming_manager:
+            total_requested = 0
+            total_completed = 0
+            for channel in self.streaming_manager.channels.values():
+                if hasattr(channel, 'requested_chunks'):
+                    total_requested += len(channel.requested_chunks)
+                    channel.requested_chunks.clear()
+                if hasattr(channel, 'completed_chunks'):
+                    total_completed += len(channel.completed_chunks)
+                    channel.completed_chunks.clear()
+            logger.debug(f"[BT] Client {self.client_id}: Cleared streaming deduplication - {total_requested} requested, {total_completed} completed chunks")
         
         logger.info(f"[BT] Client {self.client_id}: BitTorrent exchange stopped successfully")
         # Convert to MB for readable logging
@@ -1413,5 +1456,16 @@ class BitTorrentManager:
         self.pending_requests.clear()
         self.retry_count.clear()
         self.peer_bitfields.clear()
+        
+        # 🔧 Emergency cleanup: Clear deduplication sets
+        if hasattr(self, 'processed_pieces'):
+            self.processed_pieces.clear()
+        
+        if self.streaming_manager:
+            for channel in self.streaming_manager.channels.values():
+                if hasattr(channel, 'requested_chunks'):
+                    channel.requested_chunks.clear()
+                if hasattr(channel, 'completed_chunks'):
+                    channel.completed_chunks.clear()
         
         logger.warning(f"[BT] Client {self.client_id}: Emergency stop completed")
