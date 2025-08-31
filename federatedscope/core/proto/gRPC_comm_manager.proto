@@ -1,16 +1,16 @@
 syntax = "proto3";
 
 service gRPCComServeFunc {
-    // 🚀 原有的Unary RPC (兼容性)
+    // 🚀 Original Unary RPC (compatibility)
     rpc sendMessage (MessageRequest) returns (MessageResponse) {};
     
-    // 🚀 新增：双向流式RPC用于chunk传输
+    // 🚀 New: bidirectional streaming RPC for chunk transmission
     rpc streamChunks (stream ChunkStreamRequest) returns (stream ChunkStreamResponse) {};
     
-    // 🚀 新增：服务端流式RPC用于批量chunk下载
+    // 🚀 New: server-side streaming RPC for batch chunk download
     rpc downloadChunks (ChunkBatchRequest) returns (stream ChunkStreamResponse) {};
     
-    // 🚀 新增：客户端流式RPC用于批量chunk上传  
+    // 🚀 New: client-side streaming RPC for batch chunk upload  
     rpc uploadChunks (stream ChunkStreamRequest) returns (ChunkBatchResponse) {};
 }
 
@@ -59,11 +59,11 @@ message ChunkStreamRequest {
     int32 round_num = 3;
     int32 source_client_id = 4;
     int32 chunk_id = 5;
-    bytes chunk_data = 6;        // 直接bytes，无额外序列化
+    bytes chunk_data = 6;        // direct bytes, no additional serialization
     string checksum = 7;
     int64 timestamp = 8;
-    ChunkType chunk_type = 9;    // chunk类型：REQUEST/PIECE/HAVE/CANCEL
-    float importance_score = 10; // chunk重要性评分
+    ChunkType chunk_type = 9;    // chunk type: REQUEST/PIECE/HAVE/CANCEL
+    float importance_score = 10; // chunk importance score
 }
 
 message ChunkStreamResponse {
@@ -74,7 +74,7 @@ message ChunkStreamResponse {
     int32 round_num = 5;
     int32 chunk_id = 6;
     ChunkResponseType response_type = 7; // ACK/NACK/HAVE/INTERESTED
-    bytes response_data = 8;     // 可选：响应数据
+    bytes response_data = 8;     // optional: response data
 }
 
 message ChunkBatchRequest {
@@ -98,20 +98,20 @@ message ChunkBatchResponse {
 }
 
 enum ChunkType {
-    CHUNK_REQUEST = 0;    // 请求chunk
-    CHUNK_PIECE = 1;      // chunk数据
-    CHUNK_HAVE = 2;       // 拥有通知
-    CHUNK_CANCEL = 3;     // 取消请求
-    CHUNK_BITFIELD = 4;   // bitfield更新
-    // 🔧 新增：BitTorrent协议控制消息类型
-    CHUNK_INTERESTED_REQ = 5; // 表示对peer感兴趣
-    CHUNK_UNCHOKE_REQ = 6;    // 允许下载
-    CHUNK_CHOKE_REQ = 7;      // 禁止下载
+    CHUNK_REQUEST = 0;    // request chunk
+    CHUNK_PIECE = 1;      // chunk data
+    CHUNK_HAVE = 2;       // have notification
+    CHUNK_CANCEL = 3;     // cancel request
+    CHUNK_BITFIELD = 4;   // bitfield update
+    // 🔧 New: BitTorrent protocol control message types
+    CHUNK_INTERESTED_REQ = 5; // express interest in peer
+    CHUNK_UNCHOKE_REQ = 6;    // allow download
+    CHUNK_CHOKE_REQ = 7;      // forbid download
 }
 
 enum ChunkResponseType {
-    CHUNK_ACK = 0;        // 确认收到
-    CHUNK_NACK = 1;       // 拒绝/错误
-    CHUNK_HAVE_RESP = 2;  // have响应
-    CHUNK_INTERESTED_RESP = 3; // 感兴趣响应
+    CHUNK_ACK = 0;        // acknowledge received
+    CHUNK_NACK = 1;       // reject/error
+    CHUNK_HAVE_RESP = 2;  // have response
+    CHUNK_INTERESTED_RESP = 3; // interested response
 }

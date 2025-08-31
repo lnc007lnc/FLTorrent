@@ -45,6 +45,14 @@ def extend_bittorrent_cfg(cfg):
     # Algorithm selection configuration
     cfg.bittorrent.chunk_selection = 'rarest_first'  # Chunk selection algorithm: 'rarest_first', 'random', 'sequential'
     
+    # Multi-factor chunk sorting parameters
+    cfg.bittorrent.rarity_weight = 0.01      # tau: rarity weight
+    cfg.bittorrent.rarity_adjustment = 1e-6  # eps: rarity adjustment parameter  
+    cfg.bittorrent.random_noise = 1e-4       # gamma: random noise strength
+    
+    # Write queue configuration
+    cfg.bittorrent.write_queue_size = 1000   # ChunkWriteQueue max capacity
+    
     # Optimization configuration
     cfg.bittorrent.enable_have_suppression = True  # Whether to enable have message suppression
     cfg.bittorrent.batch_have_interval = 1.0  # Batch have message send interval (seconds)

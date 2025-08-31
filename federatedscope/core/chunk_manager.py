@@ -12,6 +12,8 @@ import sqlite3
 import time
 import threading
 import time
+import random
+import functools
 from typing import Dict, List, Optional, Tuple, Any, Callable
 import numpy as np
 import torch
@@ -23,6 +25,83 @@ import logging
 from federatedscope.core.chunk_tracker import ChunkInfo, ChunkAction
 
 logger = logging.getLogger(__name__)
+
+# 🚀 DATABASE RETRY DECORATOR WITH EXPONENTIAL BACKOFF
+def db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0):
+    """
+    Decorator for database operations with exponential backoff retry on lock/busy errors.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay in seconds
+        max_delay: Maximum delay in seconds
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    error_msg = str(e).lower()
+                    if ("database is locked" in error_msg or "database is busy" in error_msg) and attempt < max_retries - 1:
+                        # Exponential backoff with jitter
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        jitter = random.uniform(0, delay * 0.1)  # Add 10% jitter
+                        total_delay = delay + jitter
+                        
+                        logger.warning(f"[DB-RETRY] {func.__name__} attempt {attempt + 1}/{max_retries} failed: {e}, retrying in {total_delay:.3f}s")
+                        time.sleep(total_delay)
+                        continue
+                    else:
+                        logger.error(f"[DB-RETRY] {func.__name__} failed after {attempt + 1} attempts: {e}")
+                        raise
+                except Exception as e:
+                    # Non-lock errors should not be retried
+                    logger.error(f"[DB-RETRY] {func.__name__} failed with non-retryable error: {e}")
+                    raise
+            
+            # This should never be reached, but just in case
+            raise sqlite3.OperationalError(f"Database operation failed after {max_retries} attempts")
+        return wrapper
+    return decorator
+
+# 🚀 UNIFIED DATABASE CONNECTION WITH STANDARD PRAGMA SETTINGS  
+def create_optimized_connection(db_path: str, timeout: float = 30.0) -> sqlite3.Connection:
+    """
+    Create a SQLite connection with optimized and unified PRAGMA settings.
+    
+    Args:
+        db_path: Path to the database file
+        timeout: Connection timeout in seconds
+        
+    Returns:
+        Optimized SQLite connection
+    """
+    conn = sqlite3.connect(db_path, timeout=timeout, check_same_thread=False)
+    cursor = conn.cursor()
+    
+    # 🚀 UNIFIED PRAGMA SETTINGS FOR ALL CONNECTIONS
+    pragma_settings = [
+        ("journal_mode", "WAL"),           # Enable WAL mode for better concurrency
+        ("synchronous", "NORMAL"),         # Balance safety and performance
+        ("cache_size", "10000"),           # 10000 pages cache
+        ("temp_store", "MEMORY"),          # Store temp tables in memory
+        ("busy_timeout", "30000"),         # 30 second busy timeout
+        ("wal_autocheckpoint", "1000"),    # Auto-checkpoint every 1000 pages
+        ("mmap_size", "268435456"),        # 256MB memory-mapped I/O
+        ("page_size", "4096"),             # Optimal page size
+        ("foreign_keys", "ON"),            # Enable foreign key constraints
+    ]
+    
+    for pragma, value in pragma_settings:
+        try:
+            cursor.execute(f"PRAGMA {pragma}={value}")
+            logger.debug(f"[DB-CONFIG] Set {pragma}={value} for {db_path}")
+        except sqlite3.OperationalError as e:
+            logger.warning(f"[DB-CONFIG] Failed to set {pragma}={value}: {e}")
+    
+    return conn
 
 
 class ChunkManager:
@@ -46,7 +125,7 @@ class ChunkManager:
         """
         self.client_id = client_id
         self.change_callback = change_callback
-        self.chunk_write_queue = None  # 🚀 NEW: 引用到ChunkWriteQueue
+        self.chunk_write_queue = None  # 🚀 NEW: Reference to ChunkWriteQueue
         
         # Create database directory by node name: /tmp/client_X/
         client_name = f"client_{client_id}"
@@ -54,7 +133,7 @@ class ChunkManager:
         os.makedirs(self.db_dir, exist_ok=True)
         
         # Store round-specific database paths
-        self.round_db_paths = {}  # {round_num: db_path}
+        self.round_db_paths = {}  # {round_num: db_path} or {(round_num, table_type): db_path}
         
         # Legacy database path for fallback compatibility
         self.legacy_db_path = os.path.join(self.db_dir, f"{client_name}_chunks.db")
@@ -71,142 +150,98 @@ class ChunkManager:
         if change_callback:
             self.start_monitoring()
         
-    def _get_optimized_connection(self, round_num: Optional[int] = None):
-        """Get optimized database connection for specific round or legacy database
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
+    def _get_optimized_connection(self, round_num: Optional[int] = None, table_type: str = None, _ensure_exists: bool = True):
+        """Get optimized database connection for specific round and table type
         
         Args:
             round_num: Round number. If specified, connects to round-specific database.
                       If None, connects to legacy database for backward compatibility.
+            table_type: Table type ('metadata', 'data', 'bt', 'sessions'). If None, uses legacy unified database
+            _ensure_exists: Internal flag to prevent recursion, set to False in _ensure_table_database_exists
         """
-        if round_num is not None:
-            db_path = self._get_round_db_path(round_num)
+        if round_num is not None and table_type is not None and _ensure_exists:
+            # 🔧 COMPATIBILITY FIX: Ensure table-specific database exists before connecting
+            self._ensure_table_database_exists(round_num, table_type)
+            db_path = self._get_round_db_path(round_num, table_type)
+        elif round_num is not None:
+            # Legacy compatibility: use unified database path
+            if table_type is None:
+                # 🔧 COMPATIBILITY WARNING: Legacy unified database mode
+                logger.debug(f"[ChunkManager] Using legacy unified database for round {round_num}")
+            db_path = self._get_round_db_path(round_num, table_type)
         else:
             db_path = self.legacy_db_path
             
-        conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
-        cursor = conn.cursor()
-        
-        # Enable optimization settings
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL") 
-        cursor.execute("PRAGMA cache_size=10000")
-        cursor.execute("PRAGMA temp_store=MEMORY")
-        cursor.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
-        
-        return conn
+        # 🚀 Use unified connection function with standard PRAGMA settings
+        return create_optimized_connection(db_path, timeout=30.0)
     
     def set_chunk_write_queue(self, chunk_write_queue):
         """
-        🚀 NEW: 设置ChunkWriteQueue引用，用于在数据库查询失败时检查待写队列
+        🚀 NEW: Set ChunkWriteQueue reference, used to check write queue when database query fails
         Args:
-            chunk_write_queue: ChunkWriteQueue实例
+            chunk_write_queue: ChunkWriteQueue instance
         """
         self.chunk_write_queue = chunk_write_queue
         logger.debug(f"[ChunkManager] Set chunk_write_queue reference for client {self.client_id}")
     
-    def _get_round_db_path(self, round_num: int) -> str:
-        """Get database file path for specific round
+    def _get_round_db_path(self, round_num: int, table_type: str = None) -> str:
+        """Get database file path for specific round and table type
         
         Args:
             round_num: Round number
+            table_type: Table type ('metadata', 'data', 'bt', 'sessions'). If None, returns legacy path
         Returns:
-            str: Path to round-specific database file
+            str: Path to table-specific database file
         """
-        if round_num not in self.round_db_paths:
-            client_name = f"client_{self.client_id}"
-            db_filename = f"{client_name}_chunks_r{round_num}.db"
-            self.round_db_paths[round_num] = os.path.join(self.db_dir, db_filename)
+        if table_type is None:
+            # Legacy compatibility: return unified database path
+            if round_num not in self.round_db_paths:
+                client_name = f"client_{self.client_id}"
+                db_filename = f"{client_name}_chunks_r{round_num}.db"
+                self.round_db_paths[round_num] = os.path.join(self.db_dir, db_filename)
+            return self.round_db_paths[round_num]
         
-        return self.round_db_paths[round_num]
+        # New: table-specific database paths
+        cache_key = (round_num, table_type)
+        if cache_key not in self.round_db_paths:
+            client_name = f"client_{self.client_id}"
+            db_filename = f"{client_name}_{table_type}_r{round_num}.db"
+            self.round_db_paths[cache_key] = os.path.join(self.db_dir, db_filename)
+        
+        return self.round_db_paths[cache_key]
     
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def _init_round_database(self, round_num: int):
-        """Initialize SQLite database structure for specific round
+        """Initialize table-specific databases for specific round (deprecated - use _ensure_table_database_exists)
         
         Args:
             round_num: Round number for which to create database
         """
-        conn = self._get_optimized_connection(round_num)
-        cursor = conn.cursor()
+        # Redirect to new table-specific database creation
+        self._ensure_table_database_exists(round_num, 'metadata')
+        self._ensure_table_database_exists(round_num, 'data')
+        self._ensure_table_database_exists(round_num, 'bt')
+        self._ensure_table_database_exists(round_num, 'sessions')
         
-        # Create chunk metadata table (without round_num column since it's implicit in filename)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS chunk_metadata (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chunk_id INTEGER NOT NULL,
-                chunk_hash TEXT NOT NULL,
-                parts_info TEXT NOT NULL,
-                flat_size INTEGER NOT NULL,
-                importance_score REAL DEFAULT 0.0,
-                pruning_method TEXT DEFAULT 'magnitude',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(chunk_id)
-            )
-        ''')
-        
-        # Create chunk data table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS chunk_data (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chunk_hash TEXT UNIQUE NOT NULL,
-                data BLOB NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Create BitTorrent chunks table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS bt_chunks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_client_id INTEGER NOT NULL,
-                chunk_id INTEGER NOT NULL,
-                chunk_hash TEXT NOT NULL,
-                holder_client_id INTEGER NOT NULL,
-                received_time REAL DEFAULT (strftime('%s', 'now')),
-                is_verified INTEGER DEFAULT 0,
-                UNIQUE(source_client_id, chunk_id, holder_client_id)
-            )
-        ''')
-        
-        # Create BitTorrent session table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS bt_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                start_time REAL NOT NULL,
-                end_time REAL,
-                status TEXT DEFAULT 'active',
-                total_chunks_expected INTEGER,
-                total_chunks_received INTEGER DEFAULT 0,
-                bytes_uploaded INTEGER DEFAULT 0,
-                bytes_downloaded INTEGER DEFAULT 0
-            )
-        ''')
-        
-        # Create indexes to improve query performance
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_chunk_metadata_hash ON chunk_metadata(chunk_hash)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_chunk_data_hash ON chunk_data(chunk_hash)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_chunks_hash ON bt_chunks(chunk_hash)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_chunks_source ON bt_chunks(source_client_id, chunk_id)')
-        
-        conn.commit()
-        conn.close()
-        
-        logger.debug(f"[ChunkManager] Initialized database for round {round_num}: {self._get_round_db_path(round_num)}")
+        logger.debug(f"[ChunkManager] Initialized split databases for client {self.client_id} round {round_num}")
     
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def _ensure_round_database_exists(self, round_num: int):
-        """Ensure round-specific database file exists
+        """Ensure round-specific database file exists (DEPRECATED - use _ensure_table_database_exists)
         
         Args:
             round_num: Round number for which to ensure database exists
         """
-        db_path = self._get_round_db_path(round_num)
+        # Redirect to new table-specific database creation
+        self._ensure_table_database_exists(round_num, 'metadata')
+        self._ensure_table_database_exists(round_num, 'data')
+        self._ensure_table_database_exists(round_num, 'bt')
+        self._ensure_table_database_exists(round_num, 'sessions')
         
-        # Check if database file already exists
-        if not os.path.exists(db_path):
-            logger.debug(f"[ChunkManager] Creating new database for round {round_num}")
-            self._init_round_database(round_num)
-        else:
-            logger.debug(f"[ChunkManager] Database for round {round_num} already exists")
+        logger.debug(f"[ChunkManager] Ensured all split databases exist for client {self.client_id} round {round_num}")
         
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def _init_database(self):
         """Initialize SQLite database table structure"""
         conn = self._get_optimized_connection()
@@ -267,90 +302,128 @@ class ChunkManager:
         conn.commit()
         conn.close()
     
-    def _ensure_round_tables_exist(self, round_num: int):
-        """Ensure round-specific database and tables exist for independent round database"""
-        # First ensure the round database exists
-        self._ensure_round_database_exists(round_num)
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
+    def _ensure_round_tables_exist(self, round_num: int, table_type: str = None):
+        """Ensure round-specific database and tables exist for specific table type
         
-        # Connect to the round-specific database
-        conn = self._get_optimized_connection(round_num=round_num)
-        cursor = conn.cursor()
+        Args:
+            round_num: Round number
+            table_type: Specific table type ('metadata', 'data', 'bt', 'sessions'). 
+                       If None, ensures all tables (legacy compatibility)
+        """
+        if table_type is None:
+            # Legacy: ensure all table databases exist
+            self._ensure_table_database_exists(round_num, 'metadata')
+            self._ensure_table_database_exists(round_num, 'data') 
+            self._ensure_table_database_exists(round_num, 'bt')
+            self._ensure_table_database_exists(round_num, 'sessions')
+        else:
+            # New: ensure only the specific table database exists
+            self._ensure_table_database_exists(round_num, table_type)
+    
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
+    def _ensure_table_database_exists(self, round_num: int, table_type: str):
+        """Ensure table-specific database exists and create its table
         
-        try:
-            # Create metadata table (no round suffix needed since each round has its own DB)
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS chunk_metadata (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chunk_id INTEGER NOT NULL,
-                    chunk_hash TEXT NOT NULL,
-                    parts_info TEXT NOT NULL,
-                    flat_size INTEGER NOT NULL,
-                    importance_score REAL DEFAULT 0.0,
-                    pruning_method TEXT DEFAULT 'magnitude',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(chunk_id)
-                )
-            ''')
+        Args:
+            round_num: Round number
+            table_type: Table type ('metadata', 'data', 'bt', 'sessions')
+        """
+        db_path = self._get_round_db_path(round_num, table_type)
+        
+        # Check if database file already exists
+        if not os.path.exists(db_path):
+            logger.debug(f"[ChunkManager] Creating new {table_type} database for round {round_num}")
             
-            # Create BitTorrent chunks table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS bt_chunks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_client_id INTEGER NOT NULL,
-                    chunk_id INTEGER NOT NULL,
-                    chunk_hash TEXT NOT NULL,
-                    holder_client_id INTEGER NOT NULL,
-                    received_time REAL DEFAULT (strftime('%s', 'now')),
-                    is_verified INTEGER DEFAULT 0,
-                    UNIQUE(source_client_id, chunk_id, holder_client_id)
-                )
-            ''')
+            # Connect to the table-specific database (prevent recursion)
+            conn = self._get_optimized_connection(round_num=round_num, table_type=table_type, _ensure_exists=False)
+            cursor = conn.cursor()
             
-            # Create chunk data table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS chunk_data (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chunk_hash TEXT UNIQUE NOT NULL,
-                    data BLOB NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create BitTorrent session table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS bt_sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    start_time REAL NOT NULL,
-                    end_time REAL,
-                    status TEXT DEFAULT 'active',
-                    total_chunks_expected INTEGER,
-                    total_chunks_received INTEGER DEFAULT 0,
-                    bytes_uploaded INTEGER DEFAULT 0,
-                    bytes_downloaded INTEGER DEFAULT 0
-                )
-            ''')
-            
-            # Create indexes
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_chunk_metadata_hash ON chunk_metadata(chunk_hash)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_chunks_hash ON bt_chunks(chunk_hash)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_chunk_data_hash ON chunk_data(chunk_hash)')
-            
-            conn.commit()
-            logger.debug(f"✅ Created tables in round-specific database for round {round_num}")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to create round {round_num} tables: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+            try:
+                if table_type == 'metadata':
+                    # Create metadata table
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS chunk_metadata (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            chunk_id INTEGER NOT NULL,
+                            chunk_hash TEXT NOT NULL,
+                            parts_info TEXT NOT NULL,
+                            flat_size INTEGER NOT NULL,
+                            importance_score REAL DEFAULT 0.0,
+                            pruning_method TEXT DEFAULT 'magnitude',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE(chunk_id)
+                        )
+                    ''')
+                elif table_type == 'data':
+                    # Create chunk data table
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS chunk_data (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            chunk_hash TEXT UNIQUE NOT NULL,
+                            data BLOB NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ''')
+                elif table_type == 'bt':
+                    # Create BitTorrent chunks table
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS bt_chunks (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            source_client_id INTEGER NOT NULL,
+                            chunk_id INTEGER NOT NULL,
+                            chunk_hash TEXT NOT NULL,
+                            holder_client_id INTEGER NOT NULL,
+                            received_time REAL DEFAULT (strftime('%s', 'now')),
+                            is_verified INTEGER DEFAULT 0,
+                            UNIQUE(source_client_id, chunk_id, holder_client_id)
+                        )
+                    ''')
+                elif table_type == 'sessions':
+                    # Create BitTorrent session table
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS bt_sessions (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            start_time REAL NOT NULL,
+                            end_time REAL,
+                            status TEXT DEFAULT 'active',
+                            total_chunks_expected INTEGER,
+                            total_chunks_received INTEGER DEFAULT 0,
+                            bytes_uploaded INTEGER DEFAULT 0,
+                            bytes_downloaded INTEGER DEFAULT 0
+                        )
+                    ''')
+                
+                # Create table-specific indexes
+                if table_type == 'metadata':
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_chunk_metadata_hash ON chunk_metadata(chunk_hash)')
+                elif table_type == 'bt':
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_bt_chunks_hash ON bt_chunks(chunk_hash)')
+                elif table_type == 'data':
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_chunk_data_hash ON chunk_data(chunk_hash)')
+                
+                conn.commit()
+                logger.debug(f"✅ Created {table_type} database for round {round_num}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to create {table_type} database for round {round_num}: {e}")
+                conn.rollback()
+            finally:
+                conn.close()
+        else:
+            logger.debug(f"[ChunkManager] {table_type} database for round {round_num} already exists")
     
     def _cleanup_old_rounds_by_files(self, keep_rounds: int = 2):
         """Ultra-fast cleanup by deleting entire round database files"""
         try:
             # Get all existing round database files
             import glob
-            pattern = os.path.join(self.db_dir, f"client_{self.client_id}_chunks_r*.db")
-            db_files = glob.glob(pattern)
+            # 🔧 COMPATIBILITY FIX: Support both legacy and split database patterns
+            legacy_pattern = os.path.join(self.db_dir, f"client_{self.client_id}_chunks_r*.db")
+            split_pattern = os.path.join(self.db_dir, f"client_{self.client_id}_*_r*.db")
+            legacy_files = glob.glob(legacy_pattern)
+            split_files = glob.glob(split_pattern)
+            db_files = legacy_files + split_files
             
             # Extract round numbers and sort
             rounds = []
@@ -557,13 +630,13 @@ class ChunkManager:
             Dict[chunk_id, {'importance_score': float, 'pruning_method': str, 'flat_size': int}]
         """
         try:
-            # 🚀 NEW: Check if round-specific database exists
-            db_path = self._get_round_db_path(round_num)
-            if not os.path.exists(db_path):
-                logger.debug(f"No database found for round {round_num}")
+            # 🚀 NEW: Check if metadata database exists for this round
+            metadata_db_path = self._get_round_db_path(round_num, 'metadata')
+            if not os.path.exists(metadata_db_path):
+                logger.debug(f"No metadata database found for round {round_num}")
                 return {}
             
-            conn = self._get_optimized_connection(round_num)
+            conn = self._get_optimized_connection(round_num, 'metadata')
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -666,6 +739,7 @@ class ChunkManager:
         else:
             return np.array([])
     
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def save_model_chunks(self, model: nn.Module, round_num: int, num_chunks: int = 10, keep_rounds: int = 2, 
                          importance_method: str = 'magnitude') -> List[str]:
         """
@@ -692,11 +766,9 @@ class ChunkManager:
             logger.info(f"[ChunkManager] Computing chunk importance using method: {importance_method}")
             importance_scores = self.compute_chunk_importance(params, chunks_info, importance_method)
             
-            # 🚀 NEW: Ensure round-specific database exists
-            self._ensure_round_database_exists(round_num)
-            
-            conn = self._get_optimized_connection(round_num)
-            cursor = conn.cursor()
+            # 🚀 NEW: Ensure table-specific databases exist
+            self._ensure_table_database_exists(round_num, 'data')
+            self._ensure_table_database_exists(round_num, 'metadata')
             
             saved_hashes = []
             
@@ -708,21 +780,33 @@ class ChunkManager:
                 chunk_bytes = pickle.dumps(chunk_data)
                 chunk_hash = hashlib.sha256(chunk_bytes).hexdigest()
                 
-                # Save chunk data to round-specific database
-                cursor.execute("""
-                    INSERT OR IGNORE INTO chunk_data (chunk_hash, data) VALUES (?, ?)
-                """, (chunk_hash, chunk_bytes))
+                # Save chunk data to data-specific database
+                data_conn = self._get_optimized_connection(round_num=round_num, table_type='data')
+                data_cursor = data_conn.cursor()
+                try:
+                    data_cursor.execute("""
+                        INSERT OR IGNORE INTO chunk_data (chunk_hash, data) VALUES (?, ?)
+                    """, (chunk_hash, chunk_bytes))
+                    data_conn.commit()
+                finally:
+                    data_conn.close()
                 
-                # Save chunk metadata to round-specific database
-                parts_json = json.dumps(chunk_info['parts'])
-                importance_score = importance_scores[i] if i < len(importance_scores) else 0.0
-                
-                cursor.execute('''
-                    INSERT OR REPLACE INTO chunk_metadata 
-                    (chunk_id, chunk_hash, parts_info, flat_size, importance_score, pruning_method)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (chunk_info['chunk_id'], chunk_hash, 
-                     parts_json, chunk_info['flat_size'], importance_score, importance_method))
+                # Save chunk metadata to metadata-specific database
+                metadata_conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
+                metadata_cursor = metadata_conn.cursor()
+                try:
+                    parts_json = json.dumps(chunk_info['parts'])
+                    importance_score = importance_scores[i] if i < len(importance_scores) else 0.0
+                    
+                    metadata_cursor.execute('''
+                        INSERT OR REPLACE INTO chunk_metadata 
+                        (chunk_id, chunk_hash, parts_info, flat_size, importance_score, pruning_method)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (chunk_info['chunk_id'], chunk_hash, 
+                         parts_json, chunk_info['flat_size'], importance_score, importance_method))
+                    metadata_conn.commit()
+                finally:
+                    metadata_conn.close()
                 
                 saved_hashes.append(chunk_hash)
                 
@@ -736,9 +820,6 @@ class ChunkManager:
                         chunk_size=chunk_info['flat_size']
                     )
                 
-            conn.commit()
-            conn.close()
-            
             # Automatically clean old round data, keep recent rounds
             self.cleanup_old_rounds(keep_rounds=keep_rounds)
             
@@ -761,12 +842,12 @@ class ChunkManager:
         """
         try:
             # 🚀 NEW: Check if round-specific database exists
-            db_path = self._get_round_db_path(round_num)
+            db_path = self._get_round_db_path(round_num, 'metadata')
             if not os.path.exists(db_path):
-                logger.debug(f"No database found for round {round_num}")
+                logger.debug(f"No metadata database found for round {round_num}")
                 return []
             
-            conn = self._get_optimized_connection(round_num)
+            conn = self._get_optimized_connection(round_num, 'metadata')
             cursor = conn.cursor()
             
             # Query chunk metadata from round-specific database
@@ -817,10 +898,10 @@ class ChunkManager:
             # 🚀 NEW: Check if round-specific database exists
             db_path = self._get_round_db_path(round_num)
             if not os.path.exists(db_path):
-                logger.debug(f"No database found for round {round_num}")
+                logger.debug(f"No metadata database found for round {round_num}")
                 return None
             
-            conn = self._get_optimized_connection(round_num)
+            conn = self._get_optimized_connection(round_num, 'metadata')
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -866,7 +947,7 @@ class ChunkManager:
         try:
             if round_num is not None:
                 # Query specific round database only
-                if not os.path.exists(self._get_round_db_path(round_num)):
+                if not os.path.exists(self._get_round_db_path(round_num, 'metadata')):
                     return {
                         'total_metadata_entries': 0,
                         'unique_chunks': 0,
@@ -876,32 +957,54 @@ class ChunkManager:
                         'query_scope': f'round_{round_num}'
                     }
                 
-                # Connect to round-specific database
-                conn = self._get_optimized_connection(round_num=round_num)
-                cursor = conn.cursor()
+                # Query from table-specific databases
+                total_metadata = 0
+                total_chunks = 0 
+                total_size = 0
                 
-                # Query from round-specific database (standard table names)
+                # Query metadata database
                 try:
-                    cursor.execute("SELECT COUNT(*) FROM chunk_metadata")
-                    total_metadata = cursor.fetchone()[0]
-                    
-                    cursor.execute("SELECT COUNT(*) FROM chunk_data")
-                    total_chunks = cursor.fetchone()[0]
-                    
-                    cursor.execute("SELECT SUM(LENGTH(data)) FROM chunk_data")
-                    total_size = cursor.fetchone()[0] or 0
-                    
-                    min_round = max_round = round_num
-                    
-                except sqlite3.Error:
-                    total_metadata = total_chunks = total_size = 0
-                    min_round = max_round = round_num
+                    metadata_conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
+                    metadata_cursor = metadata_conn.cursor()
+                    metadata_cursor.execute("SELECT COUNT(*) FROM chunk_metadata")
+                    total_metadata = metadata_cursor.fetchone()[0]
+                    metadata_conn.close()
+                except (sqlite3.Error, FileNotFoundError):
+                    total_metadata = 0
+                
+                # Query data database
+                try:
+                    data_conn = self._get_optimized_connection(round_num=round_num, table_type='data')
+                    data_cursor = data_conn.cursor()
+                    data_cursor.execute("SELECT COUNT(*) FROM chunk_data")
+                    total_chunks = data_cursor.fetchone()[0]
+                    data_cursor.execute("SELECT SUM(LENGTH(data)) FROM chunk_data")
+                    total_size = data_cursor.fetchone()[0] or 0
+                    data_conn.close()
+                except (sqlite3.Error, FileNotFoundError):
+                    total_chunks = 0
+                    total_size = 0
+                
+                min_round = max_round = round_num
                     
             else:
-                # Aggregate stats from all round database files
+                # Aggregate stats from all round database files (support both unified and split databases)
                 import glob
-                pattern = os.path.join(self.db_dir, f"client_{self.client_id}_chunks_r*.db")
-                db_files = glob.glob(pattern)
+                
+                # Find all rounds by looking for any database files
+                pattern = os.path.join(self.db_dir, f"client_{self.client_id}_*_r*.db")
+                all_files = glob.glob(pattern)
+                
+                # Extract unique round numbers
+                rounds = set()
+                for file_path in all_files:
+                    basename = os.path.basename(file_path)
+                    try:
+                        round_str = basename.split('_r')[1].replace('.db', '')
+                        round_num = int(round_str)
+                        rounds.add(round_num)
+                    except (ValueError, IndexError):
+                        continue
                 
                 total_metadata = 0
                 total_chunks = 0
@@ -909,75 +1012,35 @@ class ChunkManager:
                 min_round = None
                 max_round = None
                 
-                for db_file in db_files:
+                for round_num in rounds:
+                    # Update min/max round numbers
+                    if min_round is None or round_num < min_round:
+                        min_round = round_num
+                    if max_round is None or round_num > max_round:
+                        max_round = round_num
+                        
+                    # Query metadata from metadata database
                     try:
-                        # Extract round number from filename
-                        basename = os.path.basename(db_file)
-                        round_str = basename.split('_r')[1].replace('.db', '')
-                        file_round_num = int(round_str)
-                        
-                        # Update min/max round numbers
-                        if min_round is None or file_round_num < min_round:
-                            min_round = file_round_num
-                        if max_round is None or file_round_num > max_round:
-                            max_round = file_round_num
-                        
-                        # Connect to this round database
-                        conn = self._get_optimized_connection(round_num=file_round_num)
-                        cursor = conn.cursor()
-                        
-                        # Aggregate data from this round
-                        try:
-                            cursor.execute("SELECT COUNT(*) FROM chunk_metadata")
-                            total_metadata += cursor.fetchone()[0]
-                            
-                            cursor.execute("SELECT COUNT(*) FROM chunk_data")
-                            total_chunks += cursor.fetchone()[0]
-                            
-                            cursor.execute("SELECT SUM(LENGTH(data)) FROM chunk_data")
-                            size = cursor.fetchone()[0] or 0
-                            total_size += size
-                            
-                        except sqlite3.Error:
-                            pass  # Skip if tables don't exist
-                        
-                        conn.close()
-                        
-                    except (ValueError, IndexError, sqlite3.Error):
-                        continue
+                        metadata_conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
+                        metadata_cursor = metadata_conn.cursor()
+                        metadata_cursor.execute("SELECT COUNT(*) FROM chunk_metadata")
+                        total_metadata += metadata_cursor.fetchone()[0]
+                        metadata_conn.close()
+                    except (sqlite3.Error, FileNotFoundError):
+                        pass
                     
-            # Fallback to legacy tables if no round tables exist
-            if total_metadata == 0 and total_chunks == 0:
-                try:
-                    if round_num is not None:
-                        # Query specific round from legacy tables
-                        cursor.execute("SELECT COUNT(*) FROM chunk_metadata WHERE round_num = ?", (round_num,))
-                        total_metadata = cursor.fetchone()[0]
-                        cursor.execute("SELECT COUNT(DISTINCT chunk_hash) FROM chunk_metadata WHERE round_num = ?", (round_num,))
-                        chunk_count = cursor.fetchone()[0]
-                        if chunk_count > 0:
-                            cursor.execute("""
-                                SELECT SUM(LENGTH(cd.data)) FROM chunk_data cd 
-                                JOIN chunk_metadata cm ON cd.chunk_hash = cm.chunk_hash 
-                                WHERE cm.round_num = ?
-                            """, (round_num,))
-                            total_size = cursor.fetchone()[0] or 0
-                            total_chunks = chunk_count
-                            min_round = max_round = round_num
-                    else:
-                        # Query all rounds from legacy tables
-                        cursor.execute("SELECT COUNT(*) FROM chunk_metadata")
-                        total_metadata = cursor.fetchone()[0]
-                        cursor.execute("SELECT COUNT(DISTINCT chunk_hash) FROM chunk_data")
-                        total_chunks = cursor.fetchone()[0]
-                        cursor.execute("SELECT SUM(LENGTH(data)) FROM chunk_data")
-                        total_size = cursor.fetchone()[0] or 0
-                        cursor.execute("SELECT MIN(round_num), MAX(round_num) FROM chunk_metadata")
-                        min_round, max_round = cursor.fetchone()
-                except sqlite3.Error:
-                    pass
-            
-            conn.close()
+                    # Query data from data database
+                    try:
+                        data_conn = self._get_optimized_connection(round_num=round_num, table_type='data')
+                        data_cursor = data_conn.cursor()
+                        data_cursor.execute("SELECT COUNT(*) FROM chunk_data")
+                        total_chunks += data_cursor.fetchone()[0]
+                        data_cursor.execute("SELECT SUM(LENGTH(data)) FROM chunk_data")
+                        round_size = data_cursor.fetchone()[0] or 0
+                        total_size += round_size
+                        data_conn.close()
+                    except (sqlite3.Error, FileNotFoundError):
+                        pass
             
             return {
                 'client_id': self.client_id,
@@ -1008,59 +1071,71 @@ class ChunkManager:
         return self._cleanup_old_rounds_by_files(keep_rounds)
     
     def _cleanup_old_database_files(self, keep_rounds: int = 2):
-        """Ultra-fast cleanup by deleting entire round database files
+        """Ultra-fast cleanup by deleting entire round database files using glob patterns
         
         Args:
             keep_rounds: Number of most recent rounds to keep
         """
         try:
-            # Find all round database files
-            round_files = []
+            import glob
             client_name = f"client_{self.client_id}"
-            pattern = f"{client_name}_chunks_r"
             
-            for filename in os.listdir(self.db_dir):
-                if filename.startswith(pattern) and filename.endswith('.db'):
-                    try:
-                        # Extract round number from filename
-                        round_part = filename.replace(pattern, '').replace('.db', '')
-                        round_num = int(round_part)
-                        full_path = os.path.join(self.db_dir, filename)
-                        round_files.append((round_num, full_path, filename))
-                    except ValueError:
-                        continue
+            # Find all rounds that exist
+            pattern = os.path.join(self.db_dir, f"{client_name}_*_r*.db")
+            all_files = glob.glob(pattern)
             
-            # Sort by round number (newest first)
-            round_files.sort(key=lambda x: x[0], reverse=True)
+            # Extract unique round numbers
+            rounds = set()
+            for file_path in all_files:
+                filename = os.path.basename(file_path)
+                try:
+                    # Extract round number: client_X_TYPE_rN.db -> N
+                    round_part = filename.split('_r')[-1].replace('.db', '')
+                    round_num = int(round_part)
+                    rounds.add(round_num)
+                except (ValueError, IndexError):
+                    continue
             
-            if len(round_files) <= keep_rounds:
-                logger.debug(f"🧹 Only {len(round_files)} round databases exist, no cleanup needed")
+            # Sort rounds (newest first)
+            sorted_rounds = sorted(rounds, reverse=True)
+            
+            if len(sorted_rounds) <= keep_rounds:
+                logger.debug(f"🧹 Only {len(sorted_rounds)} rounds exist, no cleanup needed")
                 return
             
-            # Files to delete (keep the most recent ones)
-            files_to_delete = round_files[keep_rounds:]
-            logger.info(f"🧹 Deleting {len(files_to_delete)} old round database files")
+            # Rounds to delete (keep the most recent ones)
+            rounds_to_delete = sorted_rounds[keep_rounds:]
+            logger.info(f"🧹 Deleting {len(rounds_to_delete)} old rounds")
             
             start_time = time.time()
             deleted_files = 0
             total_size_freed = 0
             
-            for round_num, file_path, filename in files_to_delete:
-                try:
-                    # Get file size before deletion
-                    if os.path.exists(file_path):
-                        file_size = os.path.getsize(file_path)
-                        os.remove(file_path)
-                        total_size_freed += file_size
-                        deleted_files += 1
-                        logger.debug(f"🗑️ Deleted round {round_num} database: {filename}")
-                        
-                        # Remove from cached paths
-                        if round_num in self.round_db_paths:
-                            del self.round_db_paths[round_num]
-                        
-                except Exception as e:
-                    logger.warning(f"Failed to delete database file {file_path}: {e}")
+            for round_num in rounds_to_delete:
+                # Delete all database files for this round using glob
+                round_pattern = os.path.join(self.db_dir, f"{client_name}_*_r{round_num}.db")
+                round_files = glob.glob(round_pattern)
+                
+                for file_path in round_files:
+                    try:
+                        if os.path.exists(file_path):
+                            file_size = os.path.getsize(file_path)
+                            os.remove(file_path)
+                            total_size_freed += file_size
+                            deleted_files += 1
+                            filename = os.path.basename(file_path)
+                            logger.debug(f"🗑️ Deleted: {filename}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete {file_path}: {e}")
+                
+                # Clean cache for this round (both old and new formats)
+                if round_num in self.round_db_paths:
+                    del self.round_db_paths[round_num]
+                
+                # Clean new cache format
+                keys_to_remove = [key for key in self.round_db_paths.keys() if isinstance(key, tuple) and key[0] == round_num]
+                for key in keys_to_remove:
+                    del self.round_db_paths[key]
             
             elapsed = time.time() - start_time
             
@@ -1182,8 +1257,12 @@ class ChunkManager:
             if max_mtime == 0:
                 try:
                     import glob
-                    pattern = os.path.join(self.db_dir, f"client_{self.client_id}_chunks_r*.db")
-                    db_files = glob.glob(pattern)
+                    # 🔧 COMPATIBILITY FIX: Support both legacy and split database patterns
+                    legacy_pattern = os.path.join(self.db_dir, f"client_{self.client_id}_chunks_r*.db")
+                    split_pattern = os.path.join(self.db_dir, f"client_{self.client_id}_*_r*.db")
+                    legacy_files = glob.glob(legacy_pattern)
+                    split_files = glob.glob(split_pattern)
+                    db_files = legacy_files + split_files
                     
                     for db_file in db_files:
                         if os.path.exists(db_file):
@@ -1230,8 +1309,12 @@ class ChunkManager:
             
             # Get all existing round database files
             import glob
-            pattern = os.path.join(self.db_dir, f"client_{self.client_id}_chunks_r*.db")
-            db_files = glob.glob(pattern)
+            # 🔧 COMPATIBILITY FIX: Support both legacy and split database patterns
+            legacy_pattern = os.path.join(self.db_dir, f"client_{self.client_id}_chunks_r*.db")
+            split_pattern = os.path.join(self.db_dir, f"client_{self.client_id}_*_r*.db")
+            legacy_files = glob.glob(legacy_pattern)
+            split_files = glob.glob(split_pattern)
+            db_files = legacy_files + split_files
             
             for db_file in db_files:
                 try:
@@ -1240,11 +1323,11 @@ class ChunkManager:
                     round_str = basename.split('_r')[1].replace('.db', '')
                     round_num = int(round_str)
                     
-                    # Connect to this round's database
-                    conn = self._get_optimized_connection(round_num=round_num)
+                    # Connect to this round's metadata database
+                    conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
                     cursor = conn.cursor()
                     
-                    # Query recent chunks from this round database
+                    # Query recent chunks from this round metadata database
                     cursor.execute('''
                         SELECT chunk_id, chunk_hash, flat_size, created_at
                         FROM chunk_metadata
@@ -1329,8 +1412,12 @@ class ChunkManager:
         try:
             # Get all existing round database files
             import glob
-            pattern = os.path.join(self.db_dir, f"client_{self.client_id}_chunks_r*.db")
-            db_files = glob.glob(pattern)
+            # 🔧 COMPATIBILITY FIX: Support both legacy and split database patterns
+            legacy_pattern = os.path.join(self.db_dir, f"client_{self.client_id}_chunks_r*.db")
+            split_pattern = os.path.join(self.db_dir, f"client_{self.client_id}_*_r*.db")
+            legacy_files = glob.glob(legacy_pattern)
+            split_files = glob.glob(split_pattern)
+            db_files = legacy_files + split_files
             
             for db_file in db_files:
                 try:
@@ -1339,11 +1426,11 @@ class ChunkManager:
                     round_str = basename.split('_r')[1].replace('.db', '')
                     round_num = int(round_str)
                     
-                    # Connect to this round's database
-                    conn = self._get_optimized_connection(round_num=round_num)
+                    # Connect to this round's metadata database
+                    conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
                     cursor = conn.cursor()
                     
-                    # Query all chunks from this round database
+                    # Query all chunks from this round metadata database
                     cursor.execute('''
                         SELECT chunk_id, chunk_hash, flat_size, created_at
                         FROM chunk_metadata
@@ -1377,6 +1464,7 @@ class ChunkManager:
     
     # =================== BitTorrent Extension Methods ===================
     
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def _init_bittorrent_tables(self, round_num=0):
         """[UPDATED] Initialize BitTorrent tables using round-specific database files
         
@@ -1391,6 +1479,7 @@ class ChunkManager:
         self._ensure_round_database_exists(round_num)
         logger.debug(f"[ChunkManager] BitTorrent database initialized for client {self.client_id} round {round_num}")
     
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def get_global_bitfield(self, round_num=None):
         """
         Fix: Compatible with old code, support optional round_num parameter
@@ -1402,47 +1491,52 @@ class ChunkManager:
             
         bitfield = {}
         
-        # 🚀 NEW: Check if round-specific database exists
-        db_path = self._get_round_db_path(round_num)
-        if not os.path.exists(db_path):
-            logger.debug(f"No database found for round {round_num}")
+        # 🚀 NEW: Check if round-specific metadata database exists
+        if not os.path.exists(self._get_round_db_path(round_num, 'metadata')):
+            logger.debug(f"No metadata database found for round {round_num}")
             return bitfield
         
-        conn = self._get_optimized_connection(round_num)
-        cursor = conn.cursor()
-        
         try:
-            # Query locally saved chunks from round-specific database
-            cursor.execute('''
-                SELECT chunk_id FROM chunk_metadata
-            ''')
+            # Query locally saved chunks from metadata database
+            metadata_conn = self._get_optimized_connection(round_num, 'metadata')
+            metadata_cursor = metadata_conn.cursor()
+            try:
+                metadata_cursor.execute('''
+                    SELECT chunk_id FROM chunk_metadata
+                ''')
+                local_chunks = metadata_cursor.fetchall()
+                logger.debug(f"[ChunkManager] Client {self.client_id}: Found {len(local_chunks)} local chunks for round {round_num}")
+                
+                for (chunk_id,) in local_chunks:
+                    # Local chunks
+                    bitfield[(round_num, self.client_id, chunk_id)] = True
+            finally:
+                metadata_conn.close()
             
-            local_chunks = cursor.fetchall()
-            logger.debug(f"[ChunkManager] Client {self.client_id}: Found {len(local_chunks)} local chunks for round {round_num}")
-            
-            for (chunk_id,) in local_chunks:
-                # Local chunks
-                bitfield[(round_num, self.client_id, chunk_id)] = True
-            
-            # Query BitTorrent exchanged chunks from round-specific database
-            cursor.execute('''
-                SELECT source_client_id, chunk_id FROM bt_chunks
-                WHERE holder_client_id = ?
-            ''', (self.client_id,))
-            
-            for source_id, chunk_id in cursor.fetchall():
-                bitfield[(round_num, source_id, chunk_id)] = True
+            # Query BitTorrent exchanged chunks from bt database
+            bt_conn = self._get_optimized_connection(round_num, 'bt')
+            bt_cursor = bt_conn.cursor()
+            try:
+                bt_cursor.execute('''
+                    SELECT source_client_id, chunk_id FROM bt_chunks
+                    WHERE holder_client_id = ?
+                ''', (self.client_id,))
+                
+                for source_id, chunk_id in bt_cursor.fetchall():
+                    bitfield[(round_num, source_id, chunk_id)] = True
+            finally:
+                bt_conn.close()
                 
         except sqlite3.OperationalError:
-            # If round-specific database doesn't exist, create it
-            logger.warning(f"[ChunkManager] Round-specific database not found for round {round_num}, creating...")
-            conn.close()
-            self._ensure_round_database_exists(round_num)
+            # If table-specific databases don't exist, create them
+            logger.warning(f"[ChunkManager] Table-specific databases not found for round {round_num}, creating...")
+            self._ensure_table_database_exists(round_num, 'metadata')
+            self._ensure_table_database_exists(round_num, 'bt')
             return self.get_global_bitfield(round_num)
         
-        conn.close()
         return bitfield
     
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def save_remote_chunk(self, round_num, source_client_id, chunk_id, chunk_data):
         """
         🚀 OPTIMIZED: Save BitTorrent exchanged chunk to round-specific database
@@ -1455,29 +1549,35 @@ class ChunkManager:
         serialized_data = pickle.dumps(chunk_data)
         chunk_hash = hashlib.sha256(serialized_data).hexdigest()
         
-        # 🚀 NEW: Ensure round-specific database exists
+        # 🚀 NEW: Ensure table-specific databases exist
         try:
-            self._ensure_round_database_exists(round_num)
+            self._ensure_table_database_exists(round_num, 'bt')
+            self._ensure_table_database_exists(round_num, 'data')
             
-            # Connect to round-specific database
-            conn = self._get_optimized_connection(round_num)
-            cursor = conn.cursor()
+            # Write to bt_chunks table in bt-specific database
+            bt_conn = self._get_optimized_connection(round_num, 'bt')
+            bt_cursor = bt_conn.cursor()
+            try:
+                bt_cursor.execute('''
+                    INSERT OR REPLACE INTO bt_chunks 
+                    (source_client_id, chunk_id, chunk_hash, holder_client_id, is_verified)
+                    VALUES (?, ?, ?, ?, 1)
+                ''', (source_client_id, chunk_id, chunk_hash, self.client_id))
+                bt_conn.commit()
+            finally:
+                bt_conn.close()
             
-            # Write to bt_chunks table in round-specific database
-            cursor.execute('''
-                INSERT OR REPLACE INTO bt_chunks 
-                (source_client_id, chunk_id, chunk_hash, holder_client_id, is_verified)
-                VALUES (?, ?, ?, ?, 1)
-            ''', (source_client_id, chunk_id, chunk_hash, self.client_id))
-            
-            # Write to chunk_data table in round-specific database  
-            cursor.execute('''
-                INSERT OR REPLACE INTO chunk_data (chunk_hash, data)
-                VALUES (?, ?)
-            ''', (chunk_hash, serialized_data))  # 🚀 Use pre-serialized data
-            
-            conn.commit()
-            conn.close()
+            # Write to chunk_data table in data-specific database  
+            data_conn = self._get_optimized_connection(round_num, 'data')
+            data_cursor = data_conn.cursor()
+            try:
+                data_cursor.execute('''
+                    INSERT OR REPLACE INTO chunk_data (chunk_hash, data)
+                    VALUES (?, ?)
+                ''', (chunk_hash, serialized_data))  # 🚀 Use pre-serialized data
+                data_conn.commit()
+            finally:
+                data_conn.close()
             
             logger.debug(f"[ChunkManager] Saved chunk {source_client_id}:{chunk_id} to round {round_num} database")
             
@@ -1505,40 +1605,67 @@ class ChunkManager:
             )
             self.change_callback(chunk_info)
     
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def get_chunk_data(self, round_num, source_client_id, chunk_id):
         """
         🚀 ENHANCED: Get chunk data with fallback to write queue
         """
         # 🚀 NEW: Check if round-specific database exists
-        db_path = self._get_round_db_path(round_num)
-        if not os.path.exists(db_path):
-            logger.debug(f"No database found for round {round_num}")
-            # 🚀 NEW: 数据库不存在时，也尝试从写入队列查找
+        if not os.path.exists(self._get_round_db_path(round_num, 'data')):
+            logger.debug(f"No data database found for round {round_num}")
+            # 🚀 NEW: When database doesn't exist, also try to find from write queue
             if self.chunk_write_queue:
                 return self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
             return None
         
-        conn = self._get_optimized_connection(round_num)
-        cursor = conn.cursor()
-        
         try:
-            # First query local chunks
-            if source_client_id == self.client_id:
-                cursor.execute('''
-                    SELECT cd.data FROM chunk_metadata cm
-                    JOIN chunk_data cd ON cm.chunk_hash = cd.chunk_hash
-                    WHERE cm.chunk_id = ?
-                ''', (chunk_id,))
-            else:
-                # Query BitTorrent exchanged chunks
-                cursor.execute('''
-                    SELECT cd.data FROM bt_chunks bc
-                    JOIN chunk_data cd ON bc.chunk_hash = cd.chunk_hash
-                    WHERE bc.source_client_id = ? 
-                    AND bc.chunk_id = ? AND bc.holder_client_id = ?
-                ''', (source_client_id, chunk_id, self.client_id))
+            chunk_hash = None
             
-            result = cursor.fetchone()
+            # First get chunk_hash from appropriate table
+            if source_client_id == self.client_id:
+                # Query local chunks from metadata database
+                metadata_conn = self._get_optimized_connection(round_num, 'metadata')
+                metadata_cursor = metadata_conn.cursor()
+                try:
+                    metadata_cursor.execute('''
+                        SELECT chunk_hash FROM chunk_metadata
+                        WHERE chunk_id = ?
+                    ''', (chunk_id,))
+                    hash_result = metadata_cursor.fetchone()
+                    if hash_result:
+                        chunk_hash = hash_result[0]
+                finally:
+                    metadata_conn.close()
+            else:
+                # Query BitTorrent exchanged chunks from bt database
+                bt_conn = self._get_optimized_connection(round_num, 'bt')
+                bt_cursor = bt_conn.cursor()
+                try:
+                    bt_cursor.execute('''
+                        SELECT chunk_hash FROM bt_chunks
+                        WHERE source_client_id = ? AND chunk_id = ? AND holder_client_id = ?
+                    ''', (source_client_id, chunk_id, self.client_id))
+                    hash_result = bt_cursor.fetchone()
+                    if hash_result:
+                        chunk_hash = hash_result[0]
+                finally:
+                    bt_conn.close()
+            
+            # If we found chunk_hash, get data from data database
+            if chunk_hash:
+                data_conn = self._get_optimized_connection(round_num, 'data')
+                data_cursor = data_conn.cursor()
+                try:
+                    data_cursor.execute('''
+                        SELECT data FROM chunk_data WHERE chunk_hash = ?
+                    ''', (chunk_hash,))
+                    result = data_cursor.fetchone()
+                finally:
+                    data_conn.close()
+            else:
+                result = None
+            
+            # result already obtained from database connection above
             logger.debug(f"[ChunkManager] Client {self.client_id}: Database query result for chunk ({round_num}, {source_client_id}, {chunk_id}): {result is not None}")
             
             if result:
@@ -1550,7 +1677,7 @@ class ChunkManager:
                     logger.error(f"[ChunkManager] Client {self.client_id}: Failed to unpickle chunk data: {pickle_error}")
                     return None
             else:
-                # 🚀 NEW: 数据库中没找到，尝试从写入队列查找
+                # 🚀 NEW: Not found in database, try to find from write queue
                 logger.debug(f"[ChunkManager] Client {self.client_id}: No result in database, checking write queue...")
                 if self.chunk_write_queue:
                     pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
@@ -1568,7 +1695,7 @@ class ChunkManager:
             logger.error(f"[ChunkManager] Client {self.client_id}: SQLite OperationalError in get_chunk_data: {e}")
             logger.error(f"[ChunkManager] Client {self.client_id}: Query params: round_num={round_num}, source_client_id={source_client_id}, chunk_id={chunk_id}")
             
-            # 🚀 NEW: 数据库错误时的回退机制
+            # 🚀 NEW: Fallback mechanism when database error occurs
             if self.chunk_write_queue:
                 logger.debug(f"[ChunkManager] Client {self.client_id}: Trying write queue due to database error...")
                 pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
@@ -1581,7 +1708,7 @@ class ChunkManager:
             # Database error
             logger.error(f"[ChunkManager] Client {self.client_id}: SQLite DatabaseError in get_chunk_data: {e}")
             
-            # 🚀 NEW: 数据库错误时的回退机制
+            # 🚀 NEW: Fallback mechanism when database error occurs
             if self.chunk_write_queue:
                 pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
                 if pending_chunk is not None:
@@ -1593,7 +1720,7 @@ class ChunkManager:
             # Other exception
             logger.error(f"[ChunkManager] Client {self.client_id}: Unexpected error in get_chunk_data: {e}")
             
-            # 🚀 NEW: 通用错误时的回退机制
+            # 🚀 NEW: General fallback mechanism when error occurs
             if self.chunk_write_queue:
                 try:
                     pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, source_client_id, chunk_id)
@@ -1604,20 +1731,22 @@ class ChunkManager:
                     logger.error(f"[ChunkManager] Client {self.client_id}: Error accessing write queue: {queue_error}")
             
             return None
-        finally:
-            conn.close()
     
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def start_bittorrent_session(self, round_num, expected_chunks):
         """Start BitTorrent exchange session using round-specific database"""
         try:
             # Ensure round-specific database and tables exist
             self._ensure_round_tables_exist(round_num)
             
-            # Connect to the round-specific database
-            conn = self._get_optimized_connection(round_num=round_num)
+            # Ensure sessions database exists
+            self._ensure_table_database_exists(round_num, 'sessions')
+            
+            # Connect to the sessions-specific database
+            conn = self._get_optimized_connection(round_num=round_num, table_type='sessions')
             cursor = conn.cursor()
             
-            # Insert session into round-specific database (no round suffix needed)
+            # Insert session into sessions database
             cursor.execute('''
                 INSERT OR REPLACE INTO bt_sessions
                 (start_time, status, total_chunks_expected)
@@ -1633,34 +1762,39 @@ class ChunkManager:
         
         logger.info(f"[ChunkManager] Started BitTorrent session for round {round_num}")
     
+    @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def finish_bittorrent_session(self, round_num, status='completed'):
         """End BitTorrent exchange session using round-specific database"""
         try:
-            # Check if round database exists
-            if not os.path.exists(self._get_round_db_path(round_num)):
-                logger.debug(f"No database found for round {round_num}")
+            # Check if bt database exists
+            if not os.path.exists(self._get_round_db_path(round_num, 'bt')):
+                logger.debug(f"No bt database found for round {round_num}")
                 return
                 
-            # Connect to the round-specific database
-            conn = self._get_optimized_connection(round_num=round_num)
-            cursor = conn.cursor()
+            # Count received chunks from bt-specific database
+            bt_conn = self._get_optimized_connection(round_num=round_num, table_type='bt')
+            bt_cursor = bt_conn.cursor()
+            try:
+                bt_cursor.execute('''
+                    SELECT COUNT(*) FROM bt_chunks
+                    WHERE holder_client_id = ?
+                ''', (self.client_id,))
+                chunks_received = bt_cursor.fetchone()[0]
+            finally:
+                bt_conn.close()
             
-            # Count received chunks from round-specific database (no table suffix needed)
-            cursor.execute('''
-                SELECT COUNT(*) FROM bt_chunks
-                WHERE holder_client_id = ?
-            ''', (self.client_id,))
-            chunks_received = cursor.fetchone()[0]
-            
-            # Update session status in round-specific database
-            cursor.execute('''
-                UPDATE bt_sessions
-                SET end_time = ?, status = ?, total_chunks_received = ?
-                WHERE id = 1
-            ''', (time.time(), status, chunks_received))
-            
-            conn.commit()
-            conn.close()
+            # Update session status in sessions-specific database
+            sessions_conn = self._get_optimized_connection(round_num=round_num, table_type='sessions')
+            sessions_cursor = sessions_conn.cursor()
+            try:
+                sessions_cursor.execute('''
+                    UPDATE bt_sessions
+                    SET end_time = ?, status = ?, total_chunks_received = ?
+                    WHERE id = 1
+                ''', (time.time(), status, chunks_received))
+                sessions_conn.commit()
+            finally:
+                sessions_conn.close()
             
             logger.info(f"[ChunkManager] Finished BitTorrent session for round {round_num}, status: {status}")
             
@@ -1685,48 +1819,52 @@ class ChunkManager:
             List[int]: Available client ID list
         """
         try:
-            # Check if round database exists
-            if not os.path.exists(self._get_round_db_path(round_num)):
-                logger.debug(f"No database found for round {round_num}")
+            # Check if metadata database exists
+            if not os.path.exists(self._get_round_db_path(round_num, 'metadata')):
+                logger.debug(f"No metadata database found for round {round_num}")
                 return []
                 
-            # Connect to round-specific database
-            conn = self._get_optimized_connection(round_num=round_num)
-            cursor = conn.cursor()
+            # Connect to round-specific metadata database
+            metadata_conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
+            metadata_cursor = metadata_conn.cursor()
             
             local_clients = []
             bt_clients = []
             
-            # Query clients with local chunk data from round-specific database
+            # Query clients with local chunk data from round-specific metadata database
             try:
-                cursor.execute('''
+                metadata_cursor.execute('''
                     SELECT DISTINCT ? as client_id
                     FROM chunk_metadata 
                     LIMIT 1
                 ''', (self.client_id,))
                 
-                local_result = cursor.fetchall()
+                local_result = metadata_cursor.fetchall()
                 local_clients = [row[0] for row in local_result] if local_result else []
             except sqlite3.Error:
                 pass  # Table doesn't exist
+            finally:
+                metadata_conn.close()
             
-            # Query clients in BitTorrent chunks from round-specific database
+            # Query clients in BitTorrent chunks from round-specific bt database
             try:
-                cursor.execute('''
+                bt_conn = self._get_optimized_connection(round_num=round_num, table_type='bt')
+                bt_cursor = bt_conn.cursor()
+                bt_cursor.execute('''
                     SELECT DISTINCT source_client_id 
                     FROM bt_chunks 
                     ORDER BY source_client_id
                 ''')
                 
-                bt_clients = [row[0] for row in cursor.fetchall()]
+                bt_clients = [row[0] for row in bt_cursor.fetchall()]
             except sqlite3.Error:
                 pass  # Table doesn't exist
+            finally:
+                bt_conn.close()
             
             # Merge and deduplicate
             all_clients = list(set(local_clients + bt_clients))
             all_clients.sort()
-            
-            conn.close()
             
             logger.debug(f"[ChunkManager] Round {round_num}: Found {len(all_clients)} clients with chunk data: {all_clients}")
             return all_clients
@@ -1747,58 +1885,65 @@ class ChunkManager:
             Dict: Reconstructed model parameter dictionary, return None if failed
         """
         try:
-            # Check if round database exists
-            if not os.path.exists(self._get_round_db_path(round_num)):
-                logger.debug(f"No database found for round {round_num}")
+            # Check if metadata database exists (at least one table should exist)
+            if not os.path.exists(self._get_round_db_path(round_num, 'metadata')):
+                logger.debug(f"No metadata database found for round {round_num}")
                 return None
                 
-            # Connect to round-specific database
-            conn = self._get_optimized_connection(round_num=round_num)
-            cursor = conn.cursor()
+            # Connect to appropriate table-specific database
+            local_chunks = []
             
-            # Query all chunks for this client from round-specific database
             if client_id == self.client_id:
-                # Local client - query local chunks from round database
+                # Local client - query local chunks from metadata database
                 try:
-                    cursor.execute('''
+                    metadata_conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
+                    metadata_cursor = metadata_conn.cursor()
+                    metadata_cursor.execute('''
                         SELECT chunk_id, chunk_hash 
                         FROM chunk_metadata
                         ORDER BY chunk_id
                     ''')
-                    local_chunks = cursor.fetchall()
+                    local_chunks = metadata_cursor.fetchall()
+                    metadata_conn.close()
                 except sqlite3.Error:
                     logger.debug(f"No chunk_metadata table in round {round_num} database")
                     local_chunks = []
             else:
-                # Remote client - query BitTorrent chunks from round database
+                # Remote client - query BitTorrent chunks from bt database
                 try:
-                    cursor.execute('''
+                    bt_conn = self._get_optimized_connection(round_num=round_num, table_type='bt')
+                    bt_cursor = bt_conn.cursor()
+                    bt_cursor.execute('''
                         SELECT chunk_id, chunk_hash 
                         FROM bt_chunks
                         WHERE source_client_id = ?
                         ORDER BY chunk_id
                     ''', (client_id,))
-                    local_chunks = cursor.fetchall()
+                    local_chunks = bt_cursor.fetchall()
+                    bt_conn.close()
                 except sqlite3.Error:
                     logger.debug(f"No bt_chunks table in round {round_num} database")
                     local_chunks = []
             
             if not local_chunks:
                 logger.warning(f"[ChunkManager] No chunks found for client {client_id}, round {round_num}")
-                conn.close()
                 return None
             
             # Reconstruct model parameters
             chunk_data_list = []
             missing_chunks = []
             
+            # Get chunk data from data database
+            data_conn = self._get_optimized_connection(round_num=round_num, table_type='data')
+            data_cursor = data_conn.cursor()
+            
             for chunk_id, chunk_hash in local_chunks:
-                # Get chunk data from round-specific database
+                # Get chunk data from data-specific database
                 try:
-                    cursor.execute('''
+                    data_cursor.execute('''
                         SELECT data FROM chunk_data WHERE chunk_hash = ?
                     ''', (chunk_hash,))
-                    result = cursor.fetchone()
+                    result = data_cursor.fetchone()
                 except sqlite3.Error:
                     result = None
                 
@@ -1809,12 +1954,13 @@ class ChunkManager:
                 else:
                     missing_chunks.append(chunk_id)
             
+            data_conn.close()
+            
             if missing_chunks:
                 logger.warning(f"[ChunkManager] Missing chunk data for client {client_id}, chunks: {missing_chunks}")
             
             if not chunk_data_list:
                 logger.error(f"[ChunkManager] No valid chunk data found for client {client_id}, round {round_num}")
-                conn.close()
                 return None
             
             # Sort by chunk_id
@@ -1824,18 +1970,22 @@ class ChunkManager:
             numpy_chunks = []
             parts_info_list = []
             
+            # Get metadata connection for parts_info queries
+            metadata_conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
+            metadata_cursor = metadata_conn.cursor()
+            
             for chunk_id, chunk_data in chunk_data_list:
                 # Deserialize chunk data
                 numpy_chunk = pickle.loads(chunk_data)
                 numpy_chunks.append(numpy_chunk)
                 
-                # Get corresponding parts_info from round-specific database
+                # Get corresponding parts_info from metadata database
                 try:
-                    cursor.execute('''
+                    metadata_cursor.execute('''
                         SELECT parts_info FROM chunk_metadata 
                         WHERE chunk_id = ?
                     ''', (chunk_id,))
-                    parts_result = cursor.fetchone()
+                    parts_result = metadata_cursor.fetchone()
                 except sqlite3.Error:
                     parts_result = None
                 
@@ -1843,7 +1993,7 @@ class ChunkManager:
                     parts_info = json.loads(parts_result[0])
                     parts_info_list.append((chunk_id, parts_info))
             
-            conn.close()
+            metadata_conn.close()
             
             # Concatenate all chunk data
             if len(numpy_chunks) == 0:
@@ -1950,38 +2100,47 @@ class ChunkManager:
             int: Sample count, return None if not found
         """
         try:
-            # Check if round database exists
-            if not os.path.exists(self._get_round_db_path(round_num)):
-                logger.debug(f"No database found for round {round_num}")
+            # Check if metadata database exists
+            if not os.path.exists(self._get_round_db_path(round_num, 'metadata')):
+                logger.debug(f"No metadata database found for round {round_num}")
                 return None
                 
-            # Connect to round-specific database
-            conn = self._get_optimized_connection(round_num=round_num)
-            cursor = conn.cursor()
+            # Database connections now handled per table type below
             
             # Check if we have chunks from this client for this round
             # Note: sample_size column doesn't exist in schema, using fallback approach
             
-            if client_id == self.client_id:
-                # Local client - check round-specific metadata table
-                try:
-                    cursor.execute('''
-                        SELECT COUNT(*) FROM chunk_metadata
-                    ''')
-                except sqlite3.Error:
-                    cursor.execute("SELECT 0")  # Return 0 if table doesn't exist
-            else:
-                # Remote client - check round-specific bt_chunks table
-                try:
-                    cursor.execute('''
-                        SELECT COUNT(*) FROM bt_chunks 
-                        WHERE source_client_id = ?
-                    ''', (client_id,))
-                except sqlite3.Error:
-                    cursor.execute("SELECT 0")  # Return 0 if table doesn't exist
+            result = None
             
-            result = cursor.fetchone()
-            conn.close()
+            if client_id == self.client_id:
+                # Local client - check metadata database
+                try:
+                    metadata_conn = self._get_optimized_connection(round_num, 'metadata')
+                    metadata_cursor = metadata_conn.cursor()
+                    try:
+                        metadata_cursor.execute('''
+                            SELECT COUNT(*) FROM chunk_metadata
+                        ''')
+                        result = metadata_cursor.fetchone()
+                    finally:
+                        metadata_conn.close()
+                except sqlite3.Error:
+                    result = (0,)  # Return 0 if table doesn't exist
+            else:
+                # Remote client - check bt database
+                try:
+                    bt_conn = self._get_optimized_connection(round_num, 'bt')
+                    bt_cursor = bt_conn.cursor()
+                    try:
+                        bt_cursor.execute('''
+                            SELECT COUNT(*) FROM bt_chunks 
+                            WHERE source_client_id = ?
+                        ''', (client_id,))
+                        result = bt_cursor.fetchone()
+                    finally:
+                        bt_conn.close()
+                except sqlite3.Error:
+                    result = (0,)  # Return 0 if table doesn't exist
             
             if result and result[0] > 0:
                 # Return fixed sample size for BitTorrent FL (toy dataset default)

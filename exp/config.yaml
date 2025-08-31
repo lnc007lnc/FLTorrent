@@ -48,6 +48,10 @@ bittorrent:
   batch_have_interval: 1.0
   chunk_selection: rarest_first
   cleanup_policy: separate
+  # Multi-factor chunk sorting parameters
+  rarity_weight: 0.01        # tau: rarity weight
+  rarity_adjustment: 1.0e-6  # eps: rarity adjustment parameter
+  random_noise: 1.0e-4       # gamma: random noise strength
   enable: false
   enable_have_suppression: true
   end_game_threshold: 10

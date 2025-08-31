@@ -770,11 +770,11 @@ class Client(BaseClient):
             self.neighbor_addresses = neighbor_addresses  # 🔧 Save address information
             logger.info(f"[BT] Client {self.ID}: Saved topology neighbors for BitTorrent: {self.topology_neighbors}")
             
-            # 🚀 STREAMING OPTIMIZATION: 异步创建streaming通道，不阻塞拓扑构建
+            # 🚀 STREAMING OPTIMIZATION: Asynchronously create streaming channels, don't block topology construction
             if hasattr(self, '_streaming_manager') and self._streaming_manager:
                 logger.info(f"[StreamingTopology] Client {self.ID}: Starting async streaming channel creation")
                 
-                # 构建neighbor地址映射: {peer_id: (host, port)}
+                # Build neighbor address mapping: {peer_id: (host, port)}
                 streaming_addresses = {}
                 for neighbor_id in neighbors_to_connect:
                     if neighbor_id in neighbor_addresses:
@@ -785,7 +785,7 @@ class Client(BaseClient):
                             streaming_addresses[neighbor_id] = (addr_info[0], addr_info[1])
                 
                 if streaming_addresses:
-                    # 🔧 关键修复：在独立线程中创建streaming通道，避免阻塞拓扑构建
+                    # 🔧 Critical fix: Create streaming channels in separate thread, avoid blocking topology construction
                     import threading
                     def create_streaming_channels_async():
                         try:
@@ -1325,7 +1325,7 @@ class Client(BaseClient):
                     break
                 
                 # Output progress every 100 iterations
-                if iteration % 100 == 1:
+                if iteration % 10 == 1:
                     # 🆕 FIX: Safe access to bt_manager - check if still exists and not stopped
                     if self.bt_manager and not self.bt_manager.is_stopped:
                         current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
@@ -1375,10 +1375,10 @@ class Client(BaseClient):
             # 4. Report to Server after completion
             self._report_bittorrent_completion()
             
-            # ✅ KEEP ALIVE: Keep bt_manager for serving other peers (轮次级生命周期管理)
+            # ✅ KEEP ALIVE: Keep bt_manager for serving other peers (round-level lifecycle management)
             logger.info(f"[BT] Client {self.ID}: BitTorrent download completed, but keeping manager alive for serving other peers")
             if hasattr(self, 'bt_manager'):
-                self.bt_manager.is_download_complete = True  # 标记下载完成，进入做种模式
+                self.bt_manager.is_download_complete = True  # Mark download complete, enter seeding mode
             
         except Exception as e:
             import traceback
@@ -1461,32 +1461,32 @@ class Client(BaseClient):
     def callback_funcs_for_unchoke(self, message):
         """Handle unchoke message"""
         if not hasattr(self, 'bt_manager') or self.bt_manager is None:
-            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering unchoke message from {message.sender}")
+            logger.debug(f"[BT] Client {self.ID}: bt_manager not ready, buffering unchoke message from {message.sender}")
             self.bt_message_buffer.append(('unchoke', message))
             return
         self.bt_manager.handle_unchoke(message.sender)
         
     def callback_funcs_for_request(self, message):
         """Handle chunk request"""
-        # 🔍 DEBUG LOG: 详细的接收日志 - 扩展显示完整消息信息
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: RECEIVED chunk REQUEST from peer {message.sender}")
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: 📋 FULL MESSAGE DEBUG:")
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - msg_type: {message.msg_type}")  
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - sender: {message.sender}")
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - receiver: {message.receiver}")
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - state: {message.state}")
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - timestamp: {getattr(message, 'timestamp', 'N/A')}")
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - content: {message.content}")
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: Processing request for chunk ({message.content['round_num']}, {message.content['source_client_id']}, {message.content['chunk_id']})")
+        # 🔍 DEBUG LOG: Detailed receive log - extended display of complete message information
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: RECEIVED chunk REQUEST from peer {message.sender}")
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: 📋 FULL MESSAGE DEBUG:")
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - msg_type: {message.msg_type}")  
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - sender: {message.sender}")
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - receiver: {message.receiver}")
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - state: {message.state}")
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - timestamp: {getattr(message, 'timestamp', 'N/A')}")
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - content: {message.content}")
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: Processing request for chunk ({message.content['round_num']}, {message.content['source_client_id']}, {message.content['chunk_id']})")
         
         logger.debug(f"[BT] Client {self.ID}: Received request from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
         if not hasattr(self, 'bt_manager') or self.bt_manager is None:
-            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering request message from {message.sender}")
+            logger.debug(f"[BT] Client {self.ID}: bt_manager not ready, buffering request message from {message.sender}")
             self.bt_message_buffer.append(('request', message))
             return
         
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: Calling bt_manager.handle_request for peer {message.sender}")
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: Calling bt_manager.handle_request for peer {message.sender}")
             
         # 🔴 Pass round_num to handle_request
         self.bt_manager.handle_request(
@@ -1496,23 +1496,23 @@ class Client(BaseClient):
             message.content['chunk_id']
         )
         
-        logger.info(f"🎯 [BT-REQ-RECV] Client {self.ID}: bt_manager.handle_request COMPLETED for peer {message.sender}")
+        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: bt_manager.handle_request COMPLETED for peer {message.sender}")
         
     def callback_funcs_for_piece(self, message):
         """Handle chunk data"""
-        # 🔍 DEBUG LOG: 详细的piece接收日志
-        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: RECEIVED chunk PIECE from peer {message.sender}")
-        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: Piece content keys = {list(message.content.keys())}")
-        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: Processing piece for chunk ({message.content['round_num']}, {message.content['source_client_id']}, {message.content['chunk_id']})")
+        # 🔍 DEBUG LOG: Detailed piece receive log
+        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: RECEIVED chunk PIECE from peer {message.sender}")
+        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: Piece content keys = {list(message.content.keys())}")
+        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: Processing piece for chunk ({message.content['round_num']}, {message.content['source_client_id']}, {message.content['chunk_id']})")
         
         logger.debug(f"[BT] Client {self.ID}: Received piece from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
         
         if not hasattr(self, 'bt_manager') or self.bt_manager is None:
-            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering piece message from {message.sender}")
+            logger.debug(f"[BT] Client {self.ID}: bt_manager not ready, buffering piece message from {message.sender}")
             self.bt_message_buffer.append(('piece', message))
             return
         
-        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: Calling bt_manager.handle_piece for peer {message.sender}")
+        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: Calling bt_manager.handle_piece for peer {message.sender}")
             
         self.bt_manager.handle_piece(
             message.sender,
@@ -1523,12 +1523,12 @@ class Client(BaseClient):
             message.content['checksum']
         )
         
-        logger.info(f"📥 [BT-PIECE-RECV] Client {self.ID}: bt_manager.handle_piece COMPLETED for peer {message.sender}")
+        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: bt_manager.handle_piece COMPLETED for peer {message.sender}")
         
     def callback_funcs_for_cancel(self, message):
         """Handle cancel message"""
         if not hasattr(self, 'bt_manager') or self.bt_manager is None:
-            logger.info(f"[BT] Client {self.ID}: bt_manager not ready, buffering cancel message from {message.sender}")
+            logger.debug(f"[BT] Client {self.ID}: bt_manager not ready, buffering cancel message from {message.sender}")
             self.bt_message_buffer.append(('cancel', message))
             return
             
@@ -1574,7 +1574,7 @@ class Client(BaseClient):
                     })
         )
         
-        logger.info(f"[BT] Client {self.ID}: Reported completion to server")
+        logger.debug(f"[BT] Client {self.ID}: Reported completion to server")
         
     def _report_bittorrent_completion_failure(self):
         """🐛 Bug Fix 33: Report BitTorrent failure"""

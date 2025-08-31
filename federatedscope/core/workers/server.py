@@ -1213,20 +1213,35 @@ class Server(BaseServer, ConnectionHandlerMixin):
         Arguments:
             message: The received message
         """
+        
+        # 🔍 DEBUG: Log received join message details
+        logger.info(f"🔗 [JOIN] Server received join message - type: {message.msg_type}, sender: {message.sender}")
+        logger.debug(f"🔗 [JOIN] Message content: {message.content}")
+        logger.debug(f"🔗 [JOIN] Current joined clients: {self.join_in_client_num}/{self.client_num}")
 
         if 'info' in message.msg_type:
             sender, info = message.sender, message.content
+            logger.info(f"🔗 [JOIN-INFO] Processing join info from client {sender}")
+            logger.debug(f"🔗 [JOIN-INFO] Required info fields: {self._cfg.federate.join_in_info}")
+            logger.debug(f"🔗 [JOIN-INFO] Received info: {info}")
+            
             for key in self._cfg.federate.join_in_info:
                 assert key in info
             self.join_in_info[sender] = info
-            logger.info('Server: Client #{:d} has joined in !'.format(sender))
+            logger.info(f'🔗 [JOIN-INFO] ✅ Client #{sender} info processed successfully! Total info received: {len(self.join_in_info)}')
         else:
+            logger.info(f"🔗 [JOIN] Processing initial join request - current count: {self.join_in_client_num}")
             self.join_in_client_num += 1
             sender, address = message.sender, message.content
+            logger.info(f"🔗 [JOIN] Client joining with sender={sender}, address={address}")
+            
             if int(sender) == -1:  # assign number to client
                 sender = self.join_in_client_num
+                logger.info(f"🔗 [JOIN] 🆔 Assigning new client ID: {sender}")
+                logger.debug(f"🔗 [JOIN] Adding neighbor {sender} with address {address}")
                 self.comm_manager.add_neighbors(neighbor_id=sender,
                                                 address=address)
+                logger.info(f"🔗 [JOIN] 📤 Sending client ID assignment to client {sender}")
                 self.comm_manager.send(
                     Message(msg_type='assign_client_id',
                             sender=self.ID,
@@ -1235,10 +1250,14 @@ class Server(BaseServer, ConnectionHandlerMixin):
                             timestamp=self.cur_timestamp,
                             content=str(sender)))
             else:
+                logger.info(f"🔗 [JOIN] Client already has ID: {sender}")
+                logger.debug(f"🔗 [JOIN] Adding neighbor {sender} with address {address}")
                 self.comm_manager.add_neighbors(neighbor_id=sender,
                                                 address=address)
 
+            # Request additional info if needed
             if len(self._cfg.federate.join_in_info) != 0:
+                logger.info(f"🔗 [JOIN] 📋 Requesting additional info from client {sender}: {self._cfg.federate.join_in_info}")
                 self.comm_manager.send(
                     Message(msg_type='ask_for_join_in_info',
                             sender=self.ID,
@@ -1246,7 +1265,11 @@ class Server(BaseServer, ConnectionHandlerMixin):
                             state=self.state,
                             timestamp=self.cur_timestamp,
                             content=self._cfg.federate.join_in_info.copy()))
+            
+            logger.info(f'🔗 [JOIN] ✅ Client #{sender} has successfully joined! Progress: {self.join_in_client_num}/{self.client_num}')
 
+        # Check if we can start training
+        logger.debug(f"🔗 [JOIN] Checking if ready to start - joined: {self.join_in_client_num}, target: {self.client_num}")
         self.trigger_for_start()
 
     def callback_funcs_for_metrics(self, message: Message):

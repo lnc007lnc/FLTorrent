@@ -65,28 +65,28 @@ class gRPCComServeFuncServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def sendMessage(self, request, context):
-        """🚀 原有的Unary RPC (兼容性)
+        """🚀 Original Unary RPC (compatibility)
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def streamChunks(self, request_iterator, context):
-        """🚀 新增：双向流式RPC用于chunk传输
+        """🚀 New: bidirectional streaming RPC for chunk transmission
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def downloadChunks(self, request, context):
-        """🚀 新增：服务端流式RPC用于批量chunk下载
+        """🚀 New: server-side streaming RPC for batch chunk download
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def uploadChunks(self, request_iterator, context):
-        """🚀 新增：客户端流式RPC用于批量chunk上传  
+        """🚀 New: client-side streaming RPC for batch chunk upload  
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
