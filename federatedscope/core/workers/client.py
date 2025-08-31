@@ -1035,7 +1035,7 @@ class Client(BaseClient):
             for client_id in available_clients:
                 try:
                     # Reconstruct model parameters from chunks
-                    model_params = self.chunk_manager.reconstruct_model_from_chunks(client_id, round_num)
+                    model_params = self.chunk_manager.reconstruct_model_from_client_chunks(client_id, round_num)
                     if model_params is None:
                         logger.warning(f"[BT-FL] Client {self.ID}: Failed to reconstruct model for client {client_id}")
                         continue
