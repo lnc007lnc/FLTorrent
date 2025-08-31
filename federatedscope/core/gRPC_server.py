@@ -20,13 +20,13 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
         # 🚀 CRITICAL FIX: Add chunk_manager reference for data access (will be set by client)
         self.chunk_manager = chunk_manager
         
-        # 🔧 FIX: 单例线程管理 - 平时待机，需要时启动
+        # 🔧 FIX: Singleton thread management - standby mode normally, start when needed
         self._background_processor = None
         self._processor_lock = threading.Lock()
-        self._active_uploads = 0  # 活跃上传连接计数器
+        self._active_uploads = 0  # active upload connection counter
     
     def _ensure_background_processor(self):
-        """🔧 懒加载：只在需要时启动后台处理线程"""
+        """🔧 Lazy loading: only start background processing thread when needed"""
         with self._processor_lock:
             if self._background_processor is None or not self._background_processor.is_alive():
                 self._background_processor = threading.Thread(
@@ -38,30 +38,30 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 logger.info("[🎯 gRPCServer] 🔧 Background processor started (lazy-loaded)")
     
     def _background_chunk_processor(self):
-        """🔧 共享的后台处理线程 - 待机模式，处理所有客户端的chunk数据"""
+        """🔧 Shared background processing thread - standby mode, processes chunk data for all clients"""
         logger.info("[🎯 gRPCServer] 🚇 Background processor thread started, entering standby mode")
         
         while True:
             try:
-                # 待机模式：当没有活跃连接时休眠
+                # Standby mode: sleep when no active connections
                 if self._active_uploads == 0:
-                    time.sleep(0.1)  # 100ms待机检查间隔
+                    time.sleep(0.1)  # 100ms standby check interval
                     continue
                 
-                # 处理模式：当有活跃连接时处理消息队列
-                # 这里可以添加实际的chunk处理逻辑
-                time.sleep(0.01)  # 10ms处理间隔
+                # Processing mode: Process message queue when there are active connections
+                # Actual chunk processing logic can be added here
+                time.sleep(0.01)  # 10ms processing interval
                 
             except Exception as e:
                 logger.error(f"[🎯 gRPCServer] 🚇 Background processor error: {e}")
-                time.sleep(1.0)  # 错误恢复间隔
+                time.sleep(1.0)  # Error recovery interval
         
     def sendMessage(self, request, context):
         self.msg_queue.append(request)
         return gRPC_comm_manager_pb2.MessageResponse(msg='ACK')
         
     def streamChunks(self, request_iterator, context):
-        """🚀 双向streaming RPC for chunk control messages"""
+        """🚀 Bidirectional streaming RPC for chunk control messages"""
         logger.debug("[gRPCServer] streamChunks method called")
         logger.debug(f"[🔍 gRPCServer] streamChunks called from peer: {context.peer()}")
         
@@ -101,68 +101,68 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             )
             
     def uploadChunks(self, request_iterator, context):
-        """🚀 优化2：增强的地下管道模式 - 永不停止的高性能chunk上传处理"""
+        """🚀 Optimization 2: Enhanced underground pipeline mode - Never-stopping high-performance chunk upload processing"""
         logger.debug("[🎯 gRPCServer] 📤 Enhanced upload pipeline started - UNDERGROUND MODE")
         
-        # 🚀 地下管道性能参数
+        # 🚀 Underground pipeline performance parameters
         successful_chunks = 0
         failed_chunks = 0
         error_messages = []
         processing_start_time = time.time()
-        client_id = 0  # 将从第一个请求中获取
+        client_id = 0  # Will be obtained from the first request
         
-        # 🚀 性能监控
+        # 🚀 Performance monitoring
         chunk_sizes = []
         processing_times = []
         last_performance_report = time.time()
         
         def enhanced_underground_processor():
-            """🚀 增强的地下管道处理器 - 高性能、永不停止、智能错误处理"""
+            """🚀 Enhanced underground pipeline processor - High performance, never-stopping, intelligent error handling"""
             nonlocal successful_chunks, failed_chunks, error_messages, chunk_sizes, processing_times, client_id, last_performance_report
             
             logger.debug("[🎯 gRPCServer] 🚇 Enhanced underground pipeline started - PERFORMANCE MODE")
             
-            # 🚀 地下管道批处理优化
+            # 🚀 Underground pipeline batch processing optimization
             chunk_batch = []
-            batch_size = 10  # 批处理大小
-            batch_timeout = 0.1  # 100ms批处理超时
+            batch_size = 10  # Batch processing size
+            batch_timeout = 0.1  # 100ms batch processing timeout
             last_batch_time = time.time()
             
             try:
                 for request in request_iterator:
                     request_start_time = time.time()
                     
-                    # 🚀 获取client_id（从第一个请求中）
+                    # 🚀 Get client_id (from first request)
                     if client_id == 0 and request.sender_id:
                         client_id = request.sender_id
                         logger.info(f"[🎯 gRPCServer] 📤 Client {client_id} connected to upload pipeline")
                     
-                    # 🚀 快速请求分类和处理
+                    # 🚀 Fast request classification and processing
                     if request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_PIECE:
                         chunk_size = len(request.chunk_data) if request.chunk_data else 0
                         logger.debug(f"[🎯 gRPCServer] 🚇 Processing CHUNK_PIECE - size={chunk_size}B, chunk={request.source_client_id}:{request.chunk_id}")
                         
                         try:
-                            # 🚀 批量转换优化 - 收集到批处理队列
+                            # 🚀 Batch conversion optimization - Collect to batch processing queue
                             chunk_batch.append(request)
                             
-                            # 🚀 智能批处理触发条件
+                            # 🚀 Intelligent batch processing trigger conditions
                             current_time = time.time()
                             should_process_batch = (
-                                len(chunk_batch) >= batch_size or  # 批大小达到
-                                (current_time - last_batch_time) > batch_timeout or  # 超时
-                                chunk_size > 1024 * 1024  # 大chunk立即处理
+                                len(chunk_batch) >= batch_size or  # Batch size reached
+                                (current_time - last_batch_time) > batch_timeout or  # Timeout
+                                chunk_size > 1024 * 1024  # Large chunk processed immediately
                             )
                             
                             if should_process_batch:
-                                # 🚀 批量处理chunk
+                                # 🚀 Batch process chunks
                                 batch_start_time = time.time()
                                 for chunk_req in chunk_batch:
                                     converted_msg = self._convert_chunk_to_message(chunk_req)
                                     self.msg_queue.append(converted_msg)
                                     successful_chunks += 1
                                     
-                                    # 性能统计
+                                    # Performance statistics
                                     if chunk_req.chunk_data:
                                         chunk_sizes.append(len(chunk_req.chunk_data))
                                 
@@ -184,19 +184,19 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                         gRPC_comm_manager_pb2.ChunkType.CHUNK_HAVE,
                         gRPC_comm_manager_pb2.ChunkType.CHUNK_BITFIELD,
                         gRPC_comm_manager_pb2.ChunkType.CHUNK_CANCEL,
-                        # 🔧 添加新的BitTorrent控制消息类型
+                        # 🔧 Add new BitTorrent control message types
                         gRPC_comm_manager_pb2.ChunkType.CHUNK_INTERESTED_REQ,
                         gRPC_comm_manager_pb2.ChunkType.CHUNK_UNCHOKE_REQ,
                         gRPC_comm_manager_pb2.ChunkType.CHUNK_CHOKE_REQ
                     ]:
-                        # 🚀 控制消息快速处理通道
+                        # 🚀 Control message fast processing channel
                         logger.debug(f"[🎯 gRPCServer] 🚇 Processing control message - type={request.chunk_type}")
                         converted_msg = self._convert_chunk_to_message(request)
                         self.msg_queue.append(converted_msg)
                         successful_chunks += 1
                         
                     else:
-                        # 🚀 心跳消息处理
+                        # 🚀 Heartbeat message processing
                         if request.chunk_data == b'heartbeat':
                             logger.debug(f"[🎯 gRPCServer] 🚇💓 Heartbeat received from client {request.sender_id}")
                         else:
@@ -205,14 +205,14 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                             error_messages.append(error_msg)
                             logger.warning(f"[🎯 gRPCServer] 🚇 {error_msg}")
                     
-                    # 🚀 处理时间监控
+                    # 🚀 Processing time monitoring
                     processing_time = time.time() - request_start_time
-                    if processing_time > 0.05:  # 超过50ms的慢处理
-                        logger.warning(f"[🎯 gRPCServer] 🐌 Slow chunk processing: {processing_time:.3f}s")
+                    if processing_time > 0.05:  # Slow processing over 50ms
+                        logger.debug(f"[🎯 gRPCServer] 🐌 Slow chunk processing: {processing_time:.3f}s")
                     
-                    # 🚀 定期性能报告
+                    # 🚀 Regular performance reporting
                     current_time = time.time()
-                    if current_time - last_performance_report > 120.0:  # 每2分钟报告
+                    if current_time - last_performance_report > 120.0:  # Report every 2 minutes
                         if chunk_sizes:
                             avg_chunk_size = sum(chunk_sizes) / len(chunk_sizes)
                             avg_processing_time = sum(processing_times) / len(processing_times)
@@ -221,7 +221,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                             logger.debug(f"[🎯 gRPCServer] 📊   Avg chunk size: {avg_chunk_size:.0f}B, processing time: {avg_processing_time:.3f}s")
                         last_performance_report = current_time
                 
-                # 🚀 处理剩余的批处理数据
+                # 🚀 Process remaining batch data
                 if chunk_batch:
                     logger.debug(f"[🎯 gRPCServer] 🚇 Processing final batch: {len(chunk_batch)} chunks")
                     for chunk_req in chunk_batch:
@@ -237,7 +237,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 failed_chunks += 1
                 error_messages.append(str(e))
             finally:
-                # 🚀 最终性能统计
+                # 🚀 Final performance statistics
                 total_time = time.time() - processing_start_time
                 logger.debug(f"[🎯 gRPCServer] 🚇 Underground pipeline finished:")
                 logger.debug(f"[🎯 gRPCServer] 📊   Success: {successful_chunks}, Failed: {failed_chunks}")
@@ -245,22 +245,22 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 if successful_chunks > 0:
                     logger.debug(f"[🎯 gRPCServer] 📊   Throughput: {successful_chunks/total_time:.1f} chunks/sec")
         
-        # 🔧 FIX: 使用共享后台线程，避免为每个请求创建新线程
+        # 🔧 FIX: Use shared background thread, avoid creating new thread for each request
         with self._processor_lock:
             self._active_uploads += 1
         
-        # 🔧 确保后台处理线程存在（懒加载）
+        # 🔧 Ensure background processing thread exists (lazy loading)
         self._ensure_background_processor()
         
-        # 🚀 直接在当前线程处理，或将数据传递给后台线程
+        # 🚀 Process directly in current thread, or pass data to background thread
         logger.debug(f"[🎯 gRPCServer] Processing upload request for client {client_id}")
         enhanced_underground_processor()
         
-        # 🔧 处理完成后减少活跃连接计数
+        # 🔧 Decrease active connection count after processing
         with self._processor_lock:
             self._active_uploads = max(0, self._active_uploads - 1)
         
-        # 🚀 返回处理结果
+        # 🚀 Return processing result
         logger.debug("[🎯 gRPCServer] Upload processing completed")
         return gRPC_comm_manager_pb2.ChunkBatchResponse(
             client_id=client_id,
@@ -270,7 +270,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
         )
         
     def downloadChunks(self, request, context):
-        """🚀 服务端流式RPC for batch chunk download"""
+        """🚀 Server streaming RPC for batch chunk download"""
         logger.debug(f"[gRPCServer] downloadChunks method called for client {request.client_id}")
         
         try:
@@ -290,7 +290,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 # Add to message queue for traditional BitTorrent compatibility
                 self.msg_queue.append(self._convert_chunk_to_message(chunk_request))
                 
-                # 🚀 增强错误处理：检查chunk_manager并获取chunk数据
+                # 🚀 Enhanced error handling: Check chunk_manager and get chunk data
                 chunk_data = None
                 error_message = None
                 
@@ -309,9 +309,9 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                         error_message = f"Error accessing chunk data: {str(e)}"
                         logger.error(f"[gRPCServer] 🚫 Exception during chunk lookup: {e}")
                 
-                # 🚀 统一错误响应处理
+                # 🚀 Unified error response handling
                 if error_message:
-                    logger.warning(f"[gRPCServer] 📤 Sending NACK for chunk {chunk_req.source_client_id}:{chunk_req.chunk_id}: {error_message}")
+                    logger.warning(f"[gRPCServer] 📤 Sending NACK for chunk {chunk_req.source_client_id}:{chunk_req.chunk_id}: {error_message} from {request.sender_id}")
                     yield gRPC_comm_manager_pb2.ChunkStreamResponse(
                         sender_id=request.client_id,
                         receiver_id=request.sender_id,
@@ -323,7 +323,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                     )
                     continue
                 
-                # 🚀 成功响应：返回实际chunk数据
+                # 🚀 Success response: Return actual chunk data
                 logger.debug(f"[gRPCServer] 📤 Sending chunk data for {chunk_req.source_client_id}:{chunk_req.chunk_id} to client {request.client_id}")
                 
                 serialized_data = pickle.dumps(chunk_data)
@@ -355,21 +355,21 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
         # back to the traditional message format that the existing system expects
         
         if chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_PIECE:
-            # 🚀 CRITICAL FIX: 正确创建piece消息，包含所有必要的chunk数据
+            # 🚀 CRITICAL FIX: Correctly create piece message with all necessary chunk data
             from federatedscope.core.message import ChunkData
             
             
-            # 创建ChunkData包装器
+            # Create ChunkData wrapper
             chunk_wrapper = ChunkData(chunk_request.chunk_data, chunk_request.checksum)
             
-            # 创建完整的protobuf消息，包含所有piece数据
+            # Create complete protobuf message with all piece data
             message_request = gRPC_comm_manager_pb2.MessageRequest()
             
-            # 设置消息内容 - 模拟传统piece消息的结构
-            # 注意：这里我们需要手动构造消息内容，就像_send_piece中的传统消息一样
+            # Set message content - simulate traditional piece message structure
+            # Note: We need to manually construct message content, like traditional messages in _send_piece
             from federatedscope.core.message import Message
             
-            # 创建传统格式的Message对象
+            # Create traditional format Message object
             traditional_msg = Message(
                 msg_type='piece',
                 sender=chunk_request.sender_id,
@@ -379,7 +379,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                     'round_num': chunk_request.round_num,
                     'source_client_id': chunk_request.source_client_id,
                     'chunk_id': chunk_request.chunk_id,
-                    'data': chunk_wrapper,  # ChunkData对象，包含原始bytes
+                    'data': chunk_wrapper,  # ChunkData object containing raw bytes
                     'checksum': chunk_request.checksum
                 }
             )
@@ -387,14 +387,14 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             logger.debug(f"[🔧 gRPCServer] Created traditional message: type={traditional_msg.msg_type}, sender={traditional_msg.sender}")
             logger.debug(f"[🔧 gRPCServer] Message content keys: {list(traditional_msg.content.keys())}")
             
-            # 将Message对象转换为protobuf格式
+            # Convert Message object to protobuf format
             message_request = traditional_msg.transform(to_list=True)
             
             logger.debug(f"[🔧 gRPCServer] Successfully converted CHUNK_PIECE to MessageRequest")
             return message_request
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_REQUEST:
-            # 处理request消息
+            # Process request message
             from federatedscope.core.message import Message
             
             traditional_msg = Message(
@@ -432,10 +432,10 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             return traditional_msg.transform(to_list=True)
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_BITFIELD:
-            # 🚀 处理bitfield消息
+            # 🚀 Process bitfield message
             from federatedscope.core.message import Message
             
-            # 解码bitfield数据
+            # Decode bitfield data
             bitfield_data = []
             if chunk_request.chunk_data:
                 try:
@@ -458,7 +458,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             return traditional_msg.transform(to_list=True)
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_CANCEL:
-            # 🚀 处理cancel消息
+            # 🚀 Process cancel message
             from federatedscope.core.message import Message
             
             traditional_msg = Message(
@@ -477,7 +477,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             return traditional_msg.transform(to_list=True)
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_INTERESTED_REQ:
-            # 🔧 处理interested消息
+            # 🔧 Process interested message
             from federatedscope.core.message import Message
             
             traditional_msg = Message(
@@ -495,7 +495,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             return traditional_msg.transform(to_list=True)
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_UNCHOKE_REQ:
-            # 🔧 处理unchoke消息
+            # 🔧 Process unchoke message
             from federatedscope.core.message import Message
             
             traditional_msg = Message(
@@ -513,7 +513,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             return traditional_msg.transform(to_list=True)
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_CHOKE_REQ:
-            # 🔧 处理choke消息
+            # 🔧 Process choke message
             from federatedscope.core.message import Message
             
             traditional_msg = Message(
@@ -532,7 +532,7 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             
         else:
             logger.warning(f"[🔧 gRPCServer] Unknown chunk_type: {chunk_request.chunk_type}")
-            # 返回空的MessageRequest作为fallback
+            # Return empty MessageRequest as fallback
             return gRPC_comm_manager_pb2.MessageRequest()
 
     def receive(self):

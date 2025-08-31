@@ -221,7 +221,7 @@ class Message(object):
                 # Convert boolean to string for protobuf compatibility
                 m_single.str_value = str(value)
             elif isinstance(value, ChunkData):
-                # 🚀 ChunkData: 直接传输原始bytes，不做Base64编码
+                # 🚀 ChunkData: Direct transmission of raw bytes, no Base64 encoding
                 m_single.bytes_value = value.raw_bytes
             else:
                 raise ValueError(

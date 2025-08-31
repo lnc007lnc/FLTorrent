@@ -132,11 +132,24 @@ class gRPCCommManager(object):
         # Bind port always uses port parameter from configuration
         self.bind_port = int(port)
         logger.info(f"✅ Final settings - bind: '{self.bind_host}:{self.bind_port}', report: '{self.host}:{self.port}'")
+        # 🚀 HIGH-PERFORMANCE gRPC OPTIONS - Consistent with streaming channels
         options = [
             ("grpc.max_send_message_length", cfg.grpc_max_send_message_length),
-            ("grpc.max_receive_message_length",
-             cfg.grpc_max_receive_message_length),
+            ("grpc.max_receive_message_length", cfg.grpc_max_receive_message_length),
             ("grpc.enable_http_proxy", cfg.grpc_enable_http_proxy),
+
+
+            ("grpc.keepalive_time_ms", 120000),                      # 120s
+            ("grpc.keepalive_timeout_ms", 20000),                    # 20s
+            ("grpc.keepalive_permit_without_calls", 1),              # 服务端放宽，客户端再控为0
+            ("grpc.http2.min_ping_interval_without_data_ms", 60000), # 60s
+            ("grpc.http2.max_pings_without_data", 10),
+
+
+            ("grpc.http2.initial_window_size", 16 * 1024 * 1024),           # 16MB
+            ("grpc.http2.initial_connection_window_size", 32 * 1024 * 1024),# 32MB
+            ("grpc.http2.bdp_probe", 1),
+
         ]
 
         if cfg.grpc_compression.lower() == 'deflate':
@@ -162,7 +175,7 @@ class gRPCCommManager(object):
         """
         logger.info(f"🚀 gRPC server startup - bind address: {host}:{port}")
         server = grpc.server(
-            futures.ThreadPoolExecutor(max_workers=max_workers),
+            futures.ThreadPoolExecutor(max_workers=max_workers*10),
             compression=self.comp_method,
             options=options)
         gRPC_comm_manager_pb2_grpc.add_gRPCComServeFuncServicer_to_server(
@@ -209,10 +222,27 @@ class gRPCCommManager(object):
             This part is referred to
             https://grpc.io/docs/languages/python/basics/#creating-a-stub
             """
+            # 🚀 Apply high-performance client options consistent with server
+            client_options = [
+                ('grpc.enable_http_proxy', 0),
+                
+                ('grpc.keepalive_time_ms', 120000),          # 120s
+                ('grpc.keepalive_timeout_ms', 20000),        # 20s
+                ('grpc.keepalive_permit_without_calls', 0),  
+                ('grpc.http2.min_time_between_pings_ms', 60000),
+                ('grpc.http2.max_pings_without_data', 1),
+
+                ('grpc.http2.initial_window_size', 16 * 1024 * 1024),
+                ('grpc.http2.initial_connection_window_size', 32 * 1024 * 1024),
+                ('grpc.http2.bdp_probe', 1),
+
+
+                ('grpc.use_local_subchannel_pool', 1),
+            ]
+            
             channel = grpc.insecure_channel(receiver_address,
                                             compression=self.comp_method,
-                                            options=(('grpc.enable_http_proxy',
-                                                      0), ))
+                                            options=client_options)
             stub = gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub(channel)
             return stub, channel
 

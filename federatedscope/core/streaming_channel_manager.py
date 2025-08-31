@@ -1,6 +1,6 @@
 """
 🚀 gRPC Streaming Channel Manager for BitTorrent
-在拓扑构建时创建专用streaming通道，提供高效的chunk传输
+Creates dedicated streaming channels during topology construction, providing efficient chunk transmission
 """
 
 import grpc
@@ -19,22 +19,22 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 class StreamingChannel:
-    """单个streaming通道封装"""
+    """Single streaming channel encapsulation"""
     
     def __init__(self, peer_id, channel, stub, stream_type='bidirectional', client_id=-1, client_instance=None):
         self.peer_id = peer_id
         self.channel = channel
         self.stub = stub
         self.stream_type = stream_type
-        self.client_id = client_id  # 添加client_id支持
-        self.client_instance = client_instance  # 添加客户端实例引用，用于调用回调函数
+        self.client_id = client_id  # Add client_id support
+        self.client_instance = client_instance  # Add client instance reference for calling callback functions
         
-        # Streaming对象
+        # Streaming objects
         self.request_stream = None
         self.response_stream = None
         self.request_queue = queue.Queue()
         
-        # 状态管理
+        # State management
         self.is_active = False
         self.last_activity = time.time()
         self.bytes_sent = 0
@@ -42,7 +42,7 @@ class StreamingChannel:
         self.chunks_sent = 0
         self.chunks_received = 0
         
-        # 线程管理
+        # Thread management
         self.sender_thread = None
         self.receiver_thread = None
         self.upload_sender_thread = None
@@ -50,48 +50,48 @@ class StreamingChannel:
         self.send_retries = 0
         
     def start_streaming(self):
-        """启动streaming（自动回退兼容）"""
+        """Start streaming (automatic fallback compatibility)"""
         if self.is_active:
             return
             
         try:
-            # 🚀 尝试启动多流streaming
+            # 🚀 Try to start multi-stream streaming
             self._start_multi_streaming()
             
         except Exception as e:
-            # 🔧 Streaming失败，标记为不可用，但不抛出错误
+            # 🔧 Streaming failed, mark as unavailable, but don't throw error
             logger.warning(f"[StreamChannel] Multi-streaming not supported for peer {self.peer_id}, will use traditional messaging: {e}")
-            self.is_active = False  # 标记streaming不可用
-            # 不抛出异常，让上层代码继续使用传统方式
+            self.is_active = False  # Mark streaming as unavailable
+            # Don't throw exception, let upper layer code continue using traditional methods
             
     def _start_multi_streaming(self):
-        """内部方法：启动多流并发streaming - 🚀 多重优化设计"""
-        # 🚀 多流并发优化：创建专用流管道
+        """Internal method: Start multi-stream concurrent streaming - 🚀 Multi-optimization design"""
+        # 🚀 Multi-stream concurrent optimization: Create dedicated stream pipelines
         
-        # 🔧 CRITICAL FIX: 先设置is_active=True，再创建generators
+        # 🔧 CRITICAL FIX: Set is_active=True first, then create generators
         self.is_active = True
         logger.debug(f"[StreamChannel] 🚀 Activating multi-pipeline streaming to peer {self.peer_id}")
         
-        # 🚀 优化1：流管道复用 - 创建专用队列和缓冲区
-        self.control_request_queue = queue.Queue(maxsize=500)  # 控制消息队列
-        self.upload_request_queue = queue.PriorityQueue(maxsize=500)   # 🎯 上传优先队列 (importance+rare排序)
-        self.download_request_queue = queue.PriorityQueue(maxsize=500) # 🎯 下载优先队列 (importance+rare排序)
+        # 🚀 Optimization 1: Stream pipeline reuse - Create dedicated queues and buffers
+        self.control_request_queue = queue.Queue(maxsize=500)  # Control message queue
+        self.upload_request_queue = queue.PriorityQueue(maxsize=500)   # 🎯 Upload priority queue (importance+rarity sorting)
+        self.download_request_queue = queue.PriorityQueue(maxsize=500) # 🎯 Download priority queue (importance+rarity sorting)
         
-        # 🚀 优化2：性能监控和统计
+        # 🚀 Optimization 2: Performance monitoring and statistics
         self.control_msg_count = 0
         self.upload_chunk_count = 0
         self.download_request_count = 0
         self.last_activity_time = time.time()
         
-        # 🚀 优化3：智能流分配
-        # 1. 控制流：专门处理轻量级控制消息 (HAVE, BITFIELD, INTERESTED等)
+        # 🚀 Optimization 3: Smart stream allocation
+        # 1. Control stream: Dedicated handling of lightweight control messages (HAVE, BITFIELD, INTERESTED, etc.)
         self.control_stream = self.stub.streamChunks(self._enhanced_control_generator())
         logger.debug(f"[StreamChannel] ✅ Control pipeline established for peer {self.peer_id}")
         
-        # 2. 上传流：专门传输大块chunk数据 (在专用线程中管理)
-        # 3. 下载流：批量处理chunk请求 (在专用线程中管理)
+        # 2. Upload stream: Dedicated transmission of large chunk data (managed in dedicated threads)
+        # 3. Download stream: Batch processing of chunk requests (managed in dedicated threads)
         
-        # 🚀 优化4：专用线程池，提高并发性能
+        # 🚀 Optimization 4: Dedicated thread pool for improved concurrency performance
         self.control_receiver_thread = threading.Thread(
             target=self._enhanced_control_response_handler,
             daemon=True,
@@ -110,7 +110,7 @@ class StreamingChannel:
             name=f"UploadPipeline-{self.peer_id}"
         )
         
-        # 启动优化的流管道处理器
+        # Start optimized streaming pipeline processors
         self.control_receiver_thread.start()
         self.download_sender_thread.start()
         self.upload_sender_thread.start()
@@ -119,24 +119,24 @@ class StreamingChannel:
         logger.debug(f"[StreamChannel] 📊 Performance monitoring enabled - Control/Upload/Download pipelines ready")
             
     def _enhanced_control_generator(self):
-        """🚀 优化1：增强的控制消息流生成器 - 专门处理轻量级控制消息"""
+        """🚀 Optimization 1: Enhanced control message flow generator - specialized for lightweight control messages"""
         logger.debug(f"[StreamChannel] 🎛️ Control pipeline generator started for peer {self.peer_id}")
         
-        # 🚀 性能优化参数
-        # heartbeat_interval = 30.0  # 心跳间隔
+        # 🚀 Performance optimization parameters
+        # heartbeat_interval = 30.0  # heartbeat interval
         last_heartbeat = time.time()
         processed_count = 0
         
         while self.is_active:
             try:
-                # 🚀 优化：使用专用控制队列，避免消息混乱
+                # 🚀 Optimization: Use dedicated control queue to avoid message confusion
                 try:
-                    request = self.control_request_queue.get(timeout=0.2)  # 优化响应时间减少CPU空转
+                    request = self.control_request_queue.get(timeout=0.2)  # Optimize response time and reduce CPU idle spinning
                 except queue.Empty:
-                    # 🚀 优化：发送心跳保持连接活跃
+                    # 🚀 Optimization: Send heartbeat to keep connection active
                     # current_time = time.time()
                     # if current_time - last_heartbeat > heartbeat_interval:
-                    #     # 发送轻量级心跳消息维持连接
+                    #     # Send lightweight heartbeat message to maintain connection
                     #     heartbeat_request = self._create_heartbeat_message()
                     #     if heartbeat_request:
                     #         yield heartbeat_request
@@ -148,30 +148,30 @@ class StreamingChannel:
                     logger.debug(f"[StreamChannel] 🎛️ Control pipeline shutdown for peer {self.peer_id}")
                     break
                 
-                # 🚀 优化：智能消息分流 - 只处理控制消息
+                # 🚀 Optimization: Intelligent message routing - only process control messages
                 if self._is_control_message(request):
                     yield request
                     processed_count += 1
                     self.control_msg_count += 1
                     self.last_activity_time = time.time()
                     
-                    # 🚀 性能监控
+                    # 🚀 Performance monitoring
                     if processed_count % 50 == 0:
                         logger.debug(f"[StreamChannel] 🎛️ Control pipeline processed {processed_count} messages for peer {self.peer_id}")
                 else:
-                    # 非控制消息重新路由到正确的队列
+                    # Re-route non-control messages to correct queue
                     self._route_message_to_correct_pipeline(request)
                     
                 self.control_request_queue.task_done()
                 
             except Exception as e:
                 logger.error(f"[StreamChannel] 🎛️ Control generator error for peer {self.peer_id}: {e}")
-                time.sleep(0.1)  # 避免错误循环
+                time.sleep(0.1)  # Avoid error loops
                 
         logger.debug(f"[StreamChannel] 🎛️ Control pipeline generator ended for peer {self.peer_id}, processed {processed_count} messages")
         
     def _is_control_message(self, request) -> bool:
-        """判断是否为控制消息"""
+        """Determine if it is a control message"""
         control_types = [
             gRPC_comm_manager_pb2.ChunkType.CHUNK_HAVE,
             gRPC_comm_manager_pb2.ChunkType.CHUNK_BITFIELD,
@@ -432,28 +432,28 @@ class StreamingChannel:
                     logger.debug(f"[StreamChannel] 🎛️ Control response handler stopping for peer {self.peer_id}")
                     break
                 
-                # 🚀 优化：快速响应处理
+                # 🚀 Optimization: Fast response processing
                 start_time = time.time()
                 try:
                     self._handle_control_response(response)
                     processed_responses += 1
                     self.last_activity_time = time.time()
                     
-                    # 🚀 性能监控
+                    # 🚀 Performance monitoring
                     processing_time = time.time() - start_time
-                    if processing_time > 0.1:  # 超过100ms的慢响应
+                    if processing_time > 0.1:  # Slow response over 100ms
                         logger.warning(f"[StreamChannel] 🐌 Slow control response processing: {processing_time:.3f}s for peer {self.peer_id}")
                     
                 except Exception as e:
                     error_count += 1
                     logger.error(f"[StreamChannel] 🎛️ Control response processing error for peer {self.peer_id}: {e}")
-                    if error_count > 10:  # 错误过多时断开连接
+                    if error_count > 10:  # Too many errors, disconnect
                         logger.error(f"[StreamChannel] 🎛️ Too many errors ({error_count}), stopping control pipeline for peer {self.peer_id}")
                         break
                 
-                # 🚀 定期性能报告
+                # 🚀 Regular performance reports
                 current_time = time.time()
-                if current_time - last_stats_report > 60.0:  # 每分钟报告一次
+                if current_time - last_stats_report > 60.0:  # Report every minute
                     logger.debug(f"[StreamChannel] 📊 Control pipeline stats for peer {self.peer_id}: {processed_responses} responses, {error_count} errors")
                     last_stats_report = current_time
                     
@@ -463,15 +463,15 @@ class StreamingChannel:
             logger.debug(f"[StreamChannel] 🎛️ Control response handler ended for peer {self.peer_id}: {processed_responses} responses processed, {error_count} errors")
             
     def _enhanced_download_batch_processor(self):
-        """🚀 优化3：增强的下载批处理器 - 智能批量处理chunk请求"""
+        """🚀 Optimization 3: Enhanced download batch processor - Intelligent batch processing of chunk requests"""
         logger.debug(f"[StreamChannel] 📥 Download pipeline processor started for peer {self.peer_id}")
         
-        # 🚀 智能批处理参数 - 性能优化
+        # 🚀 Intelligent batch processing parameters - Performance optimization
         batch_requests = []
-        adaptive_batch_size = 10   # 增加批处理大小提高吞吐量
-        max_batch_size = 50        # 增加最大批处理大小
-        min_batch_timeout = 0.02   # 减少最小超时时间
-        max_batch_timeout = 0.1    # 减少最大超时时间
+        adaptive_batch_size = 10   # Increase batch size to improve throughput
+        max_batch_size = 50        # Increase maximum batch size
+        min_batch_timeout = 0.02   # Reduce minimum timeout
+        max_batch_timeout = 0.1    # Reduce maximum timeout
         current_batch_timeout = min_batch_timeout
         
         # 🚀 性能监控
@@ -484,24 +484,24 @@ class StreamingChannel:
             batch_start_time = time.time()
             
             try:
-                # 🚀 优化：自适应批量收集
+                # 🚀 Optimization: Adaptive batch collection
                 end_time = time.time() + current_batch_timeout
                 while time.time() < end_time and len(batch_requests) < adaptive_batch_size:
                     try:
                         priority_item = self.download_request_queue.get(timeout=0.05)
-                        if priority_item is None:  # 兼容旧格式的关闭信号
+                        if priority_item is None:  # Compatible with old format shutdown signal
                             logger.debug(f"[StreamChannel] 📥 Download pipeline shutdown signal for peer {self.peer_id}")
                             break
-                        # 🎯 从优先队列中解包：(priority, request)
+                        # 🎯 Unpack from priority queue: (priority, request)
                         priority, request = priority_item
-                        if request is None:  # 新格式的关闭信号
+                        if request is None:  # New format shutdown signal
                             logger.debug(f"[StreamChannel] 📥 Download pipeline shutdown signal for peer {self.peer_id}")
                             break
                         batch_requests.append(request)
                     except queue.Empty:
                         break
                 
-                # 🚀 优化：智能批量发送
+                # 🚀 Optimization: Intelligent batch sending
                 if batch_requests:
                     batch_size = len(batch_requests)
                     logger.debug(f"[StreamChannel] 📥 Sending batch of {batch_size} download requests to peer {self.peer_id}")
@@ -519,7 +519,7 @@ class StreamingChannel:
                         ]
                     )
                     
-                    # 🚀 性能优化：并行处理下载响应
+                    # 🚀 Performance optimization: Parallel processing of download responses
                     download_start = time.time()
                     try:
                         download_stream = self.stub.downloadChunks(batch_request)
@@ -535,12 +535,12 @@ class StreamingChannel:
                         total_chunks_downloaded += chunks_received
                         processed_batches += 1
                         
-                        # 🚀 自适应优化：根据性能调整批处理参数
+                        # 🚀 Adaptive optimization: Adjust batch processing parameters based on performance
                         avg_time_per_chunk = download_time / max(chunks_received, 1)
-                        if avg_time_per_chunk < 0.01:  # 很快，增加批大小
+                        if avg_time_per_chunk < 0.01:  # Very fast, increase batch size
                             adaptive_batch_size = min(adaptive_batch_size + 2, max_batch_size)
                             current_batch_timeout = min(current_batch_timeout * 1.1, max_batch_timeout)
-                        elif avg_time_per_chunk > 0.05:  # 较慢，减小批大小
+                        elif avg_time_per_chunk > 0.05:  # Slower, decrease batch size
                             adaptive_batch_size = max(adaptive_batch_size - 1, 3)
                             current_batch_timeout = max(current_batch_timeout * 0.9, min_batch_timeout)
                         
@@ -548,15 +548,15 @@ class StreamingChannel:
                         
                     except Exception as e:
                         logger.error(f"[StreamChannel] 📥 Download stream error for peer {self.peer_id}: {e}")
-                        # 错误时重置批处理参数
+                        # Reset batch processing parameters on error
                         adaptive_batch_size = 5
                         current_batch_timeout = min_batch_timeout
                     
                     batch_requests.clear()
                     
-                # 🚀 定期性能报告和优化
+                # 🚀 Regular performance reporting and optimization
                 current_time = time.time()
-                if current_time - last_performance_check > 30.0:  # 每30秒检查一次
+                if current_time - last_performance_check > 30.0:  # Check every 30 seconds
                     if processed_batches > 0:
                         avg_batch_time = total_download_time / processed_batches
                         avg_chunks_per_batch = total_chunks_downloaded / processed_batches
@@ -569,13 +569,13 @@ class StreamingChannel:
             except Exception as e:
                 logger.error(f"[StreamChannel] 📥 Download batch processor error for peer {self.peer_id}: {e}")
                 batch_requests.clear()
-                time.sleep(0.1)  # 避免错误循环
+                time.sleep(0.1)  # Avoid error loops
             
         logger.debug(f"[StreamChannel] 📥 Download pipeline processor ended for peer {self.peer_id}")
         logger.debug(f"[StreamChannel] 📊 Final stats: {processed_batches} batches, {total_chunks_downloaded} total chunks downloaded")
             
     def _handle_control_response(self, response):
-        """🔧 修复：处理控制消息响应 - 支持所有响应类型"""
+        """🔧 Fix: Handle control message responses - Support all response types"""
         logger.debug(f"[StreamChannel] Received control response from peer {self.peer_id}: type={response.response_type}")
         
         if not self.client_instance:
@@ -585,21 +585,21 @@ class StreamingChannel:
         try:
             from federatedscope.core.message import Message
             
-            # 🔧 修复：正确处理所有ChunkResponseType枚举值
+            # 🔧 Fix: Correctly handle all ChunkResponseType enum values
             if response.response_type == gRPC_comm_manager_pb2.ChunkResponseType.CHUNK_ACK:
-                # ACK响应：确认收到控制消息
+                # ACK response: Confirm received control message
                 logger.debug(f"[StreamChannel] Received ACK from peer {self.peer_id} for chunk {response.chunk_id}")
-                # ACK消息通常不需要特殊处理，只记录日志
+                # ACK messages usually don't need special processing, just log
                 return
                 
             elif response.response_type == gRPC_comm_manager_pb2.ChunkResponseType.CHUNK_NACK:
-                # NACK响应：拒绝/错误响应
+                # NACK response: Reject/error response
                 logger.warning(f"[StreamChannel] Received NACK from peer {self.peer_id} for chunk {response.chunk_id}")
-                # TODO: 可以在这里实现重传逻辑
+                # TODO: Can implement retransmission logic here
                 return
                 
             elif response.response_type == gRPC_comm_manager_pb2.ChunkResponseType.CHUNK_HAVE_RESP:
-                # HAVE响应：peer通知拥有某个chunk
+                # HAVE response: Peer notifies having a chunk
                 content = {
                     'round_num': response.round_num,
                     'source_client_id': getattr(response, 'source_client_id', response.sender_id),
@@ -608,7 +608,7 @@ class StreamingChannel:
                 msg_type = 'have'
                 
             elif response.response_type == gRPC_comm_manager_pb2.ChunkResponseType.CHUNK_INTERESTED:
-                # INTERESTED响应：peer表示感兴趣
+                # INTERESTED response: Peer expresses interest
                 content = {
                     'round_num': response.round_num,
                     'peer_id': response.sender_id
@@ -616,11 +616,11 @@ class StreamingChannel:
                 msg_type = 'interested'
                 
             else:
-                # 🔧 使用数值进行兼容性检查
+                # 🔧 Use numeric values for compatibility checking
                 response_type_value = int(response.response_type)
                 logger.warning(f"[StreamChannel] Unknown control response type: {response_type_value} from peer {self.peer_id}")
                 
-                # 🔧 尝试推断响应类型
+                # 🔧 Try to infer response type
                 if response_type_value == 0:  # CHUNK_ACK
                     logger.debug(f"[StreamChannel] Treating response type 0 as ACK from peer {self.peer_id}")
                     return
@@ -644,7 +644,7 @@ class StreamingChannel:
                     logger.error(f"[StreamChannel] Unsupported response type: {response_type_value} from peer {self.peer_id}")
                     return
                 
-            # 创建Message对象并调用callback
+            # Create Message object and call callback
             if 'msg_type' in locals() and 'content' in locals():
                 message = Message(
                     msg_type=msg_type,
@@ -653,7 +653,7 @@ class StreamingChannel:
                     content=content
                 )
                 
-                # 🔧 调用正确的callback函数
+                # 🔧 Call correct callback function
                 if msg_type == 'have':
                     logger.debug(f"[StreamChannel] ✅ Calling callback_funcs_for_have for peer {self.peer_id}")
                     self.client_instance.callback_funcs_for_have(message)
@@ -676,46 +676,46 @@ class StreamingChannel:
             logger.error(f"[StreamChannel] Traceback: {traceback.format_exc()}")
         
     def _handle_download_response(self, response):
-        """🔧 优化：处理chunk下载响应 - 去重统计，防重复处理"""        
+        """🔧 Optimization: Handle chunk download response - Deduplicate statistics, prevent duplicate processing"""        
         if not self.client_instance:
             logger.warning(f"[StreamChannel] No client instance for peer {self.peer_id}, cannot process chunk download")
             return
             
         try:
-            # 验证响应数据
+            # Validate response data
             if not response.response_data:
                 logger.error(f"[StreamChannel] 🚫 Empty chunk data from peer {self.peer_id}, chunk_id={response.chunk_id}")
                 return
             
-            # 🔧 统一统计管理 (只统计一次)
+            # 🔧 Unified statistics management (count only once)
             chunk_size = len(response.response_data)
             self.chunks_received += 1
             self.bytes_received += chunk_size
             
-            # 🔧 更新去重状态
+            # 🔧 Update deduplication state
             source_client_id = getattr(response, 'source_client_id', response.sender_id)
             self.mark_chunk_completed(response.round_num, source_client_id, response.chunk_id)
             
-            # 创建ChunkData对象
+            # Create ChunkData object
             from federatedscope.core.message import Message, ChunkData
             import hashlib
                 
-            # 计算校验和
+            # Calculate checksum
             checksum = hashlib.sha256(response.response_data).hexdigest()
             
-            # 创建ChunkData对象包装原始数据
+            # Create ChunkData object to wrap raw data
             chunk_data = ChunkData(response.response_data, checksum)
             
-            # 构造消息内容 (与传统BitTorrent PIECE消息格式兼容)
+            # Construct message content (compatible with traditional BitTorrent PIECE message format)
             content = {
                 'round_num': response.round_num,
-                'source_client_id': source_client_id,  # 使用正确的字段
+                'source_client_id': source_client_id,  # Use correct field
                 'chunk_id': response.chunk_id,
                 'data': chunk_data,
                 'checksum': checksum
             }
             
-            # 创建Message对象
+            # Create Message object
             message = Message(
                 msg_type='piece',
                 sender=self.peer_id,
@@ -723,7 +723,7 @@ class StreamingChannel:
                 content=content
             )
             
-            # 调用callback函数处理chunk piece
+            # Call callback function to handle chunk piece
             logger.debug(f"[StreamChannel] Calling callback_funcs_for_piece for peer {self.peer_id}, chunk {response.sender_id}:{response.chunk_id}")
             self.client_instance.callback_funcs_for_piece(message)
             
@@ -731,46 +731,46 @@ class StreamingChannel:
             logger.error(f"[StreamChannel] Error handling chunk download from peer {self.peer_id}: {e}")
         
     def _handle_chunk_response(self, response):
-        """兼容性方法：处理收到的chunk响应"""
+        """Compatibility method: Handle received chunk response"""
         self.chunks_received += 1
         self.bytes_received += len(response.response_data) if response.response_data else 0
         logger.debug(f"[StreamChannel] Received chunk response from peer {self.peer_id}")
         
     def _calculate_request_priority(self, importance_score: float, rarity_score: int) -> tuple:
-        """🎯 计算请求优先级：importance优先，相近importance时按rare排序"""
+        """🎯 Calculate request priority: Importance first, sort by rarity when importance is similar"""
         import random
         importance_jitter = random.uniform(-0.01, 0.01)
         rarity_jitter = random.uniform(-0.1, 0.1)
-        # 主优先级：importance (取负值因为PriorityQueue是最小堆，我们要高importance优先)
+        # Primary priority: importance (negative value because PriorityQueue is min-heap, we want high importance first)
         primary_priority = -importance_score + importance_jitter * rarity_score
         # primary_priority = -random.random()
-        # 次优先级：rarity (数值越小越稀有，优先级越高)
+        # Secondary priority: rarity (smaller value means rarer, higher priority)
         secondary_priority = rarity_score + rarity_jitter
         
-        # 第三优先级：时间戳 (确保同优先级下的FIFO)
+        # Third priority: timestamp (ensure FIFO under same priority)
         tertiary_priority = random.random()
         
         return (primary_priority, secondary_priority, tertiary_priority)
         
     def send_chunk_request(self, round_num: int, source_client_id: int, chunk_id: int, 
                           importance_score: float = 0.0, rarity_score: int = 0):
-        """🔧 增强去重：发送chunk请求 - 严格防止重复请求"""
+        """🔧 Enhanced deduplication: Send chunk request - Strictly prevent duplicate requests"""
         if not self.is_active:
             logger.warning(f"[StreamChannel] Cannot send to inactive channel for peer {self.peer_id}")
             return False
         
-        # 🔧 关键去重机制：检查是否已经请求过这个chunk
+        # 🔧 Key deduplication mechanism: Check if this chunk has already been requested
         chunk_key = (round_num, source_client_id, chunk_id)
         if self.send_retries == 4:
             self.send_retries = 0
         
-        # 初始化去重集合
+        # Initialize deduplication sets
         if not hasattr(self, 'requested_chunks'):
             self.requested_chunks = set()
         if not hasattr(self, 'completed_chunks'):
             self.completed_chunks = set()
         
-        # 🔧 严格去重检查
+        # 🔧 Strict deduplication check
         if chunk_key in self.requested_chunks and self.send_retries < 3:
             logger.debug(f"[StreamChannel] 🚫 DUPLICATE REQUEST blocked: chunk {source_client_id}:{chunk_id} already requested from peer {self.peer_id}")
             self.send_retries+=1
@@ -781,7 +781,7 @@ class StreamingChannel:
             self.send_retries+=1
             return False
         
-        # 🔧 队列大小限制 (避免内存泄漏)
+        # 🔧 Queue size limit (avoid memory leak)
         if self.download_request_queue.qsize() >= self.download_request_queue.maxsize * 0.8:
             logger.warning(f"[StreamChannel] 🚫 REQUEST QUEUE near full ({self.download_request_queue.qsize()}/{self.download_request_queue.maxsize}), rejecting new request")
             return False
@@ -798,13 +798,13 @@ class StreamingChannel:
         )
         
         try:
-            # 🎯 计算优先级：CHUNK_REQUEST按importance+rare排序
+            # 🎯 Calculate priority: CHUNK_REQUEST sorted by importance+rarity
             priority = self._calculate_request_priority(importance_score, rarity_score)
             
-            # 🚀 严格的请求队列管理 - 使用优先级队列
+            # 🚀 Strict request queue management - Use priority queue
             self.download_request_queue.put((priority, request), timeout=0.5)
             
-            # 🔧 记录请求，防止重复
+            # 🔧 Record request to prevent duplication
             self.requested_chunks.add(chunk_key)
             
             logger.debug(f"[StreamChannel] ✅ Priority request queued: chunk {source_client_id}:{chunk_id} (importance:{importance_score:.3f}, rarity:{rarity_score}) to peer {self.peer_id}")
@@ -819,11 +819,11 @@ class StreamingChannel:
             return False
             
     def mark_chunk_completed(self, round_num: int, source_client_id: int, chunk_id: int):
-        """🔧 标记chunk已完成，清理去重状态"""
+        """🔧 Mark chunk as completed, clear deduplication state"""
         chunk_key = (round_num, source_client_id, chunk_id)
         
         if hasattr(self, 'requested_chunks'):
-            self.requested_chunks.discard(chunk_key)  # 从请求集合中移除
+            self.requested_chunks.discard(chunk_key)  # Remove from request set
             
         logger.debug(f"[StreamChannel] ✅ Marked chunk {source_client_id}:{chunk_id} as completed for peer {self.peer_id}")
             
@@ -953,23 +953,23 @@ class StreamingChannel:
             return False
             
     def close(self):
-        """关闭streaming通道"""
+        """Close streaming channel"""
         if not self.is_active:
             return
             
         self.is_active = False
         
-        # 发送关闭信号到各个队列
+        # Send shutdown signals to all queues
         try:
             self.request_queue.put(None)
-            # 🎯 优先队列需要特殊处理关闭信号：使用最高优先级
-            shutdown_priority = (-999999, 0, 0)  # 最高优先级的关闭信号
+            # 🎯 Priority queues need special handling for shutdown signals: use highest priority
+            shutdown_priority = (-999999, 0, 0)  # Highest priority shutdown signal
             self.upload_request_queue.put((shutdown_priority, None))
             self.download_request_queue.put((shutdown_priority, None))
         except:
             pass
         
-        # 等待线程结束
+        # Wait for threads to finish
         threads = [
             self.control_receiver_thread,
             self.download_sender_thread,
@@ -980,7 +980,7 @@ class StreamingChannel:
             if thread and thread.is_alive():
                 thread.join(timeout=1.0)
             
-        # 关闭gRPC通道
+        # Close gRPC channel
         try:
             self.channel.close()
             logger.debug(f"[StreamChannel] Closed streaming to peer {self.peer_id}")
@@ -988,7 +988,7 @@ class StreamingChannel:
             pass
             
     def get_stats(self):
-        """获取通道统计信息"""
+        """Get channel statistics"""
         return {
             'peer_id': self.peer_id,
             'is_active': self.is_active,
@@ -1001,7 +1001,7 @@ class StreamingChannel:
 
 
 class StreamingChannelManager:
-    """🚀 gRPC Streaming通道管理器 - 在拓扑构建时创建专用通道"""
+    """🚀 gRPC Streaming Channel Manager - Create dedicated channels during topology construction"""
     
     def __init__(self, client_id, client_instance=None):
         self.client_id = client_id
@@ -1009,7 +1009,7 @@ class StreamingChannelManager:
         self.channels: Dict[int, StreamingChannel] = {}  # peer_id -> StreamingChannel
         self.server_stubs: Dict[str, gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub] = {}
         
-        # 性能统计
+        # Performance statistics
         self.total_bytes_sent = 0
         self.total_bytes_received = 0
         self.total_chunks_sent = 0
@@ -1019,27 +1019,52 @@ class StreamingChannelManager:
         
     def create_channels_for_topology(self, neighbor_addresses: Dict[int, Tuple[str, int]]):
         """
-        🚀 在拓扑构建时为所有邻居创建专用streaming通道 - 修复消息大小限制
+        🚀 Create dedicated streaming channels for all neighbors during topology construction - Fix message size limits
         Args:
             neighbor_addresses: {peer_id: (host, port)}
         """
         logger.debug(f"[StreamingManager] Client {self.client_id}: Creating enhanced streaming channels for topology")
         logger.debug(f"[StreamingManager] Neighbor addresses: {neighbor_addresses}")
         
-        # 🚀 修复: gRPC通道配置 - 设置大消息窗口
-        max_message_size = 512 * 1024 * 1024  # 512MB消息限制
-        max_receive_size = 512 * 1024 * 1024  # 512MB接收限制
+        # 🚀 Fix: gRPC channel configuration - Set large message windows
+        max_message_size = 512 * 1024 * 1024  # 512MB message limit
+        max_receive_size = 512 * 1024 * 1024  # 512MB receive limit
         
+        # 🚀 HIGH-PERFORMANCE gRPC OPTIONS - Optimized for high concurrency and large data transfer
         grpc_options = [
+            # === MESSAGE SIZE LIMITS ===
             ('grpc.max_send_message_length', max_message_size),
             ('grpc.max_receive_message_length', max_receive_size),
-            ('grpc.keepalive_time_ms', 30000),          # 30秒keepalive
-            ('grpc.keepalive_timeout_ms', 10000),       # 10秒keepalive超时
-            ('grpc.keepalive_permit_without_calls', True),
-            ('grpc.http2.max_pings_without_data', 0),
-            ('grpc.http2.min_time_between_pings_ms', 10000),
-            ('grpc.http2.min_ping_interval_without_data_ms', 300000),
-            ('grpc.so_reuseaddr', 1),
+            
+            # === 🔧 FIX: KEEPALIVE SETTINGS - Solve "too many pings" error ===
+            ('grpc.keepalive_time_ms', 120000),         # 120s keepalive (reduced frequency)
+            ('grpc.keepalive_timeout_ms', 20000),       # 20s keepalive timeout
+            ('grpc.keepalive_permit_without_calls', False), # ❌ Disable ping without active calls
+            
+            # === 🔧 CRITICAL: HTTP2 PING CONTROL - Prevent server rejection ===
+            ('grpc.http2.max_pings_without_data', 2),   # ✅ Limit to 2 pings without data 
+            ('grpc.http2.min_time_between_pings_ms', 30000), # 30s minimum ping interval
+            ('grpc.http2.min_ping_interval_without_data_ms', 600000), # 10min interval without data
+            
+            # === 🚀 HIGH-CONCURRENCY OPTIMIZATIONS ===
+            ('grpc.so_reuseaddr', 1),                   # Socket reuse
+            ('grpc.max_connection_idle_ms', 300000),    # 5min connection idle timeout
+            ('grpc.max_connection_age_ms', 1800000),    # 30min max connection age
+            ('grpc.max_connection_age_grace_ms', 60000), # 1min grace period before force close
+            
+            # === 🚀 HIGH-THROUGHPUT OPTIMIZATIONS ===
+            ('grpc.http2.max_frame_size', 16777215),    # 16MB max frame size
+            ('grpc.http2.bdp_probe', True),             # Enable bandwidth-delay probing
+            ('grpc.http2.write_buffer_size', 65536),    # 64KB write buffer
+            
+            # === 🚀 FLOW CONTROL OPTIMIZATIONS ===
+            ('grpc.http2.hpack_table_size.decoder', 65536), # 64KB HPACK decoder table
+            ('grpc.http2.hpack_table_size.encoder', 65536), # 64KB HPACK encoder table
+            ('grpc.http2.max_concurrent_streams', 1000), # Support 1000 concurrent streams
+            
+            # === 🚀 MEMORY AND PERFORMANCE ===
+            ('grpc.max_metadata_size', 16384),          # 16KB metadata limit
+            ('grpc.use_local_subchannel_pool', 1),      # Use local subchannel pool
         ]
         
         logger.debug(f"[StreamingManager] 🚀 Enhanced gRPC configuration:")
@@ -1048,23 +1073,23 @@ class StreamingChannelManager:
         
         for peer_id, (host, port) in neighbor_addresses.items():
             if peer_id == self.client_id:
-                continue  # 跳过自己
+                continue  # Skip self
                 
             try:
-                # 🚀 创建增强的gRPC通道 - 支持大消息传输
+                # 🚀 Create enhanced gRPC channel - Support large message transmission
                 address = f"{host}:{port}"
                 channel = grpc.insecure_channel(address, options=grpc_options)
                 
-                # 创建stub
+                # Create stub
                 stub = gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub(channel)
                 
-                # 创建streaming通道封装
+                # Create streaming channel wrapper
                 stream_channel = StreamingChannel(peer_id, channel, stub, client_id=self.client_id, client_instance=self.client_instance)
                 
-                # 启动streaming (如果失败会自动回退)
+                # Start streaming (auto fallback if failed)
                 stream_channel.start_streaming()
                 
-                # 总是保存通道，即使streaming失败也可以用于传统消息
+                # Always save channel, can be used for traditional messages even if streaming fails
                 self.channels[peer_id] = stream_channel
                 self.server_stubs[address] = stub
                 
@@ -1088,7 +1113,7 @@ class StreamingChannelManager:
         
     def send_chunk_request(self, peer_id: int, round_num: int, source_client_id: int, 
                           chunk_id: int, importance_score: float = 0.0, rarity_score: int = 0) -> bool:
-        """通过streaming通道发送chunk请求"""
+        """Send chunk request through streaming channel"""
         if peer_id not in self.channels:
             logger.warning(f"[StreamingManager] No streaming channel to peer {peer_id} for chunk request")
             return False
@@ -1097,14 +1122,14 @@ class StreamingChannelManager:
             round_num, source_client_id, chunk_id, importance_score, rarity_score)
             
     def send_bittorrent_message(self, peer_id: int, msg_type: str, **kwargs) -> bool:
-        """🚀 统一的BitTorrent消息发送接口 - 支持所有消息类型"""
+        """🚀 Unified BitTorrent message sending interface - Support all message types"""
         if peer_id not in self.channels:
             logger.debug(f"[StreamingManager] 🔍 Attempting to send {msg_type.upper()} message to peer {peer_id}")
             logger.debug(f"[StreamingManager] 🔍 Client {self.client_id} has channels to peers: {list(self.channels.keys())}")
             logger.warning(f"[StreamingManager] No streaming channel to peer {peer_id}")
             return False
         
-        # 根据消息类型构建不同的请求
+        # Build different requests based on message type
         if msg_type == 'piece':
             return self.channels[peer_id].send_chunk_data(**kwargs)
         elif msg_type == 'request':
@@ -1118,7 +1143,7 @@ class StreamingChannelManager:
     def send_chunk_data(self, peer_id: int, round_num: int, source_client_id: int,
                        chunk_id: int, chunk_data: bytes, checksum: str, 
                        importance_score: float = 0.0, rarity_score: int = 0) -> bool:
-        """通过streaming通道发送chunk数据"""
+        """Send chunk data through streaming channel"""
         if peer_id not in self.channels:
             logger.warning(f"[StreamingManager] No streaming channel to peer {peer_id} for chunk data")
             return False
@@ -1133,11 +1158,11 @@ class StreamingChannelManager:
         return success
         
     def get_active_peers(self) -> List[int]:
-        """获取所有活跃的peer列表"""
+        """Get list of all active peers"""
         return [peer_id for peer_id, channel in self.channels.items() if channel.is_active]
         
     def close_all_channels(self):
-        """关闭所有streaming通道"""
+        """Close all streaming channels"""
         logger.debug(f"[StreamingManager] Client {self.client_id}: Closing all streaming channels")
         
         for peer_id, channel in self.channels.items():
@@ -1149,7 +1174,7 @@ class StreamingChannelManager:
         logger.debug(f"[StreamingManager] Client {self.client_id}: All streaming channels closed")
         
     def get_channel_stats(self):
-        """获取所有通道的统计信息"""
+        """Get statistics for all channels"""
         stats = {
             'client_id': self.client_id,
             'total_channels': len(self.channels),
