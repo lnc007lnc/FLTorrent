@@ -1643,10 +1643,12 @@ class ChunkManager:
         return bitfield
     
     @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
-    def save_remote_chunk(self, round_num, source_client_id, chunk_id, chunk_data):
+    def save_remote_chunk(self, round_num, source_client_id, chunk_id, chunk_data, on_cache_saved_callback=None):
         """
         🚀 HIGH-PERFORMANCE: Save BitTorrent exchanged chunk using cache system
         Note: chunk_data should be bytes for optimal performance
+        Args:
+            on_cache_saved_callback: Callback called immediately after cache save (before DB write)
         """
         import hashlib
         import pickle
@@ -1664,7 +1666,15 @@ class ChunkManager:
             # 🚀 Save to high-performance cache instead of database
             self.chunk_cache.save_chunk_data(round_num, source_client_id, chunk_id, chunk_bytes)
             
-            # Still maintain BitTorrent tracking in database for metadata
+            # 🚀 IMMEDIATE CALLBACK: Data is now available in cache - trigger HAVE broadcast
+            if on_cache_saved_callback:
+                try:
+                    on_cache_saved_callback(round_num, source_client_id, chunk_id)
+                    logger.debug(f"[ChunkManager] 🚀 Called cache-saved callback for chunk {source_client_id}:{chunk_id}")
+                except Exception as e:
+                    logger.error(f"[ChunkManager] Error in cache-saved callback: {e}")
+            
+            # Still maintain BitTorrent tracking in database for metadata (async)
             self._ensure_table_database_exists(round_num, 'bt')
             bt_conn = self._get_optimized_connection(round_num, 'bt')
             bt_cursor = bt_conn.cursor()

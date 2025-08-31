@@ -232,8 +232,11 @@ class ChunkWriteQueue:
                 logger.error(f"[ChunkWriteQueue] Background deserialization failed: {e}")
                 return False
                 
-            # Write to database (single writer, no contention)
-            self.chunk_manager.save_remote_chunk(round_num, source_client_id, chunk_id, deserialized_data)
+            # 🚀 OPTIMIZED: Save to cache with immediate HAVE broadcast, DB write continues async
+            self.chunk_manager.save_remote_chunk(
+                round_num, source_client_id, chunk_id, deserialized_data, 
+                on_cache_saved_callback=self.on_persisted_callback
+            )
             
             # 🔧 CRITICAL FIX: After chunk is successfully saved, notify streaming manager to update status
             if self.streaming_manager and hasattr(self.streaming_manager, 'channels'):
@@ -243,14 +246,6 @@ class ChunkWriteQueue:
                     if hasattr(channel, 'mark_chunk_completed'):
                         channel.mark_chunk_completed(round_num, source_client_id, chunk_id)
                 logger.debug(f"[ChunkWriteQueue] 🔧 Notified streaming channels that chunk {source_client_id}:{chunk_id} is completed")
-            
-            # 🚀 NEW: Call persistence completion callback (for HAVE broadcast)
-            if self.on_persisted_callback:
-                try:
-                    self.on_persisted_callback(round_num, source_client_id, chunk_id)
-                    logger.debug(f"[ChunkWriteQueue] 🚀 Called persistence callback for chunk {source_client_id}:{chunk_id}")
-                except Exception as e:
-                    logger.error(f"[ChunkWriteQueue] Error in persistence callback: {e}")
             
             logger.debug(f"[ChunkWriteQueue] Background write completed for chunk {source_client_id}:{chunk_id}")
             return True
