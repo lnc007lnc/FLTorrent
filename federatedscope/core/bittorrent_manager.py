@@ -18,11 +18,12 @@ logger.setLevel(logging.INFO)
 class ChunkWriteQueue:
     """🚀 OPTIMIZATION 3: Single writer thread for SQLite operations with queue-based architecture"""
     
-    def __init__(self, client_id: int, chunk_manager, streaming_manager=None, cfg=None):
+    def __init__(self, client_id: int, chunk_manager, streaming_manager=None, cfg=None, on_persisted_callback=None):
         self.client_id = client_id
         self.chunk_manager = chunk_manager
         self.streaming_manager = streaming_manager  # 🔧 Add streaming manager reference
         self.cfg = cfg  # 🚀 NEW: Configuration reference
+        self.on_persisted_callback = on_persisted_callback  # 🚀 NEW: Callback for persistence completion
         
         # 🚀 FIX: Get queue capacity from configuration to prevent unlimited memory growth
         queue_size = 1000  # default value
@@ -243,6 +244,14 @@ class ChunkWriteQueue:
                         channel.mark_chunk_completed(round_num, source_client_id, chunk_id)
                 logger.debug(f"[ChunkWriteQueue] 🔧 Notified streaming channels that chunk {source_client_id}:{chunk_id} is completed")
             
+            # 🚀 NEW: Call persistence completion callback (for HAVE broadcast)
+            if self.on_persisted_callback:
+                try:
+                    self.on_persisted_callback(round_num, source_client_id, chunk_id)
+                    logger.debug(f"[ChunkWriteQueue] 🚀 Called persistence callback for chunk {source_client_id}:{chunk_id}")
+                except Exception as e:
+                    logger.error(f"[ChunkWriteQueue] Error in persistence callback: {e}")
+            
             logger.debug(f"[ChunkWriteQueue] Background write completed for chunk {source_client_id}:{chunk_id}")
             return True
             
@@ -271,7 +280,7 @@ class BitTorrentManager:
             logger.debug(f"[BT] Client {client_id}: BitTorrent will use traditional message passing")
         
         # 🚀 OPTIMIZATION 3: Initialize single writer thread for SQLite operations
-        self.chunk_write_queue = ChunkWriteQueue(client_id, chunk_manager, streaming_manager, cfg)
+        self.chunk_write_queue = ChunkWriteQueue(client_id, chunk_manager, streaming_manager, cfg, self._broadcast_have)
         
         # 🚀 NEW: Allow ChunkManager to access ChunkWriteQueue
         chunk_manager.set_chunk_write_queue(self.chunk_write_queue)
@@ -456,6 +465,15 @@ class BitTorrentManager:
             # 🔴 Add round_num parameter to get_chunk_data
             logger.debug(f"[BT-HANDLE] Client {self.client_id}: Querying chunk_data with params (round={round_num}, source_client={source_client_id}, chunk_id={chunk_id})")
             chunk_data = self.chunk_manager.get_chunk_data(round_num, source_client_id, chunk_id)
+            
+            # 🚀 GENTLE RETRY: If chunk not found, wait briefly for potential persistence completion
+            if chunk_data is None:
+                logger.debug(f"[BT-HANDLE] Client {self.client_id}: Chunk {source_client_id}:{chunk_id} not found, trying gentle retry...")
+                time.sleep(0.05)  # 50ms gentle wait for potential write queue completion
+                chunk_data = self.chunk_manager.get_chunk_data(round_num, source_client_id, chunk_id)
+                if chunk_data is not None:
+                    logger.debug(f"[BT-HANDLE] Client {self.client_id}: ✅ Chunk {source_client_id}:{chunk_id} found after gentle retry")
+            
             if chunk_data is not None:
                 # Send chunk data, even if chunk is empty
                 chunk_size = len(chunk_data) if hasattr(chunk_data, '__len__') else 0
@@ -547,9 +565,8 @@ class BitTorrentManager:
         # 🆕 Dual pool system: transfer requests from queue pool to active pool
         self._transfer_from_queue_to_active()
         
-        # 🚀 Send have message immediately (optimistic broadcast)
-        logger.debug(f"[BT-PIECE] Client {self.client_id}: Broadcasting have message for chunk {source_client_id}:{chunk_id}")
-        self._broadcast_have(round_num, source_client_id, chunk_id)
+        # 🚀 REMOVED: Immediate have broadcast - now done after persistence via callback
+        logger.debug(f"[BT-PIECE] Client {self.client_id}: Chunk {source_client_id}:{chunk_id} queued for background processing - HAVE will be broadcast after persistence")
         
         # Update download statistics (lightweight) - Note: do not duplicate count total_downloaded here
         self._update_download_rate(sender_id, len(chunk_data))
