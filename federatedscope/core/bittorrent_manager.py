@@ -54,7 +54,7 @@ class ChunkWriteQueue:
         🚀 Graceful shutdown of write thread: wait for queue processing to complete, avoid data loss
         Args:
             force_immediate: whether to force immediate shutdown (emergency case)
-            max_wait_time: maximum wait time (seconds)
+            max_wait_time: maximum wait time (seconds), ignored in graceful mode
         """
         if not self.is_running:
             return
@@ -72,16 +72,20 @@ class ChunkWriteQueue:
                 self.writer_thread.join(timeout=2.0)
             logger.warning(f"[ChunkWriteQueue] Force close write thread, may lose {queue_size} chunks")
         else:
-            # Graceful shutdown: wait for queue processing to complete
+            # Graceful shutdown: wait for queue to be completely empty
             self.write_queue.put(None)  # send shutdown signal
             
             if self.writer_thread and self.writer_thread.is_alive():
-                logger.debug(f"[ChunkWriteQueue] Waiting for background writing to complete (max {max_wait_time} seconds)...")
-                self.writer_thread.join(timeout=max_wait_time)
-                
-                if self.writer_thread.is_alive():
-                    logger.error(f"[ChunkWriteQueue] Write thread did not complete within {max_wait_time} seconds, forcing termination")
+                if queue_size > 0:
+                    import time
+                    start_time = time.time()
+                    logger.debug(f"[ChunkWriteQueue] Waiting for all {queue_size} chunks to be written (unlimited wait)...")
+                    self.writer_thread.join()  # Wait indefinitely until thread completes
+                    elapsed_time = time.time() - start_time
+                    logger.info(f"[ChunkWriteQueue] Background write thread completed in {elapsed_time:.2f} seconds, processed {queue_size} chunks")
                 else:
+                    logger.debug(f"[ChunkWriteQueue] Waiting for write thread to complete...")
+                    self.writer_thread.join(timeout=2.0)
                     logger.debug(f"[ChunkWriteQueue] Background write thread graceful shutdown completed")
             
         logger.debug(f"[ChunkWriteQueue] Write thread stopped for client {self.client_id}")
@@ -117,7 +121,7 @@ class ChunkWriteQueue:
             source_client_id: source client ID
             chunk_id: chunk ID
         Returns:
-            chunk_data: if found return deserialized chunk data, otherwise return None
+            chunk_bytes: if found return bytes directly (avoid CPU-intensive deserialization), otherwise return None
         """
         if not self.is_running or self.write_queue.empty():
             return None
@@ -153,15 +157,10 @@ class ChunkWriteQueue:
                     task.get('source_client_id') == source_client_id and
                     task.get('chunk_id') == chunk_id):
                     
-                    # Found matching chunk, deserialize chunk_data
-                    import pickle
-                    try:
-                        chunk_data = pickle.loads(task['chunk_data'])
-                        logger.debug(f"[ChunkWriteQueue] 🎯 Found chunk in write queue: {source_client_id}:{chunk_id}")
-                        return chunk_data
-                    except Exception as e:
-                        logger.error(f"[ChunkWriteQueue] Failed to deserialize pending chunk: {e}")
-                        return None
+                    # Found matching chunk, return bytes directly to avoid CPU overhead
+                    chunk_bytes = task['chunk_data']
+                    logger.debug(f"[ChunkWriteQueue] 🎯 Found chunk in write queue: {source_client_id}:{chunk_id}")
+                    return chunk_bytes
             
             return None
             
@@ -224,17 +223,10 @@ class ChunkWriteQueue:
                 logger.error(f"[ChunkWriteQueue] Background checksum validation failed for chunk {source_client_id}:{chunk_id}")
                 return False
                 
-            # Deserialize in background
-            import pickle
-            try:
-                deserialized_data = pickle.loads(chunk_data)
-            except Exception as e:
-                logger.error(f"[ChunkWriteQueue] Background deserialization failed: {e}")
-                return False
-                
             # 🚀 OPTIMIZED: Save to cache with immediate HAVE broadcast, DB write continues async
+            # Pass bytes directly to avoid redundant pickle.loads() → pickle.dumps()
             self.chunk_manager.save_remote_chunk(
-                round_num, source_client_id, chunk_id, deserialized_data, 
+                round_num, source_client_id, chunk_id, chunk_data,  # Pass bytes directly
                 on_cache_saved_callback=self.on_persisted_callback
             )
             
@@ -1121,7 +1113,7 @@ class BitTorrentManager:
                     #     del self.pending_requests[chunk_key]
             else:
                 # Reached maximum retry count
-                logger.error(f"[BT] Max retries reached for chunk {chunk_key}")
+                logger.debug(f"[BT] Max retries reached for chunk {chunk_key}")
                 # Safe deletion: check if key exists before deleting
                 if chunk_key in self.pending_requests:
                     del self.pending_requests[chunk_key]
@@ -1165,7 +1157,11 @@ class BitTorrentManager:
         
         # 🚀 Data preparation and preprocessing
         send_start_time = time.time()
-        serialized_data = pickle.dumps(chunk_data)
+        # chunk_data is already bytes from optimized cache/write_queue, no need to re-serialize
+        if isinstance(chunk_data, bytes):
+            serialized_data = chunk_data  # Use bytes directly
+        else:
+            serialized_data = pickle.dumps(chunk_data)  # Fallback for legacy data
         checksum = hashlib.sha256(serialized_data).hexdigest()
         data_size = len(serialized_data)
         
@@ -1468,9 +1464,9 @@ class BitTorrentManager:
             logger.debug(f"[BT] Client {self.client_id}: Detected {queue_size} pending chunks, waiting for background writes to complete...")
             # Normal case: wait for queue processing to complete (max 30 seconds)
             self.chunk_write_queue.stop_writer_thread(force_immediate=False, max_wait_time=30.0)
-        else:
-            # Queue is empty: can close immediately
-            self.chunk_write_queue.stop_writer_thread(force_immediate=True)
+
+        # Queue is empty: can close immediately
+        self.chunk_write_queue.stop_writer_thread(force_immediate=True)
         
         # Clear all pending operations
         self.pending_requests.clear()
@@ -1531,6 +1527,14 @@ class BitTorrentManager:
         self.pending_requests.clear()
         self.retry_count.clear()
         self.peer_bitfields.clear()
+        
+        #Clear old file files
+        if self.cfg and hasattr(self.cfg, 'chunk_keep_rounds'):
+            keep_rounds = self.cfg.chunk_keep_rounds
+        else:
+            keep_rounds = 2
+        
+        self.chunk_manager.cleanup_old_rounds(keep_rounds=keep_rounds, current_round=self.round_num)
         
         # 🔧 Emergency cleanup: Clear deduplication sets
         if hasattr(self, 'processed_pieces'):

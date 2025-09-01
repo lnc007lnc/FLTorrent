@@ -428,7 +428,7 @@ class ChunkManager:
         else:
             logger.debug(f"[ChunkManager] {table_type} database for round {round_num} already exists")
     
-    def _cleanup_old_rounds_by_files(self, keep_rounds: int = 2):
+    def _cleanup_old_rounds_by_files(self, keep_rounds: int = 2, current_round: int = None):
         """Ultra-fast cleanup by deleting entire round database files"""
         try:
             # Get all existing round database files
@@ -454,12 +454,17 @@ class ChunkManager:
             
             rounds.sort(reverse=True)  # Newest first
             
-            if len(rounds) <= keep_rounds:
-                logger.debug(f"🧹 Only {len(rounds)} round databases exist, no cleanup needed")
-                return
-                
-            # Database files to delete (keep the most recent ones)
-            files_to_delete = rounds[keep_rounds:]
+            # Use current_round-based cleanup if provided (preferred)
+            if current_round is not None:
+                cutoff_round = max(current_round - keep_rounds, 0)
+                files_to_delete = [(round_num, db_file) for round_num, db_file in rounds if round_num < cutoff_round]
+                logger.debug(f"🧹 Round-based cleanup: current={current_round}, keep={keep_rounds}, cutoff={cutoff_round}")
+            else:
+                # Fallback: count-based cleanup (legacy behavior)
+                if len(rounds) <= keep_rounds:
+                    logger.debug(f"🧹 Only {len(rounds)} round databases exist, no cleanup needed")
+                    return
+                files_to_delete = rounds[keep_rounds:]
             logger.info(f"🧹 Deleting {len(files_to_delete)} old round database files")
             
             start_time = time.time()
@@ -544,6 +549,13 @@ class ChunkManager:
                 importance_scores = [1.0 / len(importance_scores)] * len(importance_scores)  # Average allocation
                 
         logger.info(f"[ChunkManager] Computed chunk importance scores: {[f'{s:.4f}' for s in importance_scores]}")
+        
+        # Log parameter names in the highest importance chunk
+        if importance_scores and chunks_info:
+            max_idx = importance_scores.index(max(importance_scores))
+            highest_chunk_params = list(chunks_info[max_idx]['parts'].keys())
+            logger.info(f"[ChunkManager] Highest importance chunk (score: {importance_scores[max_idx]:.4f}) contains parameters: {highest_chunk_params}")
+        
         return importance_scores
     
     def _compute_magnitude_importance(self, params: Dict[str, np.ndarray], chunk_info: Dict) -> float:
@@ -863,8 +875,7 @@ class ChunkManager:
                 finally:
                     data_conn.close()
                 
-            # Automatically clean old round data, keep recent rounds
-            self.cleanup_old_rounds(keep_rounds=keep_rounds)
+
             
             logger.debug(f"💾 Node {self.client_id}: Round {round_num} saved {len(saved_hashes)} chunks")
             return saved_hashes
@@ -916,11 +927,8 @@ class ChunkManager:
                     pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, self.client_id, chunk_id)
                     if pending_chunk is not None:
                         logger.debug(f"🎯 Cache miss - found chunk {chunk_id} in write queue")
-                        # Convert pending chunk back to bytes if needed
-                        if isinstance(pending_chunk, bytes):
-                            chunk_bytes = pending_chunk
-                        else:
-                            chunk_bytes = pickle.dumps(pending_chunk)
+                        # search_pending_chunk now always returns bytes
+                        chunk_bytes = pending_chunk
                 
                 if chunk_bytes:
                     try:
@@ -989,11 +997,8 @@ class ChunkManager:
                     if pending_chunk is not None:
                         source = "write_queue"
                         logger.debug(f"🎯 Cache miss - found chunk {chunk_id} in write queue for round {round_num}")
-                        # Convert pending chunk back to bytes if needed
-                        if isinstance(pending_chunk, bytes):
-                            chunk_bytes = pending_chunk
-                        else:
-                            chunk_bytes = pickle.dumps(pending_chunk)
+                        # search_pending_chunk now always returns bytes
+                        chunk_bytes = pending_chunk
                 
                 if chunk_bytes:
                     try:
@@ -1137,42 +1142,33 @@ class ChunkManager:
             logger.error(f"❌ Failed to get storage stats: {e}")
             return {}
     
-    def cleanup_old_rounds(self, keep_rounds: int = 2):
+    def cleanup_old_rounds(self, keep_rounds: int = 2, current_round: int = None):
         """
         Clean up chunks from old rounds, only keep the most recent few rounds
         
         Args:
             keep_rounds: Keep data from recent rounds, default to keep only 2 rounds
+            current_round: Current round number (required for accurate cleanup)
         
         Note: This method now cleans both cache system and legacy database files
         """
-        logger.info(f"🧹 Starting cleanup of old rounds (keep {keep_rounds} recent rounds)...")
+        if current_round is None:
+            logger.warning("🚨 cleanup_old_rounds called without current_round parameter - skipping cleanup")
+            return []
+            
+        logger.info(f"🧹 Starting cleanup of old rounds (current: {current_round}, keep {keep_rounds} recent rounds)...")
         
         # 🚀 Clean cache system first - high-performance cache cleanup
         if hasattr(self, 'chunk_cache') and self.chunk_cache is not None:
             try:
-                # For cache cleanup, we need to determine current round from existing files
-                # Since cleanup is called from save_model_chunks with round_num parameter,
-                # we can estimate by finding the highest round number in existing cache files
-                cache_dir = self.chunk_cache.cache_dir
-                max_round = 0
-                if os.path.exists(cache_dir):
-                    for filename in os.listdir(cache_dir):
-                        if filename.endswith('.dat') and '_r' in filename:
-                            try:
-                                round_part = filename.split('_r')[1].split('.')[0]
-                                max_round = max(max_round, int(round_part))
-                            except (ValueError, IndexError):
-                                continue
-                
-                # Clean cache system
-                self.chunk_cache.cleanup_round(max_round, keep_rounds)
-                logger.info(f"🚀 Cleaned cache system for old rounds (latest round: {max_round})")
+                # Clean cache system with provided current round
+                self.chunk_cache.cleanup_round(current_round, keep_rounds)
+                logger.info(f"🚀 Cleaned cache system for old rounds (current round: {current_round})")
             except Exception as e:
                 logger.error(f"❌ Failed to clean cache system: {e}")
         
         # Clean legacy database files (for compatibility)
-        return self._cleanup_old_rounds_by_files(keep_rounds)
+        return self._cleanup_old_rounds_by_files(keep_rounds, current_round)
     
     def _cleanup_old_database_files(self, keep_rounds: int = 2):
         """Ultra-fast cleanup by deleting entire round database files using glob patterns
@@ -1712,20 +1708,15 @@ class ChunkManager:
         """
         🚀 HIGH-PERFORMANCE: Get chunk data from cache system (no database overhead)
         
-        Returns deserialized data from cache - direct file access
+        Returns raw bytes for optimal transmission performance - caller responsible for deserialization if needed
         """
         # 🚀 Direct cache lookup - no database complexity
         chunk_bytes = self.chunk_cache.get_chunk_data(round_num, source_client_id, chunk_id)
         
         if chunk_bytes is not None:
-            # Cache hit - deserialize bytes back to original data
-            try:
-                chunk_data = pickle.loads(chunk_bytes)
-                logger.debug(f"[ChunkManager] Client {self.client_id}: Cache hit for chunk ({round_num}, {source_client_id}, {chunk_id}), size: {len(chunk_bytes)} bytes")
-                return chunk_data
-            except Exception as pickle_error:
-                logger.error(f"[ChunkManager] Client {self.client_id}: Failed to deserialize cached chunk data: {pickle_error}")
-                return None
+            # Cache hit - return bytes directly for zero-copy performance
+            logger.debug(f"[ChunkManager] Client {self.client_id}: Cache hit for chunk ({round_num}, {source_client_id}, {chunk_id}), size: {len(chunk_bytes)} bytes")
+            return chunk_bytes
         
         # Cache miss - check write queue fallback
         if self.chunk_write_queue:
@@ -1735,6 +1726,22 @@ class ChunkManager:
                 return pending_chunk
         
         logger.debug(f"[ChunkManager] Client {self.client_id}: Chunk ({round_num}, {source_client_id}, {chunk_id}) not found in cache or write queue")
+        return None
+    
+    def get_chunk_data_deserialized(self, round_num, source_client_id, chunk_id):
+        """
+        Get chunk data and deserialize it for aggregation/computation use
+        
+        Returns deserialized numpy array/object - only use when computation is needed
+        """
+        chunk_bytes = self.get_chunk_data(round_num, source_client_id, chunk_id)
+        if chunk_bytes is not None:
+            try:
+                chunk_data = pickle.loads(chunk_bytes)
+                return chunk_data
+            except Exception as pickle_error:
+                logger.error(f"[ChunkManager] Client {self.client_id}: Failed to deserialize chunk data: {pickle_error}")
+                return None
         return None
     
     @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
@@ -1959,11 +1966,8 @@ class ChunkManager:
                     pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, client_id, chunk_id)
                     if pending_chunk is not None:
                         logger.debug(f"🎯 Cache miss - found chunk {chunk_id} in write queue for client {client_id}")
-                        # Convert pending chunk back to bytes if needed
-                        if isinstance(pending_chunk, bytes):
-                            chunk_bytes = pending_chunk
-                        else:
-                            chunk_bytes = pickle.dumps(pending_chunk)
+                        # search_pending_chunk now always returns bytes
+                        chunk_bytes = pending_chunk
                 
                 if chunk_bytes:
                     chunk_data_list.append((chunk_id, chunk_bytes))

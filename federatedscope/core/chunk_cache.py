@@ -277,7 +277,7 @@ class ChunkDataCache:
         """Clean up old round data from disk"""
         try:
             # 🔧 CLEANUP FIX: Process all .dat files and extract their rounds
-            cutoff_round = current_round - keep_rounds
+            cutoff_round = max(current_round - keep_rounds , 0)
             removed_files = 0
             
             for filename in os.listdir(self.cache_dir):

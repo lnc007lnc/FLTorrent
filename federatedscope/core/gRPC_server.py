@@ -326,7 +326,11 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 # 🚀 Success response: Return actual chunk data
                 logger.debug(f"[gRPCServer] 📤 Sending chunk data for {chunk_req.source_client_id}:{chunk_req.chunk_id} to client {request.client_id}")
                 
-                serialized_data = pickle.dumps(chunk_data)
+                # chunk_data is already bytes from optimized cache/write_queue, no need to re-serialize
+                if isinstance(chunk_data, bytes):
+                    serialized_data = chunk_data  # Use bytes directly
+                else:
+                    serialized_data = pickle.dumps(chunk_data)  # Fallback for legacy data
                 checksum = hashlib.sha256(serialized_data).hexdigest()
                 data_size = len(serialized_data)
                 
