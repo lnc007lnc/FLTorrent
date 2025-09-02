@@ -386,8 +386,9 @@ class GeneralTorchTrainer(Trainer):
                                            ctx.grad_clip)
 
         ctx.optimizer.step()
-        if ctx.scheduler is not None:
-            ctx.scheduler.step()
+        # Scheduler step moved to FL round completion (after global aggregation)
+        # if ctx.scheduler is not None:
+        #     ctx.scheduler.step()
 
     def _hook_on_batch_end(self, ctx):
         """

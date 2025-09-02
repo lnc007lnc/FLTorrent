@@ -76,7 +76,7 @@ def test_per_round_database_migration():
         start_time = time.time()
         
         # This should delete old round files (keeping only the most recent 2)
-        chunk_manager.cleanup_old_rounds(keep_rounds=2)
+        chunk_manager.cleanup_old_rounds(keep_rounds=2, current_round=3)
         
         cleanup_time = time.time() - start_time
         print(f"  - ✓ File-based cleanup completed in {cleanup_time:.3f} seconds")

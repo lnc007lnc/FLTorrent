@@ -495,10 +495,30 @@ class ChunkManager:
     
     @staticmethod
     def model_to_params(model: nn.Module) -> Dict[str, np.ndarray]:
-        """Convert all parameters and buffers in model to numpy arrays"""
-        params = {name: param.data.cpu().numpy() for name, param in model.named_parameters()}
-        for name, buffer in model.named_buffers():
-            params[name] = buffer.data.cpu().numpy()
+        """
+        Convert model parameters to numpy arrays, excluding ALL BatchNorm parameters
+        
+        Filters out ALL BN-related parameters:
+        - Trainable: weight (γ), bias (β) 
+        - Statistics: running_mean, running_var, num_batches_tracked
+        
+        Only Conv/Linear layers and other non-BN parameters participate in federated learning
+        """
+        params = {}
+        
+        # Include trainable parameters but exclude ALL BN parameters
+        for name, param in model.named_parameters():
+            # Skip ALL BatchNorm parameters (weight/bias from BN layers)
+            if any(bn_key in name for bn_key in [
+                'bn', 'batch_norm', 'batchnorm', '_bn', '.bn.', 
+                'norm', 'layernorm', 'layer_norm'  # Also exclude other normalization layers
+            ]):
+                continue
+            params[name] = param.data.cpu().numpy()
+        
+        # Skip ALL buffers (running_mean, running_var, num_batches_tracked, etc.)
+        # All normalization statistics remain local to each client
+        
         return params
 
     @staticmethod
@@ -2119,6 +2139,10 @@ class ChunkManager:
             int: Sample count, return None if not found
         """
         try:
+            # First, try to get sample size from stored metadata if available
+            if hasattr(self, '_sample_sizes') and round_num in self._sample_sizes and client_id in self._sample_sizes[round_num]:
+                return self._sample_sizes[round_num][client_id]
+            
             # Check if metadata database exists
             if not os.path.exists(self._get_round_db_path(round_num, 'metadata')):
                 logger.debug(f"No metadata database found for round {round_num}")

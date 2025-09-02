@@ -395,12 +395,16 @@ class Client(BaseClient):
                 else:
                     # Aggregate model from chunk database for previous round (round - 1)
                     # This is because we aggregate the results from the previous training round
-                    aggregated_model = self._aggregate_model_from_chunks(round - 1)
+                    # Get aggregator type from config or use default
+                    aggregator_type = getattr(self._cfg.federate, 'method', 'fedavg').lower()
+                    aggregated_model = self._aggregate_model_from_chunks(round - 1, aggregator_type)
                     
                     if aggregated_model is not None:
                         # Update model with aggregated weights
                         self.trainer.update(aggregated_model,
                                             strict=self._cfg.federate.share_local_model)
+                        
+                        
                         logger.info(f"[BT-FL] Client {self.ID}: Successfully updated model from chunk aggregation")
                     else:
                         logger.warning(f"[BT-FL] Client {self.ID}: Failed to aggregate model from chunks, keeping current model")
@@ -450,6 +454,16 @@ class Client(BaseClient):
                         f"The next FL update may result in negative effect")
                     self._monitor.local_converged()
                 sample_size, model_para_all, results = self.trainer.train()
+                
+                # Step scheduler after local training completion (per FL round)
+                if (hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'scheduler') 
+                    and self.trainer.ctx.scheduler is not None):
+                    old_lr = self.trainer.ctx.optimizer.param_groups[0]['lr']
+                    self.trainer.ctx.scheduler.step()
+                    new_lr = self.trainer.ctx.optimizer.param_groups[0]['lr'] 
+                    if old_lr != new_lr:
+                        logger.info(f"[FL-Scheduler] Client {self.ID}: LR stepped after local training - {old_lr:.2e} → {new_lr:.2e}")
+                
                 if self._cfg.federate.share_local_model and not \
                         self._cfg.federate.online_aggr:
                     model_para_all = copy.deepcopy(model_para_all)
@@ -993,13 +1007,96 @@ class Client(BaseClient):
             import traceback
             logger.debug(f"Traceback: {traceback.format_exc()}")
     
-    def _aggregate_model_from_chunks(self, round_num):
+    def _filter_bn_keys(self, state_dict):
         """
-        Aggregate model parameters from chunk database
-        Implement FedAvg aggregation algorithm: weighted average based on sample count
+        Filter out BatchNorm keys from state_dict as they should not be aggregated
+        
+        Args:
+            state_dict: PyTorch model state_dict
+            
+        Returns:
+            dict: Filtered state_dict without BN keys
+        """
+        if state_dict is None:
+            return None
+            
+        # Common BN key patterns
+        bn_patterns = [
+            'bn',           # batch_norm
+            'batchnorm',    # batch_norm 
+            'batch_norm',   # batch_norm
+            '_bn',          # _bn suffix
+            '.bn.',         # .bn. in middle
+            'running_mean', # BN running stats
+            'running_var',  # BN running stats
+            'num_batches_tracked'  # BN tracking
+        ]
+        
+        filtered_dict = {}
+        for key, value in state_dict.items():
+            # Check if key contains any BN patterns (case insensitive)
+            key_lower = key.lower()
+            is_bn_key = any(pattern in key_lower for pattern in bn_patterns)
+            
+            if not is_bn_key:
+                filtered_dict[key] = value
+            else:
+                logger.debug(f"[BT-FL] Client {self.ID}: Filtered out BN key: {key}")
+                
+        if len(filtered_dict) != len(state_dict):
+            logger.info(f"[BT-FL] Client {self.ID}: Filtered {len(state_dict) - len(filtered_dict)} BN keys, kept {len(filtered_dict)} parameters")
+            
+        return filtered_dict
+
+    def _get_expected_client_sample_sizes(self, round_num):
+        """
+        Get expected sample sizes for all clients from various sources
+        
+        Args:
+            round_num: Target round number
+            
+        Returns:
+            dict: {client_id: sample_size} or None if unavailable
+        """
+        expected_sample_sizes = {}
+        
+        try:
+            # Method 1: Try to get from chunk manager cache/history
+            if hasattr(self, 'chunk_manager') and hasattr(self.chunk_manager, '_sample_sizes'):
+                # Look for sample sizes from any available round (assuming stable data split)
+                for past_round in range(max(0, round_num - 5), round_num + 1):  # Check recent rounds
+                    if past_round in self.chunk_manager._sample_sizes:
+                        expected_sample_sizes.update(self.chunk_manager._sample_sizes[past_round])
+                        
+            # Method 2: Try to get from local data if this client has data
+            if hasattr(self, 'data') and self.data is not None:
+                if hasattr(self.data, 'train') and self.data.train is not None:
+                    local_sample_size = len(self.data.train)
+                    expected_sample_sizes[self.ID] = local_sample_size
+                    
+            # Method 3: Try to get from config if available
+            if hasattr(self._cfg, 'data') and hasattr(self._cfg.data, 'client_sample_sizes'):
+                expected_sample_sizes.update(self._cfg.data.client_sample_sizes)
+                
+            if expected_sample_sizes:
+                logger.debug(f"[BT-FL] Client {self.ID}: Found expected sample sizes for {len(expected_sample_sizes)} clients")
+                return expected_sample_sizes
+            else:
+                logger.debug(f"[BT-FL] Client {self.ID}: No expected sample sizes found, will use average estimation")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"[BT-FL] Client {self.ID}: Failed to get expected client sample sizes: {e}")
+            return None
+
+    def _aggregate_model_from_chunks(self, round_num, aggregator_type='fedavg'):
+        """
+        Aggregate model parameters from chunk database using built-in aggregators
+        with parameter completion for missing client contributions
         
         Args:
             round_num: Target round
+            aggregator_type: Type of aggregator to use ('fedavg', 'krum', 'median', etc.)
             
         Returns:
             dict: Aggregated model parameters, returns None if failed
@@ -1018,7 +1115,7 @@ class Client(BaseClient):
                     logger.error(f"[BT-FL] Client {self.ID}: Failed to initialize chunk_manager: {e}")
                     return None
                 
-            logger.info(f"[BT-FL] Client {self.ID}: Starting model aggregation from chunks for round {round_num}")
+            logger.info(f"[BT-FL] Client {self.ID}: Starting model aggregation using {aggregator_type} aggregator for round {round_num}")
             
             # Get all available client model chunks
             available_clients = self.chunk_manager.get_available_clients_for_round(round_num)
@@ -1028,68 +1125,192 @@ class Client(BaseClient):
                 
             logger.info(f"[BT-FL] Client {self.ID}: Found models from {len(available_clients)} clients: {available_clients}")
             
-            # Collect model parameters and sample counts from all clients
-            client_models = []
-            total_samples = 0
+            # Get baseline parameters (current global model for parameter completion)
+            raw_baseline_params = None
+            if hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'model'):
+                raw_baseline_params = self.trainer.ctx.model.state_dict()
+            elif hasattr(self.trainer, 'model'):
+                raw_baseline_params = self.trainer.model.state_dict()
+            
+            if raw_baseline_params is None:
+                logger.warning(f"[BT-FL] Client {self.ID}: No baseline model available for parameter completion")
+                return None
+                
+            # Filter out BN keys from baseline to prevent accidental aggregation
+            baseline_params = self._filter_bn_keys(raw_baseline_params)
+            if not baseline_params:
+                logger.error(f"[BT-FL] Client {self.ID}: No valid parameters in baseline after BN filtering")
+                return None
+            
+            # Collect and complete model parameters from all clients
+            completed_client_models = []
+            
+            # Get expected sample sizes for all clients (real data split info)
+            expected_sample_sizes = self._get_expected_client_sample_sizes(round_num)
+            
+            # Calculate available clients' actual sample sizes
+            available_sample_sizes = {}
+            total_available_samples = 0
             
             for client_id in available_clients:
                 try:
-                    # Reconstruct model parameters from chunks
-                    model_params = self.chunk_manager.reconstruct_model_from_client_chunks(client_id, round_num)
-                    if model_params is None:
-                        logger.warning(f"[BT-FL] Client {self.ID}: Failed to reconstruct model for client {client_id}")
-                        continue
-                        
-                    # Get sample size (from chunk metadata or use default value)
                     sample_size = self.chunk_manager.get_client_sample_size(client_id, round_num)
-                    if sample_size is None:
-                        sample_size = 128  # Use default sample count
-                        logger.warning(f"[BT-FL] Client {self.ID}: Using default sample size {sample_size} for client {client_id}")
-                    
-                    client_models.append((client_id, model_params, sample_size))
-                    total_samples += sample_size
-                    logger.debug(f"[BT-FL] Client {self.ID}: Loaded model from client {client_id} with {sample_size} samples")
-                    
+                    if sample_size is not None:
+                        available_sample_sizes[client_id] = sample_size
+                        total_available_samples += sample_size
                 except Exception as e:
-                    logger.error(f"[BT-FL] Client {self.ID}: Failed to load model from client {client_id}: {e}")
-                    continue
+                    logger.warning(f"[BT-FL] Client {self.ID}: Failed to get sample size for client {client_id}: {e}")
             
-            if not client_models:
-                logger.error(f"[BT-FL] Client {self.ID}: No valid client models found for aggregation")
+            if not available_sample_sizes:
+                logger.error(f"[BT-FL] Client {self.ID}: No valid sample sizes found")
+                return None
+            
+            # Expected total clients (from config or estimated from expected_sample_sizes)
+            if expected_sample_sizes:
+                expected_total_clients = len(expected_sample_sizes)
+                logger.info(f"[BT-FL] Client {self.ID}: Using real data split info for {expected_total_clients} expected clients")
+            else:
+                expected_total_clients = getattr(self._cfg.federate, 'sample_client_num', len(available_clients))
+                avg_sample_size = total_available_samples / len(available_sample_sizes)
+                logger.info(f"[BT-FL] Client {self.ID}: Using average sample size estimation: {avg_sample_size:.1f}")
+            
+            # Process available clients with parameter completion
+            for client_id in available_clients:
+                try:
+                    # Client has uploaded model
+                    model_params = self.chunk_manager.reconstruct_model_from_client_chunks(client_id, round_num)
+                    sample_size = available_sample_sizes.get(client_id)
+                    
+                    if model_params is not None and sample_size is not None:
+                        # Filter out BN keys from client model to prevent accidental aggregation
+                        filtered_model_params = self._filter_bn_keys(model_params)
+                        
+                        # Complete missing parameters with baseline and normalize device/dtype
+                        completed_params = {}
+                        for param_name in baseline_params.keys():
+                            if param_name in filtered_model_params:
+                                # Convert client parameter to CPU float32 for aggregator
+                                param_value = filtered_model_params[param_name]
+                                if hasattr(param_value, 'cpu') and hasattr(param_value, 'float'):
+                                    completed_params[param_name] = param_value.cpu().float()
+                                else:
+                                    completed_params[param_name] = param_value
+                            else:
+                                # Use baseline for missing parameters, ensure CPU float32
+                                baseline_value = baseline_params[param_name]
+                                if hasattr(baseline_value, 'cpu') and hasattr(baseline_value, 'float'):
+                                    completed_params[param_name] = baseline_value.clone().detach().cpu().float()
+                                else:
+                                    completed_params[param_name] = baseline_value.clone().detach()
+                        
+                        completed_client_models.append((sample_size, completed_params))
+                        logger.debug(f"[BT-FL] Client {self.ID}: Completed model for client {client_id} with {sample_size} samples")
+                    else:
+                        logger.warning(f"[BT-FL] Client {self.ID}: Failed to reconstruct model for available client {client_id}")
+                        
+                except Exception as e:
+                    logger.error(f"[BT-FL] Client {self.ID}: Failed to process client {client_id}: {e}")
+            
+            # Calculate absent clients and merge their baseline contribution (only for FedAvg)
+            if expected_sample_sizes:
+                # Use real expected client IDs and their true sample sizes
+                expected_client_ids = set(expected_sample_sizes.keys())
+                available_client_ids = set(available_clients)
+                absent_client_ids = expected_client_ids - available_client_ids
+                
+                if absent_client_ids and aggregator_type.lower() == 'fedavg':
+                    # Calculate true total sample weight for absent clients
+                    total_absent_sample_weight = sum(expected_sample_sizes[cid] for cid in absent_client_ids)
+                    # Normalize baseline parameters to CPU float32 for aggregator
+                    baseline_params_copy = {}
+                    for k, v in baseline_params.items():
+                        if hasattr(v, 'cpu') and hasattr(v, 'float'):
+                            baseline_params_copy[k] = v.clone().detach().cpu().float()
+                        else:
+                            baseline_params_copy[k] = v.clone().detach()
+                    completed_client_models.append((total_absent_sample_weight, baseline_params_copy))
+                    logger.info(f"[BT-FL] Client {self.ID}: Added baseline entry for {len(absent_client_ids)} absent clients with true total weight {total_absent_sample_weight}")
+                    logger.debug(f"[BT-FL] Client {self.ID}: Absent clients: {sorted(absent_client_ids)}")
+                elif absent_client_ids:
+                    logger.info(f"[BT-FL] Client {self.ID}: Skipping baseline injection for {aggregator_type} aggregator ({len(absent_client_ids)} absent clients)")
+                    logger.info(f"[BT-FL] Client {self.ID}: Robust aggregators work with available clients only to preserve geometric properties")
+            else:
+                # Fallback to estimation when real sample sizes unavailable
+                num_absent_clients = expected_total_clients - len(available_clients)
+                if num_absent_clients > 0 and aggregator_type.lower() == 'fedavg':
+                    # Use average estimation as fallback
+                    total_absent_sample_weight = num_absent_clients * avg_sample_size
+                    # Normalize baseline parameters to CPU float32 for aggregator
+                    baseline_params_copy = {}
+                    for k, v in baseline_params.items():
+                        if hasattr(v, 'cpu') and hasattr(v, 'float'):
+                            baseline_params_copy[k] = v.clone().detach().cpu().float()
+                        else:
+                            baseline_params_copy[k] = v.clone().detach()
+                    completed_client_models.append((total_absent_sample_weight, baseline_params_copy))
+                    logger.info(f"[BT-FL] Client {self.ID}: Added baseline entry for {num_absent_clients} absent clients with estimated total weight {total_absent_sample_weight:.1f}")
+                    logger.warning(f"[BT-FL] Client {self.ID}: Using average sample size estimation (real data split info unavailable)")
+                elif num_absent_clients > 0:
+                    logger.info(f"[BT-FL] Client {self.ID}: Skipping baseline injection for {aggregator_type} aggregator ({num_absent_clients} absent clients)")
+                    logger.info(f"[BT-FL] Client {self.ID}: Robust aggregators work with available clients only to preserve geometric properties")
+            
+            if not completed_client_models:
+                logger.error(f"[BT-FL] Client {self.ID}: No valid completed client models for aggregation")
                 return None
                 
-            logger.info(f"[BT-FL] Client {self.ID}: Aggregating {len(client_models)} models with total {total_samples} samples")
+            if aggregator_type.lower() == 'fedavg':
+                logger.info(f"[BT-FL] Client {self.ID}: Prepared {len(completed_client_models)} models ({len(available_clients)} real + baseline) for {aggregator_type} aggregation")
+            else:
+                logger.info(f"[BT-FL] Client {self.ID}: Prepared {len(completed_client_models)} available client models for {aggregator_type} aggregation (parameter-completed)")
             
-            # Execute FedAvg weighted average aggregation
-            aggregated_params = {}
+            # Create and use built-in aggregator
+            from federatedscope.core.auxiliaries.aggregator_builder import get_aggregator
             
-            # Get model structure (use first available model)
-            first_model = client_models[0][1]
+            # Get a reference model for aggregator initialization
+            reference_model = None
+            if hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'model'):
+                reference_model = self.trainer.ctx.model
+            elif hasattr(self.trainer, 'model'):
+                reference_model = self.trainer.model
             
-            for param_name in first_model.keys():
-                # Initialize parameters
-                aggregated_params[param_name] = None
-                
-                # Weighted summation
-                for client_id, model_params, sample_size in client_models:
-                    if param_name not in model_params:
-                        logger.warning(f"[BT-FL] Client {self.ID}: Parameter {param_name} missing in client {client_id} model")
-                        continue
-                        
-                    weight = sample_size / total_samples
-                    param_value = model_params[param_name]
-                    
-                    # Ensure parameters are on correct device
+            aggregator = get_aggregator(
+                method=aggregator_type,
+                model=reference_model,
+                device=self.device,
+                config=self._cfg
+            )
+            
+            # Prepare aggregation info
+            agg_info = {
+                "client_feedback": completed_client_models
+            }
+            
+            # Perform aggregation (on CPU with float32)
+            aggregated_model = aggregator.aggregate(agg_info)
+            
+            # Move aggregated results back to target device and original dtype if needed
+            if aggregated_model is not None and isinstance(aggregated_model, dict):
+                target_device = self.device
+                # Get original dtypes from baseline_params for reference
+                final_model = {}
+                for param_name, param_value in aggregated_model.items():
                     if hasattr(param_value, 'to'):
-                        param_value = param_value.to(self.device)
-                    
-                    if aggregated_params[param_name] is None:
-                        aggregated_params[param_name] = weight * param_value
+                        # Get target dtype from baseline if available
+                        target_dtype = None
+                        if param_name in baseline_params and hasattr(baseline_params[param_name], 'dtype'):
+                            target_dtype = baseline_params[param_name].dtype
+                        
+                        # Move to target device and dtype
+                        final_param = param_value.to(target_device)
+                        if target_dtype is not None and final_param.dtype != target_dtype:
+                            final_param = final_param.to(target_dtype)
+                        final_model[param_name] = final_param
                     else:
-                        aggregated_params[param_name] += weight * param_value
+                        final_model[param_name] = param_value
+                aggregated_model = final_model
             
-            logger.info(f"[BT-FL] Client {self.ID}: Successfully aggregated model with {len(aggregated_params)} parameters")
-            return aggregated_params
+            logger.info(f"[BT-FL] Client {self.ID}: Successfully aggregated model using {aggregator_type} with {len(completed_client_models)} clients")
+            return aggregated_model
             
         except Exception as e:
             logger.error(f"[BT-FL] Client {self.ID}: Model aggregation failed: {e}")
@@ -1371,6 +1592,11 @@ class Client(BaseClient):
             # Record completion reason
             final_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
             logger.info(f"[BT] Client {self.ID}: Exchange loop completed after {iteration} iterations. Final chunks: {final_chunks}/{expected_chunks}")
+            
+            #Clear old file files
+            keep_rounds = getattr(self._cfg, 'chunk_keep_rounds', 2) if hasattr(self, '_cfg') else 2
+        
+            self.chunk_manager.cleanup_old_rounds(keep_rounds=keep_rounds, current_round=self.bt_manager.round_num)
             
             # 4. Report to Server after completion
             self._report_bittorrent_completion()

@@ -9,6 +9,22 @@ One-click distributed federated learning, completely replacing traditional shell
 - Real-time monitoring and logging
 - Cloud server extension support
 
+🚀 NEW: Unified Aggregator and LR Scheduler Configuration
+- Configure aggregator type: fedavg, krum, median, trimmedmean, bulyan, normbounding
+- Configure LR scheduler: StepLR, MultiStepLR, CosineAnnealingLR, etc.
+- All settings centralized in FLConfig class
+
+Examples:
+# Use Krum aggregator with cosine annealing
+CONFIG.AGGREGATOR_TYPE = "krum"
+CONFIG.LR_SCHEDULER_TYPE = "CosineAnnealingLR"
+CONFIG.LR_SCHEDULER_T_MAX = 150
+
+# Use FedAvg with multi-step LR decay at rounds 50, 100
+CONFIG.AGGREGATOR_TYPE = "fedavg"  
+CONFIG.LR_SCHEDULER_TYPE = "MultiStepLR"
+CONFIG.LR_SCHEDULER_MILESTONES = [50, 100]
+
 Run directly to start complete FL system
 """
 
@@ -47,9 +63,9 @@ class EdgeDeviceProfile:
     # Network characteristics
     bandwidth_up_kbps: int = 176610         # Uplink bandwidth (kbps) Ookla Speedtest Global Index spain Fixed Broadband
     bandwidth_down_kbps: int = 241750       # Downlink bandwidth (kbps) Ookla Speedtest Global Index spain Fixed Broadband
-    latency_ms: int = 50                   # Network latency (milliseconds)
+    latency_ms: int = 1                   # Network latency (milliseconds)
     packet_loss_rate: float = 0.00        # Packet loss rate (0-1)
-    jitter_ms: int = 10                    # Network jitter (milliseconds)
+    jitter_ms: int = 1                    # Network jitter (milliseconds)
     
     # Device characteristics
     training_speed_multiplier: float = 1.0  # Training speed multiplier
@@ -62,15 +78,15 @@ class FLConfig:
     """Federated learning configuration parameters"""
     
     # === Basic Settings ===
-    CLIENT_NUM: int = 3                    # Number of clients for CIFAR experiments
-    TOTAL_ROUNDS: int = 5                  # Fewer rounds for epoch-based training
-    CHUNK_NUM: int = 20                     # More chunks for ResNet layers
+    CLIENT_NUM: int = 50                    # Number of clients for CIFAR experiments
+    TOTAL_ROUNDS: int = 300                  # Fewer rounds for epoch-based training
+    CHUNK_NUM: int = 16                     # More chunks for ResNet layers
     IMPORTANCE_METHOD: str = "fisher"         # Chunk importance method: magnitude, l2_norm, snip, fisher
     
     # === Dataset Settings ===
     # CNN Settings (current active for ResNet-18)
     DATASET: str = "CIFAR10@torchvision"    # CIFAR-10 dataset
-    BATCH_SIZE: int = 32                    # Standard batch size for CIFAR-10
+    BATCH_SIZE: int = 64                    # Standard batch size for CIFAR-10
     DATA_SPLIT_ALPHA: float = 1.0           # Non-IID data split parameter
     
     # Transformer/NLP Settings (commented for future use)
@@ -83,7 +99,7 @@ class FLConfig:
     MODEL_TYPE: str = "resnet18"            # ResNet-18 for CIFAR-10
     MODEL_HIDDEN: int = 512                 # Hidden layer size (not used for ResNet)
     MODEL_OUT_CHANNELS: int = 10            # CIFAR-10 classes
-    MODEL_DROPOUT: float = 0.3              # Dropout for regularization
+    MODEL_DROPOUT: float = 0.0              # Dropout for regularization
     
     # Transformer/NLP Model Settings (commented for future use)
     # MODEL_TYPE: str = "lstm"                # LSTM model for text
@@ -92,49 +108,11 @@ class FLConfig:
     # MODEL_DROPOUT: float = 0.1             # Add dropout for regularization
     
     # === Docker Settings ===
-    USE_DOCKER: bool = False               # Disable Docker for testing (enable after rebuilding image)
+    USE_DOCKER: bool = True               # Enable Docker for containerized execution
+    USE_LOCAL_CODE_MOUNT: bool = True     # 🚀 Mount local code instead of rebuilding image 
     BASE_DOCKER_IMAGE: str = "flv2:base"  # Base image
     DOCKER_NETWORK_NAME: str = "fl_network"         # Docker network name
     ENABLE_NETWORK_SIMULATION: bool = True          # Enable network simulation
-    
-    # === Network Simulation Settings ===
-    NETWORK_PROFILES: Dict[str, Dict] = field(default_factory=lambda: {
-        "smartphone_high": {
-            "bandwidth_up_kbps": 50000,
-            "bandwidth_down_kbps": 100000,
-            "latency_ms": 20,
-            "packet_loss_rate": 0.005,
-            "jitter_ms": 5
-        },
-        "smartphone_low": {
-            "bandwidth_up_kbps": 5000,
-            "bandwidth_down_kbps": 20000,
-            "latency_ms": 100,
-            "packet_loss_rate": 0.02,
-            "jitter_ms": 20
-        },
-        "raspberry_pi": {
-            "bandwidth_up_kbps": 10000,
-            "bandwidth_down_kbps": 50000,
-            "latency_ms": 30,
-            "packet_loss_rate": 0.01,
-            "jitter_ms": 10
-        },
-        "iot_device": {
-            "bandwidth_up_kbps": 128,
-            "bandwidth_down_kbps": 512,
-            "latency_ms": 300,
-            "packet_loss_rate": 0.05,
-            "jitter_ms": 50
-        },
-        "edge_server": {
-            "bandwidth_up_kbps": 100000,
-            "bandwidth_down_kbps": 1000000,
-            "latency_ms": 5,
-            "packet_loss_rate": 0.001,
-            "jitter_ms": 1
-        }
-    })
     
     # === Device Distribution Configuration ===
     DEVICE_DISTRIBUTION: Dict[str, float] = field(default_factory=lambda: {
@@ -146,16 +124,41 @@ class FLConfig:
     })
     
     # === Training Settings ===
-    LOCAL_UPDATE_STEPS: int = 2           # 2 epochs for ResNet-18 on CIFAR-10
-    LEARNING_RATE: float = 0.01           # Higher learning rate for ResNet-18 on CIFAR-10
+    LOCAL_UPDATE_STEPS: int = 1           # 2 epochs for ResNet-18 on CIFAR-10
+    LEARNING_RATE: float = 0.1           # Higher learning rate for ResNet-18 on CIFAR-10
     OPTIMIZER: str = "SGD"                # SGD optimizer for ResNet (standard choice)
+    OPTIMIZER_MOMENTUM: float = 0.9       # SGD momentum for better convergence
     WEIGHT_DECAY: float = 5e-4            # Weight decay for ResNet regularization
     GRAD_CLIP: float = 5.0                # Higher gradient clipping for CNN
     
+    # === Aggregator Settings ===
+    AGGREGATOR_TYPE: str = "fedavg"       # Aggregator type: fedavg, krum, median, trimmedmean, bulyan, normbounding
+    
+    # === Learning Rate Scheduler Settings ===
+    # Examples:
+    # - No scheduler: LR_SCHEDULER_TYPE = ""
+    # - Step decay: LR_SCHEDULER_TYPE = "StepLR", LR_SCHEDULER_STEP_SIZE = 30, LR_SCHEDULER_GAMMA = 0.1
+    # - Multi-step: LR_SCHEDULER_TYPE = "MultiStepLR", LR_SCHEDULER_MILESTONES = [50, 100], LR_SCHEDULER_GAMMA = 0.1
+    # - Cosine: LR_SCHEDULER_TYPE = "CosineAnnealingLR", LR_SCHEDULER_T_MAX = 150, LR_SCHEDULER_ETA_MIN = 1e-6
+    LR_SCHEDULER_TYPE: str = "CosineAnnealingLR"           # Scheduler type: "", StepLR, MultiStepLR, CosineAnnealingLR, etc.
+    # LR_SCHEDULER_STEP_SIZE: int = 30      # StepLR: step size (rounds)
+    # LR_SCHEDULER_GAMMA: float = 0.1       # StepLR/MultiStepLR: decay factor
+    # LR_SCHEDULER_MILESTONES: List[int] = field(default_factory=lambda: [150, 225]) # MultiStepLR: milestone rounds
+    LR_SCHEDULER_T_MAX: int = 300         # CosineAnnealingLR: max rounds (should match TOTAL_ROUNDS)
+    LR_SCHEDULER_ETA_MIN: float = 1e-6    # CosineAnnealingLR: minimum learning rate
+    
     # === BitTorrent Settings ===
-    BITTORRENT_TIMEOUT: float = 300.0     # BitTorrent timeout 5min
+    BITTORRENT_TIMEOUT: float = 120.0     # BitTorrent timeout 5min
     BT_CHUNK_SELECTION: str = "rarest_first"  # Chunk selection strategy
-    BT_MIN_COMPLETION_RATIO: float = 1.0   # Minimum completion ratio
+    BT_MIN_COMPLETION_RATIO: float = 0.8   # Minimum completion ratio
+    
+    # === Chunk Selection Algorithm Parameters ===
+    BT_RARITY_WEIGHT: float = 0.01         # tau: rarity weight
+    BT_RARITY_ADJUSTMENT: float = 1e-6     # eps: rarity adjustment parameter
+    BT_RANDOM_NOISE: float = 1e-4          # gamma: random noise strength
+    
+    # === Write Queue Parameters ===
+    BT_WRITE_QUEUE_SIZE: int = 500        # ChunkWriteQueue maximum capacity
     
     # === Topology Settings ===
     TOPOLOGY_TYPE: str = "mesh"         # Topology type: star, ring, fully_connected, mesh, random
@@ -194,11 +197,11 @@ class FLConfig:
     
     # === Data Processing Settings ===
     DATA_ROOT: str = "data/"                  # Data root directory
-    DATA_SPLITS: List[float] = field(default_factory=lambda: [0.6, 0.2, 0.2])  # Train/val/test splits
+    DATA_SPLITS: List[float] = field(default_factory=lambda: [0.8, 0.1, 0.1])  # Train/val/test splits
     DATA_SUBSAMPLE: float = 1.0               # Data subsample ratio
     DATA_SPLITTER: str = "lda"                # Data splitter method
     DATA_TRANSFORM_MEAN: List[float] = field(default_factory=lambda: [0.4914, 0.4822, 0.4465])  # CIFAR-10 normalize mean
-    DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.2023, 0.1994, 0.2010])   # CIFAR-10 normalize std
+    DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.2470, 0.2435, 0.2616])   # CIFAR-10 normalize std
     DATA_AUTO_DOWNLOAD: bool = True           # Auto-download dataset
     DATALOADER_NUM_WORKERS: int = 0           # DataLoader workers (0 for Docker compatibility)
     
@@ -217,7 +220,6 @@ class FLConfig:
     
     # === Advanced FederatedScope Settings ===
     BACKEND: str = "torch"                 # Backend framework: torch, tensorflow
-    FEDERATE_METHOD: str = "FedAvg"        # Federated method: FedAvg, FedProx, etc.
     FEDERATE_MAKE_GLOBAL_EVAL: bool = False # Enable global evaluation
     FEDERATE_SHARE_LOCAL_MODEL: bool = False # Share local model between clients
     FEDERATE_ONLINE_AGGR: bool = False     # Online aggregation
@@ -237,6 +239,16 @@ class FLConfig:
     # === Aggregator Settings ===
     AGGREGATOR_ROBUST_RULE: str = "fedavg" # Robust aggregation rule
     
+    # === gRPC Setting ===
+    GRPC_KEEPALIVE_TIME_MS: int = 180000           # 3 min 
+    GRPC_KEEPALIVE_TIMEOUT_MS: int = 60000         # 60 s 
+    GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS: bool = True 
+    GRPC_MIN_TIME_BETWEEN_PINGS_MS: int = 60000    
+    GRPC_MIN_PING_INTERVAL_WITHOUT_DATA_MS: int = 600000 
+    GRPC_MAX_CONNECTION_IDLE_MS: int = 300000      
+    GRPC_MAX_CONNECTION_AGE_MS: int = 1200000      
+    GRPC_MAX_CONNECTION_AGE_GRACE_MS: int = 60000  
+    
     # === Wandb Settings ===
     WANDB_USE: bool = False               # Enable Weights & Biases logging
     WANDB_CLIENT_TRAIN_INFO: bool = False # Log client training information
@@ -247,9 +259,9 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_high",
         device_type="smartphone", 
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="1.0", memory_limit="3g", storage_limit="32g",
-        bandwidth_up_kbps=50000, bandwidth_down_kbps=100000,
-        latency_ms=20, packet_loss_rate=0.005, jitter_ms=5,
+        cpu_limit="1.0", memory_limit="6g", storage_limit="64g",
+        bandwidth_up_kbps=946610, bandwidth_down_kbps=241750,
+        latency_ms=0, packet_loss_rate=0.0, jitter_ms=0,
         training_speed_multiplier=1.0, availability_ratio=1.0,
         mobility_pattern="static"
     ),
@@ -258,10 +270,10 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_low", 
         device_type="smartphone",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.3", memory_limit="3g", storage_limit="8g",
-        bandwidth_up_kbps=5000, bandwidth_down_kbps=20000,
-        latency_ms=100, packet_loss_rate=0.02, jitter_ms=20,
-        training_speed_multiplier=0.6, availability_ratio=1.0,
+        cpu_limit="1.0", memory_limit="6g", storage_limit="64g",
+        bandwidth_up_kbps=946610, bandwidth_down_kbps=241750,
+        latency_ms=0, packet_loss_rate=0.0, jitter_ms=0,
+        training_speed_multiplier=1.0, availability_ratio=1.0,
         battery_constraint=False, mobility_pattern="static"
     ),
     
@@ -269,10 +281,10 @@ EDGE_DEVICE_PROFILES = {
         device_id="raspberry_pi",
         device_type="edge_device",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.6", memory_limit="3g", storage_limit="64g",
-        bandwidth_up_kbps=10000, bandwidth_down_kbps=50000,
-        latency_ms=30, packet_loss_rate=0.01, jitter_ms=10,
-        training_speed_multiplier=0.7, availability_ratio=1.0,
+        cpu_limit="0.6", memory_limit="6g", storage_limit="64g",
+        bandwidth_up_kbps=176610, bandwidth_down_kbps=241750,
+        latency_ms=0, packet_loss_rate=0.0, jitter_ms=0,
+        training_speed_multiplier=1.0, availability_ratio=1.0,
         mobility_pattern="static"
     ),
     
@@ -280,10 +292,10 @@ EDGE_DEVICE_PROFILES = {
         device_id="iot_device",
         device_type="iot",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.1", memory_limit="3g", storage_limit="2g", 
-        bandwidth_up_kbps=128, bandwidth_down_kbps=512,
-        latency_ms=300, packet_loss_rate=0.05, jitter_ms=50,
-        training_speed_multiplier=0.3, availability_ratio=1.0,
+        cpu_limit="0.1", memory_limit="6g", storage_limit="2g", 
+        bandwidth_up_kbps=176610, bandwidth_down_kbps=241750,
+        latency_ms=0, packet_loss_rate=0.0, jitter_ms=0,
+        training_speed_multiplier=1.0, availability_ratio=1.0,
         battery_constraint=False, mobility_pattern="static"
     ),
     
@@ -291,7 +303,7 @@ EDGE_DEVICE_PROFILES = {
         device_id="edge_server",
         device_type="edge_server", 
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="2.0", memory_limit="3g", storage_limit="100g",
+        cpu_limit="2.0", memory_limit="6g", storage_limit="100g",
         bandwidth_up_kbps=100000, bandwidth_down_kbps=1000000,
         latency_ms=10, packet_loss_rate=0.001, jitter_ms=2,
         training_speed_multiplier=1.0, availability_ratio=1.0,
@@ -323,17 +335,22 @@ class NetworkSimulator:
                 # Install iproute2 (includes tc command)
                 "apt-get update -qq && apt-get install -y iproute2 > /dev/null 2>&1 || apk add iproute2 > /dev/null 2>&1 || true",
                 
-                # Remove existing queue rules
+                # Remove existing queue rules (both egress and ingress)
                 "tc qdisc del dev eth0 root 2>/dev/null || true",
+                # "tc qdisc del dev eth0 ingress 2>/dev/null || true",
                 
-                # Create root HTB queue
-                "tc qdisc add dev eth0 root handle 1: htb default 30",
+                # 🚀 FIX: Create root HTB queue with correct default class
+                "tc qdisc add dev eth0 root handle 1: htb default 1",
                 
-                # Set total bandwidth limit (upstream)
+                # Set total bandwidth limit (upstream) - this becomes the default class
                 f"tc class add dev eth0 parent 1: classid 1:1 htb rate {profile.bandwidth_up_kbps}kbit ceil {profile.bandwidth_up_kbps}kbit",
                 
                 # Add network delay, jitter, and packet loss
-                f"tc qdisc add dev eth0 parent 1:1 handle 10: netem delay {profile.latency_ms}ms {profile.jitter_ms}ms loss {profile.packet_loss_rate * 100}%"
+                f"tc qdisc add dev eth0 parent 1:1 handle 10: netem delay {profile.latency_ms}ms {profile.jitter_ms}ms loss {profile.packet_loss_rate * 100}%",
+                
+                # # 🚀 FIX: Add ingress (download) bandwidth limiting
+                # f"tc qdisc add dev eth0 ingress",
+                # f"tc filter add dev eth0 parent ffff: protocol ip prio 50 u32 match ip src 0.0.0.0/0 police rate {profile.bandwidth_down_kbps}kbit burst 10k drop flowid :1"
             ]
             
             for cmd in setup_commands:
@@ -350,6 +367,7 @@ class NetworkSimulator:
             container_name = container.name
             self.active_limitations[container_name] = {
                 "bandwidth_up_kbps": profile.bandwidth_up_kbps,
+                "bandwidth_down_kbps": profile.bandwidth_down_kbps,  # 🚀 Added download bandwidth tracking
                 "latency_ms": profile.latency_ms,
                 "packet_loss_rate": profile.packet_loss_rate,
                 "jitter_ms": profile.jitter_ms
@@ -647,6 +665,19 @@ class DockerManager:
                     f"{os.getcwd()}/docker_data/tmp", 
                     f"{os.getcwd()}/docker_data/app_tmp"
                 ]
+                
+                # Clean individual client directories in docker_data/app_tmp/client_*/
+                app_tmp_dir = f"{os.getcwd()}/docker_data/app_tmp"
+                if os.path.exists(app_tmp_dir):
+                    try:
+                        for item in os.listdir(app_tmp_dir):
+                            if item.startswith('client_'):
+                                client_dir = os.path.join(app_tmp_dir, item)
+                                if os.path.isdir(client_dir):
+                                    docker_cleanup_dirs.append(client_dir)
+                                    print(f"🗑️  Adding client directory for cleanup: {client_dir}")
+                    except Exception as e:
+                        print(f"⚠️  Failed to enumerate client directories: {e}")
                 
                 for cleanup_dir in docker_cleanup_dirs:
                     if os.path.exists(cleanup_dir):
@@ -1073,6 +1104,9 @@ class DockerFederatedScopeServer:
         log_dir = CONFIG.LOG_DIR  # Use unified log directory
         os.makedirs(log_dir, exist_ok=True)
         
+        server_output_dir = f"{CONFIG.OUTPUT_DIR}/server_output"
+        os.makedirs(server_output_dir, exist_ok=True)
+        
         # Docker container configuration with ultra-high concurrency optimizations
         container_config = {
             "image": CONFIG.DOCKER_BASE_IMAGE,
@@ -1092,10 +1126,14 @@ class DockerFederatedScopeServer:
             # Volume mounts - fix path issues in Ray Actor, use local storage
             "volumes": {
                 self._get_absolute_path(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
+                self._get_absolute_path(server_output_dir): {"bind": "/app/output", "mode": "rw"},  # Mount server output directory
                 self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
                 self._get_absolute_path("data"): {"bind": "/app/data", "mode": "rw"},
                 f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"},
-                f"{os.getcwd()}/docker_data/app_tmp": {"bind": "/app/tmp", "mode": "rw"}  # Mount for chunk databases
+                f"{os.getcwd()}/docker_data/app_tmp": {"bind": "/app/tmp", "mode": "rw"},  # Mount for chunk databases
+                f"{os.getcwd()}/federatedscope": {"bind": "/app/federatedscope", "mode": "rw"},  # 🚀 Mount local source code
+                f"{os.getcwd()}/materials": {"bind": "/app/materials", "mode": "ro"},  # Mount materials directory
+                f"{os.getcwd()}/scripts": {"bind": "/app/scripts", "mode": "ro"}  # Mount scripts directory
             },
             
             # Container-safe network optimizations (removing restricted sysctls)
@@ -1287,10 +1325,10 @@ class DockerFederatedScopeClient:
             "remove": True,
             
             # Resource limits
-            "cpu_period": cpu_period,
-            "cpu_quota": cpu_quota,
-            "mem_limit": profile.memory_limit,
-            "memswap_limit": profile.memory_limit,  # Disable swap
+            # "cpu_period": cpu_period,
+            # "cpu_quota": cpu_quota,
+            # "mem_limit": profile.memory_limit,
+            # "memswap_limit": profile.memory_limit,  # Disable swap
             
             # Port mapping
             "ports": {50052: self.client_port},
@@ -1307,16 +1345,19 @@ class DockerFederatedScopeClient:
                 self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
                 self._get_absolute_path(data_dir): {"bind": "/app/data", "mode": "rw"},
                 f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"},
-                f"{os.getcwd()}/docker_data/app_tmp": {"bind": "/app/tmp", "mode": "rw"}  # Mount for chunk databases
+                f"{os.getcwd()}/docker_data/app_tmp": {"bind": "/app/tmp", "mode": "rw"},  # Mount for chunk databases
+                f"{os.getcwd()}/federatedscope": {"bind": "/app/federatedscope", "mode": "rw"},  # 🚀 Mount local source code
+                f"{os.getcwd()}/materials": {"bind": "/app/materials", "mode": "ro"},  # Mount materials directory
+                f"{os.getcwd()}/scripts": {"bind": "/app/scripts", "mode": "ro"}  # Mount scripts directory
             },
             
             # Container-safe network optimizations (removing restricted sysctls)
             "sysctls": {
                 # TCP connection optimizations (container-safe parameters)
-                "net.ipv4.tcp_keepalive_time": "30",
-                "net.ipv4.tcp_keepalive_intvl": "5",
-                "net.ipv4.tcp_keepalive_probes": "3",
-                "net.ipv4.tcp_fin_timeout": "15",
+                "net.ipv4.tcp_keepalive_time": "300",
+                "net.ipv4.tcp_keepalive_intvl": "50",
+                "net.ipv4.tcp_keepalive_probes": "5",
+                "net.ipv4.tcp_fin_timeout": "120",
                 "net.ipv4.tcp_tw_reuse": "1",
                 "net.ipv4.ip_local_port_range": "1024 65535"
                 # Note: Removed net.core.* and net.netfilter.* parameters that require host-level privileges
@@ -1391,15 +1432,20 @@ class DockerFederatedScopeClient:
         
         # tc command sequence
         tc_commands = [
-            # Clear existing rules
+            # Clear existing rules (both egress and ingress)
             "tc qdisc del dev eth0 root 2>/dev/null || true",
+            # "tc qdisc del dev eth0 ingress 2>/dev/null || true",
             
-            # Set upstream bandwidth limit
-            "tc qdisc add dev eth0 root handle 1: htb default 12",
+            # 🚀 FIX: Set upstream bandwidth limit with correct default class
+            "tc qdisc add dev eth0 root handle 1: htb default 1",
             f"tc class add dev eth0 parent 1: classid 1:1 htb rate {up_bandwidth} ceil {up_bandwidth}",
             
             # Add network delay and packet loss
             f"tc qdisc add dev eth0 parent 1:1 handle 10: netem delay {delay} {jitter} loss {loss}",
+            
+        #     # 🚀 FIX: Add ingress (download) bandwidth limiting
+        #     f"tc qdisc add dev eth0 ingress",
+        #     f"tc filter add dev eth0 parent ffff: protocol ip prio 50 u32 match ip src 0.0.0.0/0 police rate {down_bandwidth} burst 10k drop flowid :1",
         ]
         
         # Execute tc commands
@@ -1655,7 +1701,7 @@ class RayV2FederatedLearning:
                 'mode': 'distributed',
                 'total_round_num': CONFIG.TOTAL_ROUNDS,
                 'sample_client_num': CONFIG.CLIENT_NUM,
-                'method': CONFIG.FEDERATE_METHOD,
+                'method': CONFIG.AGGREGATOR_TYPE,  # Use aggregator type from config
                 'make_global_eval': CONFIG.FEDERATE_MAKE_GLOBAL_EVAL,
                 'share_local_model': CONFIG.FEDERATE_SHARE_LOCAL_MODEL,
                 'online_aggr': CONFIG.FEDERATE_ONLINE_AGGR,
@@ -1671,6 +1717,9 @@ class RayV2FederatedLearning:
                 'client_port': 50052,        # Will be dynamically overridden
                 'role': 'server',            # Will be dynamically overridden
                 'data_idx': 0                # Will be dynamically overridden
+                
+                # 🔗 注意: gRPC Keep-Alive 配置需要在FederatedScope层面设置
+                # 或通过环境变量/系统级配置实现，不能通过YAML配置文件传递
             },
             
             'data': {
@@ -1707,7 +1756,16 @@ class RayV2FederatedLearning:
                 'optimizer': {
                     'lr': CONFIG.LEARNING_RATE,
                     'type': CONFIG.OPTIMIZER,
-                    'weight_decay': CONFIG.WEIGHT_DECAY
+                    'weight_decay': CONFIG.WEIGHT_DECAY,
+                    'momentum': CONFIG.OPTIMIZER_MOMENTUM    # SGD momentum parameter
+                },
+                'scheduler': {
+                    'type': CONFIG.LR_SCHEDULER_TYPE,
+                    # 'step_size': CONFIG.LR_SCHEDULER_STEP_SIZE,
+                    # 'gamma': CONFIG.LR_SCHEDULER_GAMMA,
+                    # 'milestones': CONFIG.LR_SCHEDULER_MILESTONES,
+                    'T_max': CONFIG.LR_SCHEDULER_T_MAX,
+                    'eta_min': CONFIG.LR_SCHEDULER_ETA_MIN
                 }
             },
             
@@ -1748,7 +1806,11 @@ class RayV2FederatedLearning:
                 'timeout': CONFIG.BITTORRENT_TIMEOUT,
                 'verbose': True,
                 'chunk_selection': CONFIG.BT_CHUNK_SELECTION,
-                'min_completion_ratio': CONFIG.BT_MIN_COMPLETION_RATIO
+                'min_completion_ratio': CONFIG.BT_MIN_COMPLETION_RATIO,
+                'rarity_weight': CONFIG.BT_RARITY_WEIGHT,        # tau: rarity weight
+                'rarity_adjustment': CONFIG.BT_RARITY_ADJUSTMENT, # eps: rarity adjustment parameter
+                'random_noise': CONFIG.BT_RANDOM_NOISE,          # gamma: random noise strength
+                'write_queue_size': CONFIG.BT_WRITE_QUEUE_SIZE   # ChunkWriteQueue maximum capacity
             },
             
             'chunk': {
@@ -1784,7 +1846,7 @@ class RayV2FederatedLearning:
                 'client_train_info': CONFIG.WANDB_CLIENT_TRAIN_INFO
             },
             
-            'outdir': f'{CONFIG.OUTPUT_DIR}/server_output'
+            'outdir': '/app/output'
         }
         
     def allocate_gpu_resources(self) -> Tuple[Optional[float], List[Tuple[Optional[float], Optional[int]]]]:
@@ -1935,7 +1997,7 @@ class RayV2FederatedLearning:
         variant.device_id = f"{base_profile.device_id}_{device_id}"
         
         # Add random variations (±20%)
-        variation_factor = random.uniform(0.8, 1.2)
+        variation_factor = random.uniform(1, 1.2)
         
         # CPU variation
         base_cpu = float(variant.cpu_limit)
@@ -1944,7 +2006,7 @@ class RayV2FederatedLearning:
         # Network variation
         variant.bandwidth_up_kbps = int(variant.bandwidth_up_kbps * variation_factor)
         variant.bandwidth_down_kbps = int(variant.bandwidth_down_kbps * variation_factor)
-        variant.latency_ms = max(10, int(variant.latency_ms * variation_factor))
+        variant.latency_ms = max(0, int(variant.latency_ms * variation_factor))
         
         # Availability randomization
         variant.availability_ratio *= random.uniform(0.9, 1.0)
@@ -2014,6 +2076,18 @@ class RayV2FederatedLearning:
                 f"{os.getcwd()}/docker_data/app_tmp"
             ]
             
+            # Clean individual client directories in docker_data/app_tmp/client_*/
+            app_tmp_dir = f"{os.getcwd()}/docker_data/app_tmp"
+            if os.path.exists(app_tmp_dir):
+                try:
+                    for item in os.listdir(app_tmp_dir):
+                        if item.startswith('client_'):
+                            client_dir = os.path.join(app_tmp_dir, item)
+                            if os.path.isdir(client_dir):
+                                docker_cleanup_dirs.append(client_dir)
+                except Exception as e:
+                    self.logger.debug(f"Failed to enumerate client directories: {e}")
+            
             for cleanup_dir in docker_cleanup_dirs:
                 if os.path.exists(cleanup_dir):
                     try:
@@ -2073,12 +2147,29 @@ class RayV2FederatedLearning:
                 self.docker_manager.optimize_host_network_settings()
                 
                 # Check and ensure Docker images are ready
-                self.logger.info("🔍 Check Docker images...")
-                if not self.docker_manager.ensure_images_ready():
-                    self.logger.warning("⚠️  Docker images not ready, switch to non-container mode")
-                    CONFIG.USE_DOCKER = False
+                self.logger.info("🔍 Checking Docker images...")
+                if not self.docker_manager.check_required_images():
+                    if CONFIG.USE_LOCAL_CODE_MOUNT:
+                        self.logger.info("🚀 Local code mount enabled - building base image only")
+                        # Only build base image when using local mount
+                        if not self.docker_manager.ensure_images_ready():
+                            self.logger.warning("⚠️  Failed to build base Docker image, switch to non-container mode")
+                            CONFIG.USE_DOCKER = False
+                        else:
+                            self.logger.info("✅ Base image built successfully for local code mount")
+                    else:
+                        self.logger.info("🔍 Building all required images...")
+                        if not self.docker_manager.ensure_images_ready():
+                            self.logger.warning("⚠️  Docker images not ready, switch to non-container mode")
+                            CONFIG.USE_DOCKER = False
                 else:
-                    # Set up Docker network environment
+                    if CONFIG.USE_LOCAL_CODE_MOUNT:
+                        self.logger.info("🚀 Using local code mount - base image ready, skipping rebuild")
+                    else:
+                        self.logger.info("✅ All Docker images ready")
+                        
+                # Set up Docker network environment (only if still using Docker)
+                if CONFIG.USE_DOCKER:
                     if not self.docker_manager.setup_docker_environment():
                         self.logger.error("❌ Docker environment setup failed, switch to non-container mode")
                         CONFIG.USE_DOCKER = False
@@ -2117,7 +2208,7 @@ class RayV2FederatedLearning:
         self.server_info = (server_ip, server_port)
         
         self.logger.info(f"✅ Server started: {server_ip}:{server_port}")
-        time.sleep(3)
+        time.sleep(15)
         
         # Create diverse edge devices
         device_assignments = self._create_diverse_device_fleet(CONFIG.CLIENT_NUM)
@@ -2225,7 +2316,7 @@ class RayV2FederatedLearning:
                 self.logger.info("🏁 All clients training completed")
                 break
             
-            time.sleep(10)
+            time.sleep(5)
     
     def stop_all(self):
         """Stop all processes and Docker containers"""
@@ -2239,8 +2330,7 @@ class RayV2FederatedLearning:
             except Exception as e:
                 self.logger.warning(f"⚠️  Docker cleanup warning: {e}")
         else:
-            # St
-            # op Ray Actors
+            # Stop Ray Actors
             try:
                 if self.server_actor:
                     ray.get(self.server_actor.stop.remote())
@@ -2250,6 +2340,13 @@ class RayV2FederatedLearning:
                     ray.get(stop_futures)
             except Exception as e:
                 self.logger.warning(f"⚠️  Ray Actors stop warning: {e}")
+            
+            # Clean environment in non-Docker mode too
+            try:
+                self.cleanup_environment()
+                self.logger.info("✅ Environment cleaned")
+            except Exception as e:
+                self.logger.warning(f"⚠️  Environment cleanup warning: {e}")
         
         self.logger.info("✅ All resources stopped")
         
@@ -2311,6 +2408,7 @@ def display_banner():
    • Monitoring duration: {CONFIG.MONITOR_DURATION}s
 
 🐳 Docker mode: {docker_status}
+📂 Local code mount: {"✅ Enabled (no rebuild needed)" if CONFIG.USE_LOCAL_CODE_MOUNT else "❌ Disabled (image rebuild required)"}
 🌐 Network simulation: {network_sim_status}
 🚀 Ultra-high concurrency optimizations: {"✅ Enabled" if CONFIG.USE_DOCKER else "❌ Docker Required"}
 📱 Device distribution: {dict(CONFIG.DEVICE_DISTRIBUTION)}
@@ -2320,6 +2418,13 @@ def display_banner():
    • Connection tracking: 1M connections
    • File descriptors: 1M per container
    • Optimized Docker network bridge
+
+🔗 gRPC Keep-Alive settings:
+   • Keep-alive time: {CONFIG.GRPC_KEEPALIVE_TIME_MS//1000}s (ping interval)
+   • Keep-alive timeout: {CONFIG.GRPC_KEEPALIVE_TIMEOUT_MS//1000}s (ACK timeout)
+   • Min ping interval: {CONFIG.GRPC_MIN_TIME_BETWEEN_PINGS_MS//1000}s
+   • Connection idle timeout: {CONFIG.GRPC_MAX_CONNECTION_IDLE_MS//60000}min
+   • Connection max age: {CONFIG.GRPC_MAX_CONNECTION_AGE_MS//60000}min
    • System-level network tuning
 
 💡 Output directory: {CONFIG.OUTPUT_DIR}
