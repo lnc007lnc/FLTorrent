@@ -61,6 +61,10 @@ def extend_bittorrent_cfg(cfg):
     cfg.bittorrent.keep_remote_chunks = 5  # Number of rounds to keep remote chunks
     cfg.bittorrent.cleanup_policy = 'separate'  # Cleanup policy: 'separate', 'unified'
     
+    # Parameter completion strategy configuration
+    cfg.bittorrent.parameter_completion = 'global_model'  # Strategy for missing parameter completion
+                                                          # Options: 'global_model', 'zeros', 'local_model'
+    
     # Logging and debug configuration
     cfg.bittorrent.verbose = False  # Whether to enable verbose logging
     cfg.bittorrent.save_statistics = True  # Whether to save exchange statistics
@@ -111,9 +115,15 @@ def assert_bittorrent_cfg(cfg):
     assert cfg.bittorrent.cleanup_policy in valid_policies, \
         f"cfg.bittorrent.cleanup_policy must be one of {valid_policies}, but got {cfg.bittorrent.cleanup_policy}"
     
+    # Validate parameter completion strategy
+    valid_completion_strategies = ['global_model', 'zeros', 'local_model']
+    assert cfg.bittorrent.parameter_completion in valid_completion_strategies, \
+        f"cfg.bittorrent.parameter_completion must be one of {valid_completion_strategies}, but got {cfg.bittorrent.parameter_completion}"
+    
     # Log configuration information
     if cfg.bittorrent.enable:
         logger.info(f"BitTorrent chunk exchange enabled with {cfg.bittorrent.chunk_selection} algorithm")
+        logger.info(f"Parameter completion strategy: {cfg.bittorrent.parameter_completion}")
         if cfg.bittorrent.verbose:
             logger.info(f"BitTorrent configuration: timeout={cfg.bittorrent.timeout}s, "
                        f"upload_slots={cfg.bittorrent.max_upload_slots}, "

@@ -13,18 +13,35 @@ import time
 import threading
 import random
 import functools
-from typing import Dict, List, Optional, Tuple, Any, Callable
+from typing import Dict, List, Optional, Tuple, Any, Callable, NamedTuple
 import numpy as np
 import torch
 import torch.nn as nn
 from datetime import datetime
 import logging
+from contextlib import closing
 
 # Import ChunkInfo for change monitoring
 from federatedscope.core.chunk_tracker import ChunkInfo, ChunkAction
 from federatedscope.core.chunk_cache import ChunkDataCache
 
 logger = logging.getLogger(__name__)
+
+
+class Reconstruction(NamedTuple):
+    """
+    Model parameter reconstruction result with coverage information
+    
+    Attributes:
+        params: Dictionary of reconstructed model parameters
+        mask: Boolean mask indicating which parts were actually received
+        coverage: Per-parameter coverage ratio (0.0 to 1.0)
+        missing_chunks: Number of chunks that were missing
+    """
+    params: Dict[str, torch.Tensor]
+    mask: Dict[str, torch.Tensor]
+    coverage: Dict[str, float]
+    missing_chunks: int
 
 # 🚀 DATABASE RETRY DECORATOR WITH EXPONENTIAL BACKOFF
 def db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0):
@@ -1917,216 +1934,436 @@ class ChunkManager:
             logger.error(f"[ChunkManager] Failed to get available clients for round {round_num}: {e}")
             return []
     
-    def reconstruct_model_from_client_chunks(self, client_id: int, round_num: int) -> Optional[Dict]:
+    def reconstruct_model_from_client_chunks(self, client_id: int, round_num: int, fill_missing_with_baseline: Optional[Dict] = None) -> Optional[Reconstruction]:
         """
-        Reconstruct specified client's model parameters from chunks
+        重建：把该 client 在本轮收到/产生的 chunks 还原成参数 + 掩码/coverage。
         
         Args:
             client_id: Target client ID
             round_num: Target round
-            
-        Returns:
-            Dict: Reconstructed model parameter dictionary, return None if failed
+            fill_missing_with_baseline: Optional baseline parameters for filling missing data
+                                      If None, missing data filled with zeros
+                                      If provided, missing data filled with baseline values
         """
         try:
-            # Check if metadata database exists (at least one table should exist)
+            # 1) 取 chunk 列表（一次打开一次关闭）
             if not os.path.exists(self._get_round_db_path(round_num, 'metadata')):
-                logger.debug(f"No metadata database found for round {round_num}")
+                logger.debug(f"[ChunkManager] No metadata DB for round {round_num}")
                 return None
-                
-            # Connect to appropriate table-specific database
-            local_chunks = []
-            
+
+            local_chunks: List[Tuple[int, str]] = []
             if client_id == self.client_id:
-                # Local client - query local chunks from metadata database
-                try:
-                    metadata_conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
-                    metadata_cursor = metadata_conn.cursor()
-                    metadata_cursor.execute('''
-                        SELECT chunk_id, chunk_hash 
-                        FROM chunk_metadata
-                        ORDER BY chunk_id
-                    ''')
-                    local_chunks = metadata_cursor.fetchall()
-                    metadata_conn.close()
-                except sqlite3.Error:
-                    logger.debug(f"No chunk_metadata table in round {round_num} database")
-                    local_chunks = []
+                with closing(self._get_optimized_connection(round_num, 'metadata')) as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT chunk_id, chunk_hash FROM chunk_metadata ORDER BY chunk_id")
+                    local_chunks = cur.fetchall()
             else:
-                # Remote client - query BitTorrent chunks from bt database
-                try:
-                    bt_conn = self._get_optimized_connection(round_num=round_num, table_type='bt')
-                    bt_cursor = bt_conn.cursor()
-                    bt_cursor.execute('''
-                        SELECT chunk_id, chunk_hash 
+                with closing(self._get_optimized_connection(round_num, 'bt')) as conn:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        SELECT chunk_id, chunk_hash
                         FROM bt_chunks
                         WHERE source_client_id = ?
                         ORDER BY chunk_id
-                    ''', (client_id,))
-                    local_chunks = bt_cursor.fetchall()
-                    bt_conn.close()
-                except sqlite3.Error:
-                    logger.debug(f"No bt_chunks table in round {round_num} database")
-                    local_chunks = []
-            
+                    """, (client_id,))
+                    local_chunks = cur.fetchall()
+
             if not local_chunks:
-                logger.warning(f"[ChunkManager] No chunks found for client {client_id}, round {round_num}")
+                logger.info(f"[ChunkManager] client {client_id}, round {round_num}: no chunks")
                 return None
-            
-            # 🚀 NEW: Reconstruct model parameters using cache-first approach
-            chunk_data_list = []
-            missing_chunks = []
-            
-            for chunk_id, chunk_hash in local_chunks:
-                # 🚀 Cache-first approach with write queue fallback
-                chunk_bytes = self.chunk_cache.get_chunk_data(round_num, client_id, chunk_id)
+
+            # 2) 读出 chunk 原始 bytes（cache→queue→缺失）
+            chunk_bytes_list: List[Tuple[int, bytes]] = []
+            missing = 0
+            for chunk_id, _ in local_chunks:
+                data = self.chunk_cache.get_chunk_data(round_num, client_id, chunk_id)
+                if data is None and self.chunk_write_queue:
+                    data = self.chunk_write_queue.search_pending_chunk(round_num, client_id, chunk_id)
+                if data is None:
+                    missing += 1
+                    continue
+                chunk_bytes_list.append((chunk_id, data))
+
+            if not chunk_bytes_list:
+                logger.info(f"[ChunkManager] client {client_id}, round {round_num}: all chunks missing")
+                return None
+
+            chunk_bytes_list.sort(key=lambda x: x[0])
+
+            # 3) 一次性取所有 parts_info（减少 per-chunk 查询）
+            chunk_ids = tuple(cid for cid, _ in chunk_bytes_list)
+            parts_map: Dict[int, Dict] = {}
+            if chunk_ids:  # Only query if we have chunk IDs
+                with closing(self._get_optimized_connection(round_num, 'metadata')) as conn:
+                    cur = conn.cursor()
+                    q = f"SELECT chunk_id, parts_info FROM chunk_metadata WHERE chunk_id IN ({','.join(['?']*len(chunk_ids))})"
+                    cur.execute(q, chunk_ids)
+                    for cid, parts_json in cur.fetchall():
+                        parts_map[cid] = json.loads(parts_json)
+
+            # 4) 先扫一遍，确定各参数总长度 & 原始形状（由 parts_info 提供的 shape 汇总）
+            total_len: Dict[str, int] = {}
+            shapes: Dict[str, Tuple[int, ...]] = {}
+            for cid, parts_info in parts_map.items():
+                for pname, parts in parts_info.items():
+                    # parts: List[(flat_start, flat_end, shape)]
+                    for flat_start, flat_end, shape in parts:
+                        total_len[pname] = max(total_len.get(pname, 0), flat_end)
+                        if pname not in shapes and shape:
+                            shapes[pname] = tuple(shape)
+
+            # Check if we have any parameters to reconstruct
+            if not total_len:
+                logger.warning(f"[ChunkManager] client {client_id}, round {round_num}: no parameters found in parts_info")
+                return None
                 
-                if chunk_bytes is None and self.chunk_write_queue:
-                    # Cache miss - check write queue fallback
-                    pending_chunk = self.chunk_write_queue.search_pending_chunk(round_num, client_id, chunk_id)
-                    if pending_chunk is not None:
-                        logger.debug(f"🎯 Cache miss - found chunk {chunk_id} in write queue for client {client_id}")
-                        # search_pending_chunk now always returns bytes
-                        chunk_bytes = pending_chunk
+            # 5) 为每个参数分配扁平数组 & 掩码
+            params_flat: Dict[str, np.ndarray] = {p: np.zeros(L, dtype=np.float32) for p, L in total_len.items()}
+            mask_flat:   Dict[str, np.ndarray] = {p: np.zeros(L, dtype=bool)  for p, L in total_len.items()}
+
+            # 6) 逐 chunk 反序列化后，按 parts_info 切片填充（同时标记 mask）
+            #    注意：反序列化→numpy：避免多余 copy
+            for cid, raw in chunk_bytes_list:
+                np_chunk = pickle.loads(raw)        # 假设你存的就是 np.ndarray；否则这里可换成内存视图
+                pos = 0
+                parts_info = parts_map.get(cid, {})
+                # 确保同一 chunk 内部的 parts 与序列化顺序一致（你已有 ORDER BY chunk_id）
+                for pname, parts in parts_info.items():
+                    for flat_start, flat_end, _shape in parts:
+                        size = flat_end - flat_start
+                        slice_ = np_chunk[pos:pos+size]
+                        params_flat[pname][flat_start:flat_end] = slice_
+                        mask_flat[pname][flat_start:flat_end]   = True
+                        pos += size
+
+            # 7) reshape & 转 torch；计算 coverage
+            params: Dict[str, torch.Tensor] = {}
+            mask:   Dict[str, torch.Tensor] = {}
+            coverage: Dict[str, float] = {}
+
+            for pname, flat in params_flat.items():
+                shp = shapes.get(pname, (flat.size,))
+                mflat = mask_flat[pname]
                 
-                if chunk_bytes:
-                    chunk_data_list.append((chunk_id, chunk_bytes))
+                # Verify size consistency before reshape
+                expected_size = np.prod(shp)
+                actual_size = flat.size
+                
+                if expected_size != actual_size:
+                    logger.warning(f"[ChunkManager] Size mismatch for {pname}: expected {expected_size}, got {actual_size}")
+                    
+                    # Determine fill strategy based on baseline availability
+                    if fill_missing_with_baseline is not None and pname in fill_missing_with_baseline:
+                        baseline_tensor = fill_missing_with_baseline[pname]
+                        if hasattr(baseline_tensor, 'detach'):
+                            fill_values = baseline_tensor.detach().cpu().numpy().flatten().astype(flat.dtype)
+                        else:
+                            fill_values = np.array(baseline_tensor).flatten().astype(flat.dtype)
+                        fill_strategy = "baseline"
+                    else:
+                        fill_values = None  # Will use zeros
+                        fill_strategy = "zeros"
+                    
+                    if actual_size == 0:
+                        # No data received
+                        if fill_strategy == "baseline":
+                            # Fill with baseline values
+                            if len(fill_values) >= expected_size:
+                                params[pname] = torch.from_numpy(fill_values[:expected_size].reshape(shp))
+                            else:
+                                # Baseline too small, pad with zeros
+                                padded = np.zeros(expected_size, dtype=flat.dtype)
+                                padded[:len(fill_values)] = fill_values
+                                params[pname] = torch.from_numpy(padded.reshape(shp))
+                        else:
+                            # Fill with zeros
+                            params[pname] = torch.zeros(shp, dtype=torch.float32)
+                        
+                        mask[pname] = torch.zeros(shp, dtype=torch.bool)
+                        coverage[pname] = 0.0
+                        logger.info(f"[ChunkManager] {pname}: No data received, filled with {fill_strategy}")
+                        
+                    else:
+                        # Partial data received
+                        if actual_size < expected_size:
+                            # Pad to match expected shape
+                            if fill_strategy == "baseline" and len(fill_values) >= expected_size:
+                                # Use baseline for missing parts
+                                padded_flat = fill_values[:expected_size].copy()
+                                padded_flat[:actual_size] = flat  # Override with received data
+                                padded_mask = np.zeros(expected_size, dtype=bool)
+                                padded_mask[:actual_size] = mflat
+                            else:
+                                # Use zeros for missing parts
+                                padded_flat = np.zeros(expected_size, dtype=flat.dtype)
+                                padded_flat[:actual_size] = flat
+                                padded_mask = np.zeros(expected_size, dtype=bool)
+                                padded_mask[:actual_size] = mflat
+                            
+                            params[pname] = torch.from_numpy(padded_flat.reshape(shp))
+                            mask[pname] = torch.from_numpy(padded_mask.reshape(shp))
+                            coverage[pname] = float(actual_size) / float(expected_size)
+                            logger.info(f"[ChunkManager] {pname}: Partial data ({actual_size}/{expected_size}), "
+                                       f"filled missing with {fill_strategy}, coverage={coverage[pname]:.3f}")
+                        else:
+                            # More data than expected, truncate
+                            truncated_flat = flat[:expected_size]
+                            truncated_mask = mflat[:expected_size]
+                            
+                            params[pname] = torch.from_numpy(truncated_flat.reshape(shp))
+                            mask[pname] = torch.from_numpy(truncated_mask.reshape(shp))
+                            coverage[pname] = float(truncated_mask.sum()) / float(expected_size)
+                            logger.warning(f"[ChunkManager] {pname}: Excess data ({actual_size}/{expected_size}), "
+                                          f"truncated, coverage={coverage[pname]:.3f}")
                 else:
-                    missing_chunks.append(chunk_id)
-                    logger.warning(f"⚠️ Chunk {chunk_id} not found in cache or write queue for client {client_id}, round {round_num}")
+                    # Size matches, normal reshape
+                    params[pname] = torch.from_numpy(flat.reshape(shp))
+                    mask[pname] = torch.from_numpy(mflat.reshape(shp))
+                    coverage[pname] = float(mflat.sum()) / float(mflat.size)
+
+            # Calculate data completeness statistics
+            total_expected_elements = sum(np.prod(shapes.get(pname, (0,))) for pname in params.keys())
+            total_received_elements = sum(mask[pname].sum().item() for pname in params.keys())
+            overall_data_coverage = total_received_elements / total_expected_elements if total_expected_elements > 0 else 1.0
             
-            if missing_chunks:
-                logger.warning(f"[ChunkManager] Missing chunk data for client {client_id}, chunks: {missing_chunks}")
+            logger.info(f"[ChunkManager] client {client_id}, round {round_num}: "
+                        f"reconstructed {len(params)} params")
+            logger.info(f"  Chunk-level: {len(chunk_bytes_list)} chunks available, {missing} chunks missing from cache")
+            logger.info(f"  Data-level: {total_received_elements:,}/{total_expected_elements:,} elements "
+                       f"({overall_data_coverage:.1%} coverage)")
             
-            if not chunk_data_list:
-                logger.error(f"[ChunkManager] No valid chunk data found for client {client_id}, round {round_num}")
-                return None
-            
-            # Sort by chunk_id
-            chunk_data_list.sort(key=lambda x: x[0])
-            
-            # Deserialize each chunk and concatenate
-            numpy_chunks = []
-            parts_info_list = []
-            
-            # Get metadata connection for parts_info queries
-            metadata_conn = self._get_optimized_connection(round_num=round_num, table_type='metadata')
-            metadata_cursor = metadata_conn.cursor()
-            
-            for chunk_id, chunk_bytes in chunk_data_list:
-                # Deserialize chunk data
-                numpy_chunk = pickle.loads(chunk_bytes)
-                numpy_chunks.append(numpy_chunk)
-                
-                # Get corresponding parts_info from metadata database
-                try:
-                    metadata_cursor.execute('''
-                        SELECT parts_info FROM chunk_metadata 
-                        WHERE chunk_id = ?
-                    ''', (chunk_id,))
-                    parts_result = metadata_cursor.fetchone()
-                except sqlite3.Error:
-                    parts_result = None
-                
-                if parts_result:
-                    parts_info = json.loads(parts_result[0])
-                    parts_info_list.append((chunk_id, parts_info))
-            
-            metadata_conn.close()
-            
-            # Concatenate all chunk data
-            if len(numpy_chunks) == 0:
-                logger.error(f"[ChunkManager] No valid chunk data for client {client_id}, round {round_num}")
-                return None
-                
-            combined_numpy = np.concatenate(numpy_chunks) if len(numpy_chunks) > 1 else numpy_chunks[0]
-            
-            # Use parts_info to reconstruct back to parameter dictionary
-            model_params = self._reconstruct_params_dict(combined_numpy, parts_info_list)
-            
-            logger.debug(f"[ChunkManager] Successfully reconstructed model for client {client_id}, round {round_num}")
-            return model_params
-            
+            if missing == 0 and overall_data_coverage < 0.95:
+                logger.warning(f"  ⚠️  Low data coverage despite all chunks present - indicates partial/corrupted chunks")
+
+            return Reconstruction(params=params, mask=mask, coverage=coverage, missing_chunks=missing)
+
         except Exception as e:
-            logger.error(f"[ChunkManager] Failed to reconstruct model for client {client_id}, round {round_num}: {e}")
+            logger.error(f"[ChunkManager] reconstruct failed: {e}")
+            import traceback; logger.debug(traceback.format_exc())
             return None
     
-    def _reconstruct_params_dict(self, combined_numpy: np.ndarray, parts_info_list: List[Tuple[int, Dict]]) -> Dict:
+    def reconstruct_with_coverage_info(self, client_id: int, round_num: int, baseline_params: Optional[Dict] = None) -> Optional[tuple]:
         """
-        Use parts_info to reconstruct flattened numpy array back to parameter dictionary
+        🔧 NEW: Reconstruction that preserves coverage information for post-aggregation compensation
         
         Args:
-            combined_numpy: Concatenated flattened numpy array
-            parts_info_list: Format structure information [(chunk_id, parts_info), ...]
+            client_id: Target client ID
+            round_num: Target round  
+            baseline_params: Baseline parameters for completion
             
         Returns:
-            Reconstructed model parameter dictionary
+            Tuple[Dict, Dict[str, float]]: (model_params, coverage_ratios) or None if failed
         """
-        import torch
+        if baseline_params is None:
+            reconstruction = self.reconstruct_model_from_client_chunks(client_id, round_num)
+            if reconstruction:
+                params = {name: param.clone() for name, param in reconstruction.params.items()}
+                # For full reconstruction without baseline, assume coverage from mask
+                coverage = {name: float(mask.sum().item()) / float(mask.numel()) 
+                           for name, mask in reconstruction.mask.items()}
+                return params, coverage
+            return None
         
-        params_dict = {}
-        current_pos = 0
-        
-        # Sort parts_info by chunk_id
-        parts_info_list.sort(key=lambda x: x[0])
-        
-        for chunk_id, parts_info in parts_info_list:
-            for param_name, parts in parts_info.items():
-                if param_name not in params_dict:
-                    # First time encountering this parameter, need to estimate total size
-                    total_size = self._estimate_param_size(param_name, parts_info_list)
-                    params_dict[param_name] = np.zeros(total_size, dtype=combined_numpy.dtype)
-                
-                # Fill various parts of this parameter
-                for flat_start, flat_end, shape in parts:
-                    chunk_size = flat_end - flat_start
-                    chunk_data = combined_numpy[current_pos:current_pos + chunk_size]
-                    
-                    # Put data back to corresponding position of original parameter
-                    params_dict[param_name][flat_start:flat_end] = chunk_data
-                    current_pos += chunk_size
-        
-        # Convert numpy array to PyTorch tensor and reshape
-        final_params = {}
-        for param_name, flat_data in params_dict.items():
-            # Get original shape from parts_info
-            original_shape = self._get_original_shape(param_name, parts_info_list)
-            if original_shape:
-                reshaped_data = flat_data.reshape(original_shape)
-                final_params[param_name] = torch.tensor(reshaped_data, dtype=torch.float32)
-            else:
-                final_params[param_name] = torch.tensor(flat_data, dtype=torch.float32)
-        
-        return final_params
-    
-    def _estimate_param_size(self, param_name: str, parts_info_list: List[Tuple[int, Dict]]) -> int:
-        """Estimate parameter total size based on original shape"""
-        import numpy as np
-        
-        # Get original shape from parts_info - this gives us the complete parameter dimensions
-        original_shape = self._get_original_shape(param_name, parts_info_list)
-        if original_shape:
-            # Calculate full parameter size from shape: np.prod([256,128,3,3]) = 786432
-            full_size = int(np.prod(original_shape))
-            return full_size
-        else:
-            # Fallback to old logic if shape not available (shouldn't happen in normal cases)
-            max_end = 0
-            for _, parts_info in parts_info_list:
-                if param_name in parts_info:
-                    for flat_start, flat_end, shape in parts_info[param_name]:
-                        max_end = max(max_end, flat_end)
-            return max_end
-    
-    def _get_original_shape(self, param_name: str, parts_info_list: List[Tuple[int, Dict]]) -> Optional[tuple]:
-        """Get parameter original shape"""
-        for _, parts_info in parts_info_list:
-            if param_name in parts_info:
-                # Assume same parameter has same shape in all chunks, take the first one
-                for flat_start, flat_end, shape in parts_info[param_name]:
-                    return tuple(shape)
+        result = self._compensate_from_chunks_fast(client_id, round_num, baseline_params)
+        if result is not None:
+            return result.params, result.coverage
         return None
     
+    def _compensate_from_chunks_fast(self, client_id: int, round_num: int, baseline_params: Dict) -> Optional[Dict]:
+        """
+        🔧 FIXED: Pure reconstruction + completion, NO compensation to avoid double compensation
+        
+        Only fills received chunks into baseline without any scaling/compensation.
+        Post-aggregation compensation will handle bias correction at parameter level.
+        """
+        try:
+            # 1) 取 chunk 列表
+            if not os.path.exists(self._get_round_db_path(round_num, 'metadata')):
+                return None
+
+            if client_id == self.client_id:
+                with closing(self._get_optimized_connection(round_num, 'metadata')) as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT chunk_id, chunk_hash FROM chunk_metadata ORDER BY chunk_id")
+                    local_chunks = cur.fetchall()
+            else:
+                with closing(self._get_optimized_connection(round_num, 'bt')) as conn:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        SELECT chunk_id, chunk_hash
+                        FROM bt_chunks
+                        WHERE source_client_id = ?
+                        ORDER BY chunk_id
+                    """, (client_id,))
+                    local_chunks = cur.fetchall()
+            if not local_chunks:
+                return self._filter_bn_keys(baseline_params)
+
+            # 2) 读 bytes（cache→queue）
+            chunk_bytes_list = []
+            for cid, _ in local_chunks:
+                data = None
+                if hasattr(self, 'chunk_cache') and self.chunk_cache:
+                    data = self.chunk_cache.get_chunk_data(round_num, client_id, cid)
+                if data is None and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
+                    data = self.chunk_write_queue.search_pending_chunk(round_num, client_id, cid)
+                if data is not None:
+                    chunk_bytes_list.append((cid, data))
+            if not chunk_bytes_list:
+                return self._filter_bn_keys(baseline_params)
+            chunk_bytes_list.sort(key=lambda x: x[0])
+
+            # 3) 取 parts_info
+            with closing(self._get_optimized_connection(round_num, 'metadata')) as conn:
+                cur = conn.cursor()
+                ids = tuple(cid for cid, _ in chunk_bytes_list)
+                q = f"SELECT chunk_id, parts_info FROM chunk_metadata WHERE chunk_id IN ({','.join(['?']*len(ids))})"
+                cur.execute(q, ids)
+                parts_map = {cid: json.loads(js) for cid, js in cur.fetchall()}
+
+            # 4) 第一遍：统计 total_len / covered_len，并构建 "cid -> 片段列表"
+            total_len, covered_len, shapes = {}, {}, {}
+            cid_segs = {}   # cid -> list[(pname, pos0, s, e)]
+            for cid, raw in chunk_bytes_list:
+                parts_info = parts_map.get(cid, {})
+                pos = 0
+                for pname, parts in parts_info.items():
+                    # 若 parts 顺序不保证，保险：parts = sorted(parts, key=lambda x: x[0])
+                    for s, e, shape in parts:
+                        if pname not in shapes and shape:
+                            shapes[pname] = tuple(shape)
+                        total_len[pname] = max(total_len.get(pname, 0), e)
+                        covered_len[pname] = covered_len.get(pname, 0) + (e - s)
+                        cid_segs.setdefault(cid, []).append((pname, pos, s, e))
+                        pos += (e - s)
+
+            if not total_len:
+                return self._filter_bn_keys(baseline_params)
+
+            # 5) 🔧 FIXED: 准备 out 扁平向量，不计算补偿alpha（纯拼接模式）
+            out = {}
+            for pname, L in total_len.items():
+                base = baseline_params.get(pname)
+                if base is not None:
+                    base_t = (base.detach().cpu().to(torch.float32) 
+                              if hasattr(base, 'detach') else torch.tensor(base, dtype=torch.float32))
+                    out[pname] = base_t.view(-1).clone()   # 扁平
+                else:
+                    # 如果baseline中没有这个参数，创建零向量
+                    out[pname] = torch.zeros(L, dtype=torch.float32)
+
+            # 6) 🔧 FIXED: 第二遍：按片段纯拼接，无补偿 (alpha=1)
+            raw_map = dict(chunk_bytes_list)
+            for cid, _ in chunk_bytes_list:
+                np_chunk = pickle.loads(raw_map[cid])          # 反序列化为 np.ndarray (1-D)
+                pos_max = np_chunk.size
+                for pname, pos0, s, e in cid_segs.get(cid, []):
+                    size = e - s
+                    # 安全断言：片段长度不要越界
+                    assert 0 <= pos0 and pos0 + size <= pos_max, f"Chunk {cid} slice OOB"
+                    recv_slice = torch.from_numpy(np_chunk[pos0:pos0+size]).to(torch.float32)
+                    flat = out[pname]
+                    # 纯拼接：直接覆盖，不做补偿
+                    flat[s:e] = recv_slice
+
+            # 7) 还原形状；计算覆盖率；补齐 baseline 中缺的键
+            final = {}
+            coverage = {}  # 🔧 NEW: Calculate real coverage ratios
+            
+            for pname, flat in out.items():
+                shp = shapes.get(pname, (flat.numel(),))
+                final[pname] = flat.view(*shp)
+                
+                # Calculate real coverage ratio for this parameter
+                total_elements = total_len.get(pname, 0)
+                covered_elements = covered_len.get(pname, 0)
+                coverage[pname] = float(covered_elements) / float(total_elements) if total_elements > 0 else 0.0
+
+            # Apply BN filtering and add missing baseline parameters
+            filtered_baseline = self._filter_bn_keys(baseline_params)
+            for pname, base in filtered_baseline.items():
+                if pname not in final:
+                    final[pname] = (base.detach().cpu().to(torch.float32) 
+                                    if hasattr(base, 'detach') else torch.tensor(base, dtype=torch.float32))
+                    coverage[pname] = 0.0  # No coverage for missing parameters
+
+            # 🔧 FIXED: Log pure completion info with coverage stats
+            avg_coverage = sum(coverage.values()) / len(coverage) if coverage else 0.0
+            logger.info(f"[ChunkManager] Client {client_id}: Pure reconstruction completed for {len(final)} parameters, avg coverage: {avg_coverage:.3f}")
+
+            # 🔧 CRITICAL FIX: Return Reconstruction object with coverage info
+            from collections import namedtuple
+            Reconstruction = namedtuple('Reconstruction', ['params', 'coverage', 'mask', 'missing_chunks'])
+            
+            # Create dummy mask for compatibility (not used in post-aggregation compensation)
+            dummy_mask = {pname: torch.ones_like(param, dtype=torch.bool) for pname, param in final.items()}
+            
+            return Reconstruction(params=final, coverage=coverage, mask=dummy_mask, missing_chunks=0)
+
+        except Exception as e:
+            logger.error(f"[ChunkManager] fast compensation failed: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return self._filter_bn_keys(baseline_params) if baseline_params else None
+    
+    
+    
+    
+    def _get_local_sample_size(self) -> Optional[int]:
+        """
+        Calculate local sample size using the same logic as client worker
+        """
+        try:
+            # Try to get from change_callback context if available
+            if hasattr(self, 'change_callback') and self.change_callback is not None:
+                # The change_callback is typically bound to client, try to access client config and trainer
+                callback_self = getattr(self.change_callback, '__self__', None)
+                if callback_self and hasattr(callback_self, '_cfg'):
+                    cfg = callback_self._cfg
+                    if hasattr(cfg.train, 'batch_or_epoch'):
+                        if cfg.train.batch_or_epoch == 'batch':
+                            return cfg.train.local_update_steps * cfg.dataloader.batch_size
+                        else:
+                            # For epoch mode, try to get actual training data size
+                            if hasattr(callback_self, 'trainer') and hasattr(callback_self.trainer, 'data') and hasattr(callback_self.trainer.data, 'train_data'):
+                                return cfg.train.local_update_steps * len(callback_self.trainer.data.train_data)
+                            else:
+                                # If trainer data not available, epoch mode typically means one epoch over all data
+                                # For CIFAR-10 with 50 clients, each client typically has ~1000 samples
+                                # This is an estimation based on typical federated learning setups
+                                return cfg.train.local_update_steps * 1000
+            
+            # If we can't access client config, return None to use fallback
+            return None
+            
+        except Exception as e:
+            logger.debug(f"[ChunkManager] Failed to calculate local sample size: {e}")
+            return None
+    
+    
+    def _filter_bn_keys(self, state_dict: Dict) -> Dict:
+        """
+        Filter out BatchNorm related keys to prevent accidental aggregation
+        
+        Args:
+            state_dict: Original state dictionary
+            
+        Returns:
+            Dict: Filtered state dictionary without BN keys
+        """
+        if not state_dict:
+            return state_dict
+            
+        bn_keywords = ['running_mean', 'running_var', 'num_batches_tracked']
+        
+        filtered_dict = {}
+        for key, value in state_dict.items():
+            should_filter = any(bn_keyword in key for bn_keyword in bn_keywords)
+            if not should_filter:
+                filtered_dict[key] = value
+        
+        return filtered_dict
+
     def get_client_sample_size(self, client_id: int, round_num: int) -> Optional[int]:
         """
         Get sample count for specified client in specified round
@@ -2186,8 +2423,15 @@ class ChunkManager:
                     result = (0,)  # Return 0 if table doesn't exist
             
             if result and result[0] > 0:
-                # Return fixed sample size for BitTorrent FL (toy dataset default)
-                return 128
+                # Use local calculated sample size instead of fixed 128
+                local_sample_size = self._get_local_sample_size()
+                if local_sample_size is not None:
+                    logger.info(f"[ChunkManager] Using calculated local sample size {local_sample_size} for client {client_id}")
+                    return local_sample_size
+                else:
+                    # Fallback to fixed sample size for BitTorrent FL (toy dataset default)
+                    logger.info(f"[ChunkManager] Using fallback sample size 128 for client {client_id}")
+                    return 128
             else:
                 logger.debug(f"[ChunkManager] No chunks found for client {client_id}, round {round_num}")
                 return None
@@ -2196,6 +2440,7 @@ class ChunkManager:
             logger.error(f"[ChunkManager] Failed to get sample size for client {client_id}, round {round_num}: {e}")
             return None
     
+
     def close(self):
         """
         🚀 Shutdown chunk manager and release resources

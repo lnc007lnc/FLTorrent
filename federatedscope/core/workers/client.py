@@ -115,6 +115,14 @@ class Client(BaseClient):
                                    config=self._cfg,
                                    is_attacker=self.is_attacker,
                                    monitor=self._monitor)
+        
+        # Register FL scheduler hook to restore LR after optimizer recreation
+        self.trainer.register_hook_in_train(
+            new_hook=self._hook_apply_fl_lr,
+            trigger='on_fit_start',
+            insert_pos=2  # After _hook_on_fit_start_init (pos=1) which recreates optimizer
+        )
+        
         self.device = device
 
         # For client-side evaluation
@@ -453,16 +461,27 @@ class Client(BaseClient):
                         f"early stopped. "
                         f"The next FL update may result in negative effect")
                     self._monitor.local_converged()
+                
                 sample_size, model_para_all, results = self.trainer.train()
                 
-                # Step scheduler after local training completion (per FL round)
+                # FL-aware scheduler: step based on FL rounds, not local training
                 if (hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'scheduler') 
                     and self.trainer.ctx.scheduler is not None):
                     old_lr = self.trainer.ctx.optimizer.param_groups[0]['lr']
-                    self.trainer.ctx.scheduler.step()
+                    
+                    # Step scheduler based on FL round (self.state)
+                    self._step_fl_scheduler()
+                    
                     new_lr = self.trainer.ctx.optimizer.param_groups[0]['lr'] 
+                    
+                    # Store the new LR for next round
+                    if not hasattr(self, '_fl_next_round_lr'):
+                        self._fl_next_round_lr = {}
+                    self._fl_next_round_lr[self.state + 1] = new_lr
+                    
                     if old_lr != new_lr:
-                        logger.info(f"[FL-Scheduler] Client {self.ID}: LR stepped after local training - {old_lr:.2e} → {new_lr:.2e}")
+                        logger.info(f"[FL-Scheduler] Client {self.ID}: LR stepped for FL round {self.state} - {old_lr:.6e} → {new_lr:.6e}")
+                        # logger.info(f"[FL-Scheduler] Client {self.ID}: Next round {self.state + 1} will use LR: {new_lr:.6e}")
                 
                 if self._cfg.federate.share_local_model and not \
                         self._cfg.federate.online_aggr:
@@ -1047,6 +1066,167 @@ class Client(BaseClient):
             logger.info(f"[BT-FL] Client {self.ID}: Filtered {len(state_dict) - len(filtered_dict)} BN keys, kept {len(filtered_dict)} parameters")
             
         return filtered_dict
+    
+    def _hook_apply_fl_lr(self, ctx):
+        """
+        Hook to restore FL scheduler learning rate after optimizer recreation.
+        This runs after _hook_on_fit_start_init which recreates the optimizer.
+        """
+        self._apply_stored_fl_lr()
+    
+    def _apply_stored_fl_lr(self):
+        """
+        Apply stored learning rate for current FL round before training starts
+        This prevents LR from being reset to initial value each round
+        """
+        if not (hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'scheduler') 
+                and self.trainer.ctx.scheduler is not None):
+            logger.debug(f"[FL-Scheduler] Client {self.ID}: No scheduler available, skipping LR restoration")
+            return
+        
+        optimizer = self.trainer.ctx.optimizer
+        scheduler = self.trainer.ctx.scheduler
+        current_lr = optimizer.param_groups[0]['lr']
+        initial_lr = scheduler.base_lrs[0] if hasattr(scheduler, 'base_lrs') else 0.1
+        
+        logger.debug(f"[FL-Scheduler] Client {self.ID}: FL round {self.state}, current LR: {current_lr:.6e}, initial LR: {initial_lr:.6e}")
+        
+        # Check if we have a stored LR for this round
+        if hasattr(self, '_fl_next_round_lr') and self.state in self._fl_next_round_lr:
+            target_lr = self._fl_next_round_lr[self.state]
+            optimizer.param_groups[0]['lr'] = target_lr
+            logger.info(f"[FL-Scheduler] Client {self.ID}: FL round {self.state}, restored LR from {current_lr:.6e} to {target_lr:.6e}")
+        elif self.state == 0:
+            # First round, keep initial LR
+            logger.info(f"[FL-Scheduler] Client {self.ID}: FL round 0, using initial LR: {current_lr:.6e}")
+        else:
+            logger.warning(f"[FL-Scheduler] Client {self.ID}: No stored LR for round {self.state}, current: {current_lr:.6e}")
+            if current_lr == initial_lr:
+                logger.warning(f"[FL-Scheduler] Client {self.ID}: LR appears to have been reset to initial value ({initial_lr:.6e}), this may cause scheduling issues")
+    
+    def _step_fl_scheduler(self):
+        """
+        Step learning rate scheduler based on FL rounds and save the new LR for next round
+        This ensures learning rate decreases across FL rounds, not within local training
+        """
+        scheduler = self.trainer.ctx.scheduler
+        if scheduler is None:
+            return
+        
+        optimizer = self.trainer.ctx.optimizer
+        
+        # Initialize FL scheduler state if not exists
+        if not hasattr(self, '_fl_scheduler_last_round'):
+            self._fl_scheduler_last_round = -1
+        if not hasattr(self, '_fl_scheduler_current_lr'):
+            self._fl_scheduler_current_lr = optimizer.param_groups[0]['lr']
+        
+        # Only step scheduler once per FL round
+        if self.state > self._fl_scheduler_last_round:
+            # Set scheduler to correct FL round before stepping
+            if hasattr(scheduler, 'last_epoch'):
+                scheduler.last_epoch = self.state - 1  # -1 because step() will increment it
+            
+            # Step the scheduler
+            scheduler.step()
+            
+            # Save the new LR for next round
+            new_lr = optimizer.param_groups[0]['lr']
+            self._fl_scheduler_current_lr = new_lr
+            self._fl_scheduler_last_round = self.state
+            
+            logger.debug(f"[FL-Scheduler] Client {self.ID}: Stepped scheduler to FL round {self.state}, saved LR: {new_lr:.6e}")
+        else:
+            logger.debug(f"[FL-Scheduler] Client {self.ID}: Scheduler already stepped for FL round {self.state}")
+    
+    def _apply_fl_scheduler_lr(self):
+        """
+        Apply the correct learning rate for current FL round before training starts
+        This prevents LR from being reset to initial value each round
+        """
+        if not (hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'scheduler') 
+                and self.trainer.ctx.scheduler is not None):
+            logger.debug(f"[FL-Scheduler] Client {self.ID}: No scheduler available")
+            return
+        
+        scheduler = self.trainer.ctx.scheduler
+        optimizer = self.trainer.ctx.optimizer
+        
+        # Initialize FL scheduler state tracking
+        if not hasattr(self, '_fl_scheduler_current_lr'):
+            self._fl_scheduler_current_lr = optimizer.param_groups[0]['lr']  # Store initial LR
+            self._fl_scheduler_applied_rounds = set()
+        
+        current_lr = optimizer.param_groups[0]['lr']
+        
+        # If LR has been reset to initial value and we're not in round 0, restore correct LR
+        if current_lr == scheduler.base_lrs[0] and self.state > 0 and self.state not in self._fl_scheduler_applied_rounds:
+            # Restore the LR that should be used for this round
+            optimizer.param_groups[0]['lr'] = self._fl_scheduler_current_lr
+            self._fl_scheduler_applied_rounds.add(self.state)
+            logger.info(f"[FL-Scheduler] Client {self.ID}: FL round {self.state}, LR restored before training: {current_lr:.6e} → {self._fl_scheduler_current_lr:.6e}")
+        elif self.state == 0:
+            # First round, record initial state
+            self._fl_scheduler_applied_rounds.add(0)
+            logger.debug(f"[FL-Scheduler] Client {self.ID}: FL round 0, using initial LR: {current_lr:.6e}")
+    
+    def _get_baseline_params_for_completion(self):
+        """
+        Get baseline parameters for parameter completion based on configuration
+        
+        Returns:
+            Dict: Baseline parameters for completing missing chunks
+        """
+        import torch
+        
+        completion_strategy = getattr(self._cfg.bittorrent, 'parameter_completion', 'global_model')
+        logger.info(f"[BT-FL] Client {self.ID}: Using parameter completion strategy: {completion_strategy}")
+        
+        # Get the reference model (usually the global model)
+        reference_params = None
+        if hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'model'):
+            reference_params = self.trainer.ctx.model.state_dict()
+        elif hasattr(self.trainer, 'model'):
+            reference_params = self.trainer.model.state_dict()
+        
+        if reference_params is None:
+            logger.error(f"[BT-FL] Client {self.ID}: No reference model available for parameter completion")
+            return None
+        
+        # Filter out BN keys to prevent accidental aggregation
+        filtered_reference = self._filter_bn_keys(reference_params)
+        if not filtered_reference:
+            logger.error(f"[BT-FL] Client {self.ID}: No valid parameters after BN filtering")
+            return None
+        
+        # Select strategy based on configuration
+        if completion_strategy == 'global_model':
+            # Use global/reference model parameters (default behavior)
+            baseline_params = {k: v.clone().detach() for k, v in filtered_reference.items()}
+            logger.debug(f"[BT-FL] Client {self.ID}: Using global model for parameter completion")
+            
+        elif completion_strategy == 'zeros':
+            # Use zero-initialized parameters
+            baseline_params = {}
+            for param_name, param_tensor in filtered_reference.items():
+                if hasattr(param_tensor, 'shape'):
+                    baseline_params[param_name] = torch.zeros_like(param_tensor, dtype=param_tensor.dtype, device=param_tensor.device)
+                else:
+                    baseline_params[param_name] = torch.zeros_like(param_tensor)
+            logger.info(f"[BT-FL] Client {self.ID}: Using zero initialization for parameter completion")
+            
+        elif completion_strategy == 'local_model':
+            # Use local model parameters (same as global model in most cases)
+            # This strategy is useful when local model differs from global model
+            baseline_params = {k: v.clone().detach() for k, v in filtered_reference.items()}
+            logger.debug(f"[BT-FL] Client {self.ID}: Using local model for parameter completion")
+            
+        else:
+            logger.error(f"[BT-FL] Client {self.ID}: Unknown completion strategy: {completion_strategy}")
+            return None
+        
+        logger.debug(f"[BT-FL] Client {self.ID}: Prepared baseline with {len(baseline_params)} parameters")
+        return baseline_params
 
     def _get_expected_client_sample_sizes(self, round_num):
         """
@@ -1089,6 +1269,213 @@ class Client(BaseClient):
             logger.warning(f"[BT-FL] Client {self.ID}: Failed to get expected client sample sizes: {e}")
             return None
 
+    def _apply_post_aggregation_compensation(self, aggregated_model, completed_client_models, baseline_params):
+        """
+        Apply post-aggregation parameter-level compensation to fix bias from non-uniform chunk selection
+        
+        Algorithm:
+        1. Track participation rate ρ_k for each parameter k across all clients  
+        2. Apply unbiased correction: compensated_k = (fed_k - base_k) / ρ_k + base_k
+        3. Add stabilizers: EMA momentum and relative norm clipping
+        
+        Args:
+            aggregated_model: Raw aggregated model from aggregator
+            completed_client_models: List of (sample_size, model_params) tuples
+            baseline_params: Baseline parameters for reference
+            
+        Returns:
+            Dict: Compensated model parameters
+        """
+        if not completed_client_models or not baseline_params:
+            return aggregated_model
+            
+        from collections import defaultdict
+        import torch
+        
+        logger.debug(f"[BT-FL] Client {self.ID}: Applying post-aggregation compensation")
+        
+        # Configuration parameters with round-based dynamic adjustment
+        eps = 1e-12
+        
+        # Round-based parameter adjustment
+        current_round = self.state
+        if current_round < 10:  # R ∈ [0, 10): 起势阶段更大胆
+            c_max = 3.0
+            clip_ratio = 0.08  # rel_clip
+            ema_beta = 0.85    # beta
+        elif current_round < 30:  # R ∈ [10, 30): 中期调整
+            c_max = 3.0
+            clip_ratio = 0.05
+            ema_beta = 0.88
+        else:  # R ≥ 30: 后期稳收敛
+            c_max = 2.0
+            clip_ratio = 0.03
+            ema_beta = 0.90
+        
+        # Step 1: Calculate participation weights for each parameter
+        present_weight = defaultdict(float)  # k -> sum n_i * covered_len_i,k / total_len_k  
+        total_weight = 0.0  # sum n_i
+        
+        # Extract real client models (exclude baseline entry if present)
+        real_client_models = []
+        baseline_weight = 0.0
+        
+        for sample_size, model_params, client_id, coverage_ratios in completed_client_models:
+            # Check if this is a baseline entry (client_id = -1)
+            is_baseline_entry = (client_id == -1)
+            
+            if not is_baseline_entry:
+                real_client_models.append((sample_size, model_params, client_id, coverage_ratios))
+                total_weight += sample_size
+            else:
+                baseline_weight += sample_size
+                logger.debug(f"[BT-FL] Client {self.ID}: Detected baseline entry with weight {sample_size}")
+        
+        if not real_client_models:
+            logger.warning(f"[BT-FL] Client {self.ID}: No real client models found for compensation")
+            return aggregated_model
+            
+        # Calculate participation weights based on actual chunk coverage from chunk_manager
+        
+        for sample_size, model_params, client_id, coverage_ratios in real_client_models:
+            for param_name in baseline_params.keys():
+                if param_name in model_params and param_name in aggregated_model:
+                    # 🔧 CRITICAL FIX: Use REAL coverage ratio from chunk reconstruction
+                    coverage_ratio = coverage_ratios.get(param_name, 0.0)
+                    
+                    if coverage_ratio > eps:  # Has actual chunk coverage
+                        present_weight[param_name] += sample_size * coverage_ratio
+                        logger.debug(f"[BT-FL] Client {self.ID}: {param_name} REAL coverage={coverage_ratio:.3f} for client {client_id}")
+        
+        # Step 2: Apply parameter-level compensation
+        compensated_model = {}
+        
+        # 🔧 CRITICAL FIX: Include absent client weights in denominator
+        N_total = total_weight + baseline_weight  # Total expected sample weight
+        
+        for param_name, fed_param in aggregated_model.items():
+            if param_name not in baseline_params:
+                compensated_model[param_name] = fed_param
+                continue
+            
+            # 🔧 BN filtering double protection
+            if self._is_bn_key(param_name):
+                compensated_model[param_name] = fed_param
+                logger.debug(f"[BT-FL] Client {self.ID}: Skipping BN parameter {param_name}")
+                continue
+                
+            # Get baseline reference
+            base_param = baseline_params[param_name].detach().cpu().float()
+            fed_param_cpu = fed_param.detach().cpu().float()
+            
+            # Calculate participation rate ρ_k with correct denominator
+            param_present_weight = present_weight.get(param_name, 0.0)
+            rho = param_present_weight / max(N_total, eps)
+            
+            if rho <= eps:
+                # No participation detected, use baseline
+                new_param = base_param
+                logger.debug(f"[BT-FL] Client {self.ID}: {param_name}: rho=0, using baseline")
+            else:
+                # Apply compensation with capping
+                alpha = min(1.0, c_max * rho)  # Cap the compensation factor
+                
+                # Unbiased correction: (fed - base) / ρ  
+                delta = (fed_param_cpu - base_param) / rho
+                
+                # 🔧 Apply EMA momentum (with persistent state)
+                if not hasattr(self, '_postcomp_momentum'):
+                    self._postcomp_momentum = {}
+                
+                momentum_key = f"{param_name}"
+                if momentum_key not in self._postcomp_momentum:
+                    # Initialize momentum with zeros
+                    self._postcomp_momentum[momentum_key] = torch.zeros_like(delta)
+                
+                # EMA update: v = β*v + (1-β)*delta
+                v = self._postcomp_momentum[momentum_key]
+                v = v * ema_beta + delta * (1 - ema_beta)
+                self._postcomp_momentum[momentum_key] = v
+                
+                # Use momentum-smoothed delta
+                delta = v
+                
+                # Apply relative norm clipping for stability (after EMA smoothing)
+                if clip_ratio > 0:
+                    base_norm = torch.norm(base_param)
+                    delta_norm = torch.norm(delta)
+                    # 🔧 Improved clipping threshold with lower bound
+                    max_delta_norm = clip_ratio * max(base_norm.item(), 1e-3)
+                    
+                    if delta_norm > max_delta_norm and max_delta_norm > eps:
+                        clip_factor = max_delta_norm / delta_norm
+                        delta = delta * clip_factor
+                        logger.debug(f"[BT-FL] Client {self.ID}: {param_name}: Clipped delta by factor {clip_factor:.4f}")
+                
+                # Apply compensated update
+                new_param = base_param + alpha * delta
+                
+                logger.debug(f"[BT-FL] Client {self.ID}: {param_name}: rho={rho:.4f}, alpha={alpha:.4f}")
+            
+            # Convert back to original device and dtype
+            final_param = new_param.to(fed_param.device, dtype=fed_param.dtype)
+            compensated_model[param_name] = final_param
+        
+        logger.info(f"[BT-FL] Client {self.ID}: Applied post-aggregation compensation to {len(compensated_model)} parameters")
+        return compensated_model
+    
+    def _is_bn_key(self, param_name):
+        """
+        Check if a parameter key belongs to BatchNorm layers
+        """
+        bn_keywords = [
+            'bn', 'batch_norm', 'batchnorm', 'norm',
+            'running_mean', 'running_var', 'num_batches_tracked'
+        ]
+        param_lower = param_name.lower()
+        
+        # Check for common BN patterns
+        for keyword in bn_keywords:
+            if keyword in param_lower:
+                return True
+                
+        # Check for numbered BN layers (e.g., bn1, bn2, etc.)
+        import re
+        if re.search(r'\bbn\d+\b', param_lower):
+            return True
+            
+        return False
+    
+    def _is_baseline_entry(self, model_params, baseline_params):
+        """
+        Check if a model_params entry is actually the baseline entry by comparing values
+        """
+        import torch
+        
+        if len(model_params) != len(baseline_params):
+            return False
+            
+        # Sample a few parameters to check similarity
+        check_count = 0
+        similar_count = 0
+        eps = 1e-6
+        
+        for param_name in list(baseline_params.keys())[:3]:  # Check first 3 parameters
+            if param_name in model_params:
+                base_param = baseline_params[param_name].detach().cpu().float()
+                model_param = model_params[param_name].detach().cpu().float()
+                
+                # Check if they're very similar (within numerical precision)
+                diff = torch.abs(base_param - model_param)
+                relative_diff = torch.mean(diff) / (torch.mean(torch.abs(base_param)) + eps)
+                
+                if relative_diff < eps:
+                    similar_count += 1
+                check_count += 1
+        
+        # If most checked parameters are very similar, it's likely a baseline entry
+        return similar_count >= check_count * 0.8 if check_count > 0 else False
+
     def _aggregate_model_from_chunks(self, round_num, aggregator_type='fedavg'):
         """
         Aggregate model parameters from chunk database using built-in aggregators
@@ -1125,21 +1512,10 @@ class Client(BaseClient):
                 
             logger.info(f"[BT-FL] Client {self.ID}: Found models from {len(available_clients)} clients: {available_clients}")
             
-            # Get baseline parameters (current global model for parameter completion)
-            raw_baseline_params = None
-            if hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'model'):
-                raw_baseline_params = self.trainer.ctx.model.state_dict()
-            elif hasattr(self.trainer, 'model'):
-                raw_baseline_params = self.trainer.model.state_dict()
-            
-            if raw_baseline_params is None:
-                logger.warning(f"[BT-FL] Client {self.ID}: No baseline model available for parameter completion")
-                return None
-                
-            # Filter out BN keys from baseline to prevent accidental aggregation
-            baseline_params = self._filter_bn_keys(raw_baseline_params)
-            if not baseline_params:
-                logger.error(f"[BT-FL] Client {self.ID}: No valid parameters in baseline after BN filtering")
+            # Prepare baseline parameters based on completion strategy
+            baseline_params = self._get_baseline_params_for_completion()
+            if baseline_params is None:
+                logger.error(f"[BT-FL] Client {self.ID}: Failed to prepare baseline parameters for completion")
                 return None
             
             # Collect and complete model parameters from all clients
@@ -1177,34 +1553,25 @@ class Client(BaseClient):
             # Process available clients with parameter completion
             for client_id in available_clients:
                 try:
-                    # Client has uploaded model
-                    model_params = self.chunk_manager.reconstruct_model_from_client_chunks(client_id, round_num)
+                    # 🔧 CRITICAL FIX: Get model params WITH coverage information
+                    result = self.chunk_manager.reconstruct_with_coverage_info(client_id, round_num, baseline_params)
                     sample_size = available_sample_sizes.get(client_id)
                     
-                    if model_params is not None and sample_size is not None:
-                        # Filter out BN keys from client model to prevent accidental aggregation
-                        filtered_model_params = self._filter_bn_keys(model_params)
+                    if result is not None and sample_size is not None:
+                        model_params, coverage_ratios = result
                         
-                        # Complete missing parameters with baseline and normalize device/dtype
-                        completed_params = {}
-                        for param_name in baseline_params.keys():
-                            if param_name in filtered_model_params:
-                                # Convert client parameter to CPU float32 for aggregator
-                                param_value = filtered_model_params[param_name]
-                                if hasattr(param_value, 'cpu') and hasattr(param_value, 'float'):
-                                    completed_params[param_name] = param_value.cpu().float()
-                                else:
-                                    completed_params[param_name] = param_value
+                        # Parameter completion and BN filtering now handled in chunk_manager
+                        # Just ensure device/dtype consistency for aggregator
+                        normalized_params = {}
+                        for param_name, param_value in model_params.items():
+                            if hasattr(param_value, 'cpu') and hasattr(param_value, 'float'):
+                                normalized_params[param_name] = param_value.cpu().float()
                             else:
-                                # Use baseline for missing parameters, ensure CPU float32
-                                baseline_value = baseline_params[param_name]
-                                if hasattr(baseline_value, 'cpu') and hasattr(baseline_value, 'float'):
-                                    completed_params[param_name] = baseline_value.clone().detach().cpu().float()
-                                else:
-                                    completed_params[param_name] = baseline_value.clone().detach()
+                                normalized_params[param_name] = param_value
                         
-                        completed_client_models.append((sample_size, completed_params))
-                        logger.debug(f"[BT-FL] Client {self.ID}: Completed model for client {client_id} with {sample_size} samples")
+                        # 🔧 CRITICAL FIX: Preserve client_id AND coverage_ratios for real compensation
+                        completed_client_models.append((sample_size, normalized_params, client_id, coverage_ratios))
+                        logger.debug(f"[BT-FL] Client {self.ID}: Completed model for client {client_id} with {sample_size} samples and coverage info")
                     else:
                         logger.warning(f"[BT-FL] Client {self.ID}: Failed to reconstruct model for available client {client_id}")
                         
@@ -1228,7 +1595,9 @@ class Client(BaseClient):
                             baseline_params_copy[k] = v.clone().detach().cpu().float()
                         else:
                             baseline_params_copy[k] = v.clone().detach()
-                    completed_client_models.append((total_absent_sample_weight, baseline_params_copy))
+                    # Create dummy coverage for baseline (0.0 for all params since absent clients contribute nothing)
+                    baseline_coverage = {param_name: 0.0 for param_name in baseline_params_copy.keys()}
+                    completed_client_models.append((total_absent_sample_weight, baseline_params_copy, -1, baseline_coverage))
                     logger.info(f"[BT-FL] Client {self.ID}: Added baseline entry for {len(absent_client_ids)} absent clients with true total weight {total_absent_sample_weight}")
                     logger.debug(f"[BT-FL] Client {self.ID}: Absent clients: {sorted(absent_client_ids)}")
                 elif absent_client_ids:
@@ -1247,7 +1616,9 @@ class Client(BaseClient):
                             baseline_params_copy[k] = v.clone().detach().cpu().float()
                         else:
                             baseline_params_copy[k] = v.clone().detach()
-                    completed_client_models.append((total_absent_sample_weight, baseline_params_copy))
+                    # Create dummy coverage for baseline (0.0 for all params since absent clients contribute nothing)
+                    baseline_coverage = {param_name: 0.0 for param_name in baseline_params_copy.keys()}
+                    completed_client_models.append((total_absent_sample_weight, baseline_params_copy, -1, baseline_coverage))
                     logger.info(f"[BT-FL] Client {self.ID}: Added baseline entry for {num_absent_clients} absent clients with estimated total weight {total_absent_sample_weight:.1f}")
                     logger.warning(f"[BT-FL] Client {self.ID}: Using average sample size estimation (real data split info unavailable)")
                 elif num_absent_clients > 0:
@@ -1280,13 +1651,19 @@ class Client(BaseClient):
                 config=self._cfg
             )
             
-            # Prepare aggregation info
+            # Prepare aggregation info (strip client_id and coverage for aggregator)
             agg_info = {
-                "client_feedback": completed_client_models
+                "client_feedback": [(sample_size, model_params) for sample_size, model_params, _, _ in completed_client_models]
             }
             
             # Perform aggregation (on CPU with float32)
             aggregated_model = aggregator.aggregate(agg_info)
+            
+            # 🔧 Post-aggregation parameter-level compensation
+            if aggregated_model is not None and isinstance(aggregated_model, dict):
+                aggregated_model = self._apply_post_aggregation_compensation(
+                    aggregated_model, completed_client_models, baseline_params
+                )
             
             # Move aggregated results back to target device and original dtype if needed
             if aggregated_model is not None and isinstance(aggregated_model, dict):
