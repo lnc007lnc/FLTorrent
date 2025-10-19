@@ -14,6 +14,10 @@ One-click distributed federated learning, completely replacing traditional shell
 - Configure LR scheduler: StepLR, MultiStepLR, CosineAnnealingLR, etc.
 - All settings centralized in FLConfig class
 
+🔧 NEW: BitTorrent Parameter Completion Strategies
+- Configure how missing chunks are completed during aggregation
+- Options: 'global_model' (default), 'zeros', 'local_model'
+
 Examples:
 # Use Krum aggregator with cosine annealing
 CONFIG.AGGREGATOR_TYPE = "krum"
@@ -24,6 +28,12 @@ CONFIG.LR_SCHEDULER_T_MAX = 150
 CONFIG.AGGREGATOR_TYPE = "fedavg"  
 CONFIG.LR_SCHEDULER_TYPE = "MultiStepLR"
 CONFIG.LR_SCHEDULER_MILESTONES = [50, 100]
+
+# Use zero completion for missing chunks (more aggressive training)
+CONFIG.BT_PARAMETER_COMPLETION = "zeros"
+
+# Use global model completion for missing chunks (stable training)
+CONFIG.BT_PARAMETER_COMPLETION = "global_model"
 
 Run directly to start complete FL system
 """
@@ -63,6 +73,8 @@ class EdgeDeviceProfile:
     # Network characteristics
     bandwidth_up_kbps: int = 176610         # Uplink bandwidth (kbps) Ookla Speedtest Global Index spain Fixed Broadband
     bandwidth_down_kbps: int = 241750       # Downlink bandwidth (kbps) Ookla Speedtest Global Index spain Fixed Broadband
+    # bandwidth_up_kbps: int = 17661000000000000         # Uplink bandwidth (kbps) Ookla Speedtest Global Index spain Fixed Broadband
+    # bandwidth_down_kbps: int = 24175000000000000       # Downlink bandwidth (kbps) Ookla Speedtest Global Index spain Fixed Broadband
     latency_ms: int = 1                   # Network latency (milliseconds)
     packet_loss_rate: float = 0.00        # Packet loss rate (0-1)
     jitter_ms: int = 1                    # Network jitter (milliseconds)
@@ -78,16 +90,18 @@ class FLConfig:
     """Federated learning configuration parameters"""
     
     # === Basic Settings ===
-    CLIENT_NUM: int = 50                    # Number of clients for CIFAR experiments
-    TOTAL_ROUNDS: int = 300                  # Fewer rounds for epoch-based training
+    CLIENT_NUM: int = 50                    # Number of clients for FL experiments
+    TOTAL_ROUNDS: int = 100                  # Extended to 100 rounds for two-phase training
     CHUNK_NUM: int = 16                     # More chunks for ResNet layers
     IMPORTANCE_METHOD: str = "fisher"         # Chunk importance method: magnitude, l2_norm, snip, fisher
     
     # === Dataset Settings ===
     # CNN Settings (current active for ResNet-18)
-    DATASET: str = "CIFAR10@torchvision"    # CIFAR-10 dataset
+    DATASET: str = "CIFAR10@torchvision"    # CIFAR-10 dataset (32x32 RGB)
+    # DATASET: str = "MNIST@torchvision"      # MNIST dataset (28x28 grayscale)
     BATCH_SIZE: int = 64                    # Standard batch size for CIFAR-10
-    DATA_SPLIT_ALPHA: float = 1.0           # Non-IID data split parameter
+    # BATCH_SIZE: int = 10                    # Standard batch size for MNIST in FL
+    DATA_SPLIT_ALPHA: float = 1000           # Non-IID data split parameter
     
     # Transformer/NLP Settings (commented for future use)
     # DATASET: str = "shakespeare"            # Shakespeare text dataset
@@ -95,10 +109,12 @@ class FLConfig:
     # DATA_SPLIT_ALPHA: float = 0.5          # LDA data split parameter (less extreme split)
     
     # === Model Settings ===
-    # CNN Model Settings (current active - ResNet-18)
-    MODEL_TYPE: str = "resnet18"            # ResNet-18 for CIFAR-10
-    MODEL_HIDDEN: int = 512                 # Hidden layer size (not used for ResNet)
+    # CNN Model Settings (current active - ConvNet2)
+    MODEL_TYPE: str = "resnet18"            # ResNet-18 for CIFAR-10 (32x32 RGB, requires 3 channels)
+    # MODEL_TYPE: str = "convnet2"            # ConvNet2 for MNIST (28x28 grayscale, supports 1 channel)
+    # MODEL_HIDDEN: int = 2048                # Hidden layer size for ConvNet2
     MODEL_OUT_CHANNELS: int = 10            # CIFAR-10 classes
+    # MODEL_OUT_CHANNELS: int = 10            # MNIST classes (10 digits: 0-9)
     MODEL_DROPOUT: float = 0.0              # Dropout for regularization
     
     # Transformer/NLP Model Settings (commented for future use)
@@ -125,9 +141,9 @@ class FLConfig:
     
     # === Training Settings ===
     LOCAL_UPDATE_STEPS: int = 1           # 2 epochs for ResNet-18 on CIFAR-10
-    LEARNING_RATE: float = 0.1           # Higher learning rate for ResNet-18 on CIFAR-10
+    LEARNING_RATE: float = 0.1            # Higher learning rate for ResNet-18 on CIFAR-10
     OPTIMIZER: str = "SGD"                # SGD optimizer for ResNet (standard choice)
-    OPTIMIZER_MOMENTUM: float = 0.9       # SGD momentum for better convergence
+    OPTIMIZER_MOMENTUM: float = 0.90       # SGD momentum for better convergence
     WEIGHT_DECAY: float = 5e-4            # Weight decay for ResNet regularization
     GRAD_CLIP: float = 5.0                # Higher gradient clipping for CNN
     
@@ -140,23 +156,42 @@ class FLConfig:
     # - Step decay: LR_SCHEDULER_TYPE = "StepLR", LR_SCHEDULER_STEP_SIZE = 30, LR_SCHEDULER_GAMMA = 0.1
     # - Multi-step: LR_SCHEDULER_TYPE = "MultiStepLR", LR_SCHEDULER_MILESTONES = [50, 100], LR_SCHEDULER_GAMMA = 0.1
     # - Cosine: LR_SCHEDULER_TYPE = "CosineAnnealingLR", LR_SCHEDULER_T_MAX = 150, LR_SCHEDULER_ETA_MIN = 1e-6
-    LR_SCHEDULER_TYPE: str = "CosineAnnealingLR"           # Scheduler type: "", StepLR, MultiStepLR, CosineAnnealingLR, etc.
+    LR_SCHEDULER_TYPE: str = "SequentialLR"           # Scheduler type: "", StepLR, MultiStepLR, CosineAnnealingLR, SequentialLR, etc.
+    
+    # Warmup + Cosine Annealing parameters
+    # Phase 1: Linear warmup (rounds 1-10)
+    LR_SCHEDULER_PHASE1_START_FACTOR: float = 0.01  # Start at 1% of target LR
+    LR_SCHEDULER_PHASE1_TOTAL_ITERS: int = 10       # Warmup for 10 rounds
+    
+    # Phase 2: Cosine annealing (rounds 11-100) 
+    LR_SCHEDULER_PHASE2_T_MAX: int = 90             # Cosine annealing for 90 rounds (11-100)
+    LR_SCHEDULER_PHASE2_ETA_MIN: float = 1e-5       # End at very small LR
+    
+    # Scheduler switch point: after round 10, switch from warmup to cosine annealing
+    LR_SCHEDULER_MILESTONES: List[int] = field(default_factory=lambda: [11])
+    
+    # Legacy parameters (for non-SequentialLR schedulers)
     # LR_SCHEDULER_STEP_SIZE: int = 30      # StepLR: step size (rounds)
     # LR_SCHEDULER_GAMMA: float = 0.1       # StepLR/MultiStepLR: decay factor
-    # LR_SCHEDULER_MILESTONES: List[int] = field(default_factory=lambda: [150, 225]) # MultiStepLR: milestone rounds
-    LR_SCHEDULER_T_MAX: int = 300         # CosineAnnealingLR: max rounds (should match TOTAL_ROUNDS)
-    LR_SCHEDULER_ETA_MIN: float = 1e-6    # CosineAnnealingLR: minimum learning rate
+    # LR_SCHEDULER_T_MAX: int = 100         # CosineAnnealingLR: total rounds
+    # LR_SCHEDULER_ETA_MIN: float = 1e-6    # CosineAnnealingLR: minimum learning rate
     
     # === BitTorrent Settings ===
     BITTORRENT_TIMEOUT: float = 120.0     # BitTorrent timeout 5min
     BT_CHUNK_SELECTION: str = "rarest_first"  # Chunk selection strategy
     BT_MIN_COMPLETION_RATIO: float = 0.8   # Minimum completion ratio
-    
+    BT_PARAMETER_COMPLETION: str = "global_model"  # Parameter completion strategy: 'global_model', 'zeros', 'local_model'
+    # BT_PARAMETER_COMPLETION: str = "zeros"  # Parameter completion strategy: 'global_model', 'zeros', 'local_model'
+
+    # === Compensation Settings ===
+    BT_ENABLE_COMPENSATION: bool = True    # Enable post-aggregation compensation for partial chunk collection
+                                           # Set to False for complete collection scenarios to reduce CPU overhead
+
     # === Chunk Selection Algorithm Parameters ===
     BT_RARITY_WEIGHT: float = 0.01         # tau: rarity weight
     BT_RARITY_ADJUSTMENT: float = 1e-6     # eps: rarity adjustment parameter
     BT_RANDOM_NOISE: float = 1e-4          # gamma: random noise strength
-    
+
     # === Write Queue Parameters ===
     BT_WRITE_QUEUE_SIZE: int = 500        # ChunkWriteQueue maximum capacity
     
@@ -184,7 +219,7 @@ class FLConfig:
     LOG_DIR: str = "logs"                 # Log directory
     
     # === Early Stopping Settings ===
-    EARLY_STOP_PATIENCE: int = 50         # Number of rounds to wait before stopping
+    EARLY_STOP_PATIENCE: int = 1000         # Number of rounds to wait before stopping
     EARLY_STOP_DELTA: float = 0.0         # Minimum improvement threshold
     EARLY_STOP_MODE: str = "best"         # Improvement tracking mode
     
@@ -192,17 +227,30 @@ class FLConfig:
     CRITERION_TYPE: str = "CrossEntropyLoss"  # Loss function: CrossEntropyLoss, character_loss
     TRAINER_TYPE: str = "cvtrainer"           # Trainer type: cvtrainer, nlptrainer
     EVAL_FREQ: int = 1                        # Evaluation frequency
-    EVAL_METRICS: List[str] = field(default_factory=lambda: ['acc', 'correct'])
+    EVAL_METRICS: List[str] = field(default_factory=lambda: ['acc', 'correct', 'f1'])  # Evaluation metrics: acc, correct, f1 (macro F1 score)
     EVAL_BEST_KEY: str = "val_acc"           # Key to track for best results
     
     # === Data Processing Settings ===
     DATA_ROOT: str = "data/"                  # Data root directory
     DATA_SPLITS: List[float] = field(default_factory=lambda: [0.8, 0.1, 0.1])  # Train/val/test splits
-    DATA_SUBSAMPLE: float = 1.0               # Data subsample ratio
+    DATA_SUBSAMPLE: float = 1.0               # Data subsample ratio - controls total dataset size 1.0 = use full dataset, 0.1 = use only 10% of data
     DATA_SPLITTER: str = "lda"                # Data splitter method
-    DATA_TRANSFORM_MEAN: List[float] = field(default_factory=lambda: [0.4914, 0.4822, 0.4465])  # CIFAR-10 normalize mean
-    DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.2470, 0.2435, 0.2616])   # CIFAR-10 normalize std
+                                              # Supported splitters:
+                                              # Generic: 'lda' (non-IID), 'iid' (uniform)
+                                              # Graph node-level: 'louvain' (community), 'random'
+                                              # Graph link-level: 'rel_type' (relation-based)
+                                              # Graph graph-level: 'rand_chunk' (random chunks)
+                                              # Molecular: 'scaffold' (structure), 'scaffold_lda' (combined)
+                                              # Custom: can register via register_splitter()
+                                              # Note: DATA_SPLIT_ALPHA (line 100) is used as the 'alpha' parameter
+                                              # for LDA splitter - smaller alpha = more heterogeneous data
+    DATA_TRANSFORM_MEAN: List[float] = field(default_factory=lambda: [0.4914, 0.4822, 0.4465])  # CIFAR-10 normalize mean (RGB channels)
+    DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.2470, 0.2435, 0.2616])   # CIFAR-10 normalize std (RGB channels)
+    # DATA_TRANSFORM_MEAN: List[float] = field(default_factory=lambda: [0.1307])  # MNIST normalize mean (grayscale)
+    # DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.3081])   # MNIST normalize std (grayscale)
     DATA_AUTO_DOWNLOAD: bool = True           # Auto-download dataset
+    DATA_SHARE_TEST_DATASET: bool = True      # All clients use same complete test set for global eval
+                                              # val dataset remains split for local performance tracking
     DATALOADER_NUM_WORKERS: int = 0           # DataLoader workers (0 for Docker compatibility)
     
     # === Device Performance Settings ===
@@ -259,8 +307,8 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_high",
         device_type="smartphone", 
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="1.0", memory_limit="6g", storage_limit="64g",
-        bandwidth_up_kbps=946610, bandwidth_down_kbps=241750,
+        cpu_limit="1.0", memory_limit="2g", storage_limit="64g",
+        bandwidth_up_kbps=9460000000610, bandwidth_down_kbps=2410000000750,
         latency_ms=0, packet_loss_rate=0.0, jitter_ms=0,
         training_speed_multiplier=1.0, availability_ratio=1.0,
         mobility_pattern="static"
@@ -270,8 +318,8 @@ EDGE_DEVICE_PROFILES = {
         device_id="smartphone_low", 
         device_type="smartphone",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="1.0", memory_limit="6g", storage_limit="64g",
-        bandwidth_up_kbps=946610, bandwidth_down_kbps=241750,
+        cpu_limit="1.0", memory_limit="2g", storage_limit="64g",
+        bandwidth_up_kbps=94600000000610, bandwidth_down_kbps=240000001750,
         latency_ms=0, packet_loss_rate=0.0, jitter_ms=0,
         training_speed_multiplier=1.0, availability_ratio=1.0,
         battery_constraint=False, mobility_pattern="static"
@@ -281,8 +329,8 @@ EDGE_DEVICE_PROFILES = {
         device_id="raspberry_pi",
         device_type="edge_device",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.6", memory_limit="6g", storage_limit="64g",
-        bandwidth_up_kbps=176610, bandwidth_down_kbps=241750,
+        cpu_limit="0.6", memory_limit="2g", storage_limit="64g",
+        bandwidth_up_kbps=1760000000610, bandwidth_down_kbps=2410000000750,
         latency_ms=0, packet_loss_rate=0.0, jitter_ms=0,
         training_speed_multiplier=1.0, availability_ratio=1.0,
         mobility_pattern="static"
@@ -292,8 +340,8 @@ EDGE_DEVICE_PROFILES = {
         device_id="iot_device",
         device_type="iot",
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="0.1", memory_limit="6g", storage_limit="2g", 
-        bandwidth_up_kbps=176610, bandwidth_down_kbps=241750,
+        cpu_limit="0.1", memory_limit="2g", storage_limit="2g", 
+        bandwidth_up_kbps=1760000000610, bandwidth_down_kbps=2410000000750,
         latency_ms=0, packet_loss_rate=0.0, jitter_ms=0,
         training_speed_multiplier=1.0, availability_ratio=1.0,
         battery_constraint=False, mobility_pattern="static"
@@ -303,8 +351,8 @@ EDGE_DEVICE_PROFILES = {
         device_id="edge_server",
         device_type="edge_server", 
         docker_image="flv2:base",  # Temporarily use base image
-        cpu_limit="2.0", memory_limit="6g", storage_limit="100g",
-        bandwidth_up_kbps=100000, bandwidth_down_kbps=1000000,
+        cpu_limit="2.0", memory_limit="2g", storage_limit="100g",
+        bandwidth_up_kbps=10000000000, bandwidth_down_kbps=10000000000000,
         latency_ms=10, packet_loss_rate=0.001, jitter_ms=2,
         training_speed_multiplier=1.0, availability_ratio=1.0,
         mobility_pattern="static"
@@ -692,11 +740,13 @@ class DockerManager:
                                 print(f"🗑️  Docker-cleaned directory: {cleanup_dir}")
                             else:
                                 # Fallback to regular rm
-                                subprocess.run(['rm', '-rf', f"{cleanup_dir}/*"], shell=True, check=False)
-                                print(f"🗑️  Cleaned directory (fallback): {cleanup_dir}")
+                                if cleanup_dir and cleanup_dir != "/":
+                                    subprocess.run(f"rm -rf {cleanup_dir}/*", shell=True, check=False)
+                                    print(f"🗑️  Cleaned directory (fallback): {cleanup_dir}")
                         except (subprocess.TimeoutExpired, Exception):
                             # If Docker cleanup fails, try regular rm
-                            subprocess.run(['rm', '-rf', f"{cleanup_dir}/*"], shell=True, check=False)
+                            if cleanup_dir and cleanup_dir != "/":
+                                subprocess.run(f"rm -rf {cleanup_dir}/*", shell=True, check=False)
                             print(f"🗑️  Cleaned directory (simple): {cleanup_dir}")
                             
             except Exception as e:
@@ -1582,6 +1632,43 @@ class DockerFederatedScopeClient:
             threading.Thread(target=recover, daemon=True).start()
 
 # ============================================================================
+# 🚀 Helper Functions
+# ============================================================================
+
+def build_scheduler_config():
+    """Build scheduler configuration parameters based on scheduler type"""
+    if CONFIG.LR_SCHEDULER_TYPE == "SequentialLR":
+        # Warmup + Cosine annealing scheduler
+        return {
+            'type': 'SequentialLR',
+            'schedulers': [
+                {
+                    'type': 'LinearLR',
+                    'start_factor': CONFIG.LR_SCHEDULER_PHASE1_START_FACTOR,
+                    'total_iters': CONFIG.LR_SCHEDULER_PHASE1_TOTAL_ITERS
+                },
+                {
+                    'type': 'CosineAnnealingLR', 
+                    'T_max': CONFIG.LR_SCHEDULER_PHASE2_T_MAX,
+                    'eta_min': CONFIG.LR_SCHEDULER_PHASE2_ETA_MIN
+                }
+            ],
+            'milestones': CONFIG.LR_SCHEDULER_MILESTONES
+        }
+    else:
+        # Standard schedulers - pass through all available parameters
+        scheduler_config = {'type': CONFIG.LR_SCHEDULER_TYPE}
+        
+        # Add all possible scheduler parameters if they exist
+        for attr_name in dir(CONFIG):
+            if attr_name.startswith('LR_SCHEDULER_') and attr_name != 'LR_SCHEDULER_TYPE':
+                attr_value = getattr(CONFIG, attr_name)
+                param_name = attr_name.replace('LR_SCHEDULER_', '').lower()
+                scheduler_config[param_name] = attr_value
+        
+        return scheduler_config
+
+# ============================================================================
 # 🚀 Main Execution Classes
 # ============================================================================
 
@@ -1718,8 +1805,6 @@ class RayV2FederatedLearning:
                 'role': 'server',            # Will be dynamically overridden
                 'data_idx': 0                # Will be dynamically overridden
                 
-                # 🔗 注意: gRPC Keep-Alive 配置需要在FederatedScope层面设置
-                # 或通过环境变量/系统级配置实现，不能通过YAML配置文件传递
             },
             
             'data': {
@@ -1729,6 +1814,7 @@ class RayV2FederatedLearning:
                 'subsample': CONFIG.DATA_SUBSAMPLE,
                 'splitter': CONFIG.DATA_SPLITTER,
                 'splitter_args': [{'alpha': CONFIG.DATA_SPLIT_ALPHA}],
+                'share_test_dataset': CONFIG.DATA_SHARE_TEST_DATASET,
                 'transform': [
                     ['ToTensor'],
                     ['Normalize', {'mean': CONFIG.DATA_TRANSFORM_MEAN, 'std': CONFIG.DATA_TRANSFORM_STD}]
@@ -1743,8 +1829,9 @@ class RayV2FederatedLearning:
             
             'model': {
                 'type': CONFIG.MODEL_TYPE,
-                'hidden': CONFIG.MODEL_HIDDEN,
+                # 'hidden': CONFIG.MODEL_HIDDEN,
                 'in_channels': 3,            # RGB channels for CIFAR-10
+                # 'in_channels': 1,            # Grayscale channel for MNIST
                 'out_channels': CONFIG.MODEL_OUT_CHANNELS,
                 # 'embed_size': 8,             # Small embedding for testing (NLP only)
                 'dropout': CONFIG.MODEL_DROPOUT
@@ -1759,14 +1846,7 @@ class RayV2FederatedLearning:
                     'weight_decay': CONFIG.WEIGHT_DECAY,
                     'momentum': CONFIG.OPTIMIZER_MOMENTUM    # SGD momentum parameter
                 },
-                'scheduler': {
-                    'type': CONFIG.LR_SCHEDULER_TYPE,
-                    # 'step_size': CONFIG.LR_SCHEDULER_STEP_SIZE,
-                    # 'gamma': CONFIG.LR_SCHEDULER_GAMMA,
-                    # 'milestones': CONFIG.LR_SCHEDULER_MILESTONES,
-                    'T_max': CONFIG.LR_SCHEDULER_T_MAX,
-                    'eta_min': CONFIG.LR_SCHEDULER_ETA_MIN
-                }
+                'scheduler': build_scheduler_config()
             },
             
             'grad': {
@@ -1806,7 +1886,9 @@ class RayV2FederatedLearning:
                 'timeout': CONFIG.BITTORRENT_TIMEOUT,
                 'verbose': True,
                 'chunk_selection': CONFIG.BT_CHUNK_SELECTION,
-                'min_completion_ratio': CONFIG.BT_MIN_COMPLETION_RATIO,
+                'min_completion_ratio': CONFIG.BT_MIN_COMPLETION_RATIO,  # Use default from cfg_bittorrent.py
+                'parameter_completion': CONFIG.BT_PARAMETER_COMPLETION, # Parameter completion strategy
+                'enable_compensation': CONFIG.BT_ENABLE_COMPENSATION,   # Enable post-aggregation compensation
                 'rarity_weight': CONFIG.BT_RARITY_WEIGHT,        # tau: rarity weight
                 'rarity_adjustment': CONFIG.BT_RARITY_ADJUSTMENT, # eps: rarity adjustment parameter
                 'random_noise': CONFIG.BT_RANDOM_NOISE,          # gamma: random noise strength
@@ -2101,11 +2183,13 @@ class RayV2FederatedLearning:
                             self.logger.debug(f"🗑️  Docker-cleaned mount directory: {cleanup_dir}")
                         else:
                             # Fallback to regular rm
-                            subprocess.run(['rm', '-rf', f"{cleanup_dir}/*"], shell=True, check=False)
-                            self.logger.debug(f"🗑️  Cleaned mount directory (fallback): {cleanup_dir}")
+                            if cleanup_dir and cleanup_dir != "/":
+                                subprocess.run(f"rm -rf {cleanup_dir}/*", shell=True, check=False)
+                                self.logger.debug(f"🗑️  Cleaned mount directory (fallback): {cleanup_dir}")
                     except (subprocess.TimeoutExpired, Exception) as e:
                         # If Docker cleanup fails, try regular rm
-                        subprocess.run(['rm', '-rf', f"{cleanup_dir}/*"], shell=True, check=False)
+                        if cleanup_dir and cleanup_dir != "/":
+                            subprocess.run(f"rm -rf {cleanup_dir}/*", shell=True, check=False)
                         self.logger.debug(f"🗑️  Cleaned mount directory (simple): {cleanup_dir}")
                     
         except Exception as e:

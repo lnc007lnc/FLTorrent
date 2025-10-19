@@ -1,73 +1,130 @@
+aggregator:
+  robust_rule: fedavg
+asyn:
+  min_received_num: 2
+  staleness_toleration: 0
+  time_budget: 0
+  use: false
+backend: torch
 bittorrent:
   chunk_selection: rarest_first
   enable: true
+  enable_compensation: true
   min_completion_ratio: 0.8
-  timeout: 600.0
+  parameter_completion: global_model
+  random_noise: 0.0001
+  rarity_adjustment: 1.0e-06
+  rarity_weight: 0.01
+  timeout: 120.0
   verbose: true
+  write_queue_size: 500
 chunk:
-  importance_method: snip
-  num_chunks: 10
-chunk_importance_method: snip
-chunk_num: 10
+  importance_method: fisher
+  num_chunks: 16
+chunk_importance_method: fisher
+chunk_keep_rounds: 2
+chunk_num: 16
 criterion:
-  type: character_loss
+  type: CrossEntropyLoss
 data:
+  args:
+  - download: true
   root: data/
+  share_test_dataset: true
   splits:
-  - 0.6
-  - 0.2
-  - 0.2
+  - 0.8
+  - 0.1
+  - 0.1
   splitter: lda
   splitter_args:
-  - alpha: 0.5
-  subsample: 0.5
-  type: shakespeare
+  - alpha: 1000
+  subsample: 1.0
+  transform:
+  - - ToTensor
+  - - Normalize
+    - mean:
+      - 0.4914
+      - 0.4822
+      - 0.4465
+      std:
+      - 0.247
+      - 0.2435
+      - 0.2616
+  type: CIFAR10@torchvision
 dataloader:
-  batch_size: 32
+  batch_size: 64
+  num_workers: 0
 device: 0
 distribute:
-  client_host: 0.0.0.0|172.24.158.88|36895
+  client_host: 0.0.0.0|172.16.16.14|56345
   client_port: 50052
   data_idx: 1
   role: client
-  server_host: 172.24.158.88
-  server_port: 50265
+  server_host: 172.16.16.14
+  server_port: 32391
   use: true
+early_stop:
+  delta: 0.0
+  improve_indicator_mode: best
+  patience: 1000
 eval:
-  best_res_update_round_wise_key: test_acc
+  best_res_update_round_wise_key: val_acc
   freq: 1
   metrics:
   - acc
   - correct
+  - f1
 federate:
-  client_num: 2
+  client_num: 50
+  make_global_eval: false
+  method: fedavg
   mode: distributed
-  sample_client_num: 2
-  total_round_num: 20
+  online_aggr: false
+  restore_from: ''
+  sample_client_num: 50
+  save_to: ''
+  share_local_model: false
+  total_round_num: 100
 grad:
-  grad_clip: 1.0
+  grad_clip: 5.0
 model:
-  dropout: 0.1
-  embed_size: 8
-  hidden: 256
-  in_channels: 80
-  out_channels: 80
-  type: lstm
+  dropout: 0.0
+  in_channels: 3
+  out_channels: 10
+  type: resnet18
 outdir: /app/output
+quantization:
+  method: none
+  nbits: 8
 seed: 12346
 topology:
-  connections: 2
+  connections: 4
   timeout: 600.0
-  type: random
+  type: mesh
   use: true
   verbose: true
 train:
   batch_or_epoch: epoch
-  local_update_steps: 5
+  local_update_steps: 1
   optimizer:
-    lr: 0.001
-    type: Adam
-    weight_decay: 0.0001
+    lr: 0.1
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0005
+  scheduler:
+    milestones:
+    - 11
+    schedulers:
+    - start_factor: 0.01
+      total_iters: 10
+      type: LinearLR
+    - T_max: 90
+      eta_min: 1.0e-05
+      type: CosineAnnealingLR
+    type: SequentialLR
 trainer:
-  type: nlptrainer
+  type: cvtrainer
 use_gpu: true
+wandb:
+  client_train_info: false
+  use: false

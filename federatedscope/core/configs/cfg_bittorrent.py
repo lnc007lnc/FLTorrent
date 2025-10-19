@@ -64,7 +64,11 @@ def extend_bittorrent_cfg(cfg):
     # Parameter completion strategy configuration
     cfg.bittorrent.parameter_completion = 'global_model'  # Strategy for missing parameter completion
                                                           # Options: 'global_model', 'zeros', 'local_model'
-    
+
+    # Compensation configuration
+    cfg.bittorrent.enable_compensation = True  # Enable post-aggregation compensation for partial chunk collection
+                                               # Set to False for complete collection scenarios to reduce CPU overhead
+
     # Logging and debug configuration
     cfg.bittorrent.verbose = False  # Whether to enable verbose logging
     cfg.bittorrent.save_statistics = True  # Whether to save exchange statistics

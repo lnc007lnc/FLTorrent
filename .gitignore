@@ -157,3 +157,38 @@ test_simple_importance.py
 logs/
 *.db
 *.db-journal
+
+# Data directories
+data/MNIST/
+data/CIFAR10/
+data/FEMNIST/
+
+# Output directories  
+ray_v2_output/server_output/
+ray_v2_output/configs/client_*.yaml
+tmp/
+
+# Test files
+test_*.py
+test_*.yaml
+
+# Database files
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+
+# Pickle files
+*.pkl
+*.pickle
+
+# Large binary files
+*.pth
+*.pt
+*.h5
+*.hdf5
+*.npz
+*.npy
+
+# Log files over 10MB
+*.log

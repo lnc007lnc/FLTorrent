@@ -622,7 +622,8 @@ class Client(BaseClient):
                 from federatedscope.core.chunk_manager import ChunkManager
                 self.chunk_manager = ChunkManager(
                     client_id=self.ID,
-                    change_callback=self._send_chunk_info_to_server
+                    change_callback=self._send_chunk_info_to_server,
+                    cfg=self._cfg
                 )
                 logger.info(f"[Client {self.ID}] Initialized chunk_manager for chunk data access")
             
@@ -993,7 +994,8 @@ class Client(BaseClient):
             if not hasattr(self, 'chunk_manager'):
                 self.chunk_manager = ChunkManager(
                     client_id=self.ID,
-                    change_callback=self._send_chunk_info_to_server
+                    change_callback=self._send_chunk_info_to_server,
+                    cfg=self._cfg
                 )
             
             # Save model as chunks (default: 10 chunks)
@@ -1087,22 +1089,40 @@ class Client(BaseClient):
         optimizer = self.trainer.ctx.optimizer
         scheduler = self.trainer.ctx.scheduler
         current_lr = optimizer.param_groups[0]['lr']
-        initial_lr = scheduler.base_lrs[0] if hasattr(scheduler, 'base_lrs') else 0.1
+        
+        # Get initial LR - handle composite schedulers like SequentialLR
+        initial_lr = self._get_scheduler_initial_lr(scheduler)
         
         logger.debug(f"[FL-Scheduler] Client {self.ID}: FL round {self.state}, current LR: {current_lr:.6e}, initial LR: {initial_lr:.6e}")
         
-        # Check if we have a stored LR for this round
-        if hasattr(self, '_fl_next_round_lr') and self.state in self._fl_next_round_lr:
-            target_lr = self._fl_next_round_lr[self.state]
-            optimizer.param_groups[0]['lr'] = target_lr
-            logger.info(f"[FL-Scheduler] Client {self.ID}: FL round {self.state}, restored LR from {current_lr:.6e} to {target_lr:.6e}")
-        elif self.state == 0:
-            # First round, keep initial LR
-            logger.info(f"[FL-Scheduler] Client {self.ID}: FL round 0, using initial LR: {current_lr:.6e}")
+        # For composite schedulers (like SequentialLR), restore LR but don't use complex state restoration
+        if self._is_composite_scheduler(scheduler):
+            # Simply restore the stored LR if available
+            if hasattr(self, '_fl_next_round_lr') and self.state in self._fl_next_round_lr:
+                target_lr = self._fl_next_round_lr[self.state]
+                optimizer.param_groups[0]['lr'] = target_lr
+                logger.info(f"[FL-Scheduler] Client {self.ID}: FL round {self.state}, restored composite scheduler LR from {current_lr:.6e} to {target_lr:.6e}")
+            else:
+                logger.debug(f"[FL-Scheduler] Client {self.ID}: No stored LR for composite scheduler round {self.state}, keeping current: {current_lr:.6e}")
         else:
-            logger.warning(f"[FL-Scheduler] Client {self.ID}: No stored LR for round {self.state}, current: {current_lr:.6e}")
-            if current_lr == initial_lr:
-                logger.warning(f"[FL-Scheduler] Client {self.ID}: LR appears to have been reset to initial value ({initial_lr:.6e}), this may cause scheduling issues")
+            # For simple schedulers, use LR restoration
+            if hasattr(self, '_fl_next_round_lr') and self.state in self._fl_next_round_lr:
+                target_lr = self._fl_next_round_lr[self.state]
+                optimizer.param_groups[0]['lr'] = target_lr
+                logger.info(f"[FL-Scheduler] Client {self.ID}: FL round {self.state}, restored LR from {current_lr:.6e} to {target_lr:.6e}")
+            elif self.state == 0:
+                # First round, set to the scheduler's intended initial LR
+                if hasattr(scheduler, 'start_factor') and hasattr(scheduler, 'base_lrs'):
+                    # For LinearLR, calculate initial LR
+                    initial_lr = scheduler.base_lrs[0] * scheduler.start_factor
+                    optimizer.param_groups[0]['lr'] = initial_lr
+                    logger.info(f"[FL-Scheduler] Client {self.ID}: FL round 0, set LinearLR initial LR: {initial_lr:.6e}")
+                else:
+                    logger.info(f"[FL-Scheduler] Client {self.ID}: FL round 0, using current LR: {current_lr:.6e}")
+            else:
+                logger.warning(f"[FL-Scheduler] Client {self.ID}: No stored LR for round {self.state}, current: {current_lr:.6e}")
+                if current_lr == initial_lr:
+                    logger.warning(f"[FL-Scheduler] Client {self.ID}: LR appears to have been reset to initial value ({initial_lr:.6e}), this may cause scheduling issues")
     
     def _step_fl_scheduler(self):
         """
@@ -1123,12 +1143,19 @@ class Client(BaseClient):
         
         # Only step scheduler once per FL round
         if self.state > self._fl_scheduler_last_round:
-            # Set scheduler to correct FL round before stepping
-            if hasattr(scheduler, 'last_epoch'):
-                scheduler.last_epoch = self.state - 1  # -1 because step() will increment it
-            
-            # Step the scheduler
-            scheduler.step()
+            # Handle composite schedulers (like SequentialLR) specially
+            if self._is_composite_scheduler(scheduler):
+                self._step_composite_scheduler(scheduler)
+            else:
+                # Set scheduler to correct FL round before stepping
+                if hasattr(scheduler, 'last_epoch'):
+                    scheduler.last_epoch = self.state - 1  # -1 because step() will increment it
+                
+                # Step the scheduler (suppress PyTorch warning for FL context)
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message="Detected call of.*lr_scheduler.step.*before.*optimizer.step.*")
+                    scheduler.step()
             
             # Save the new LR for next round
             new_lr = optimizer.param_groups[0]['lr']
@@ -1139,36 +1166,249 @@ class Client(BaseClient):
         else:
             logger.debug(f"[FL-Scheduler] Client {self.ID}: Scheduler already stepped for FL round {self.state}")
     
-    def _apply_fl_scheduler_lr(self):
+    def _get_scheduler_initial_lr(self, scheduler):
         """
-        Apply the correct learning rate for current FL round before training starts
-        This prevents LR from being reset to initial value each round
+        Get initial learning rate from scheduler, handling composite schedulers
         """
-        if not (hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'scheduler') 
-                and self.trainer.ctx.scheduler is not None):
-            logger.debug(f"[FL-Scheduler] Client {self.ID}: No scheduler available")
-            return
+        import torch
         
-        scheduler = self.trainer.ctx.scheduler
-        optimizer = self.trainer.ctx.optimizer
+        if hasattr(scheduler, 'base_lrs') and scheduler.base_lrs:
+            return scheduler.base_lrs[0]
+        elif hasattr(scheduler, '_schedulers') and scheduler._schedulers:
+            # For SequentialLR, get from first sub-scheduler
+            first_scheduler = scheduler._schedulers[0]
+            if hasattr(first_scheduler, 'base_lrs') and first_scheduler.base_lrs:
+                return first_scheduler.base_lrs[0]
         
-        # Initialize FL scheduler state tracking
-        if not hasattr(self, '_fl_scheduler_current_lr'):
-            self._fl_scheduler_current_lr = optimizer.param_groups[0]['lr']  # Store initial LR
-            self._fl_scheduler_applied_rounds = set()
+        # Fallback
+        return 0.1
+    
+    def _is_composite_scheduler(self, scheduler):
+        """
+        Check if scheduler is a composite scheduler (like SequentialLR)
+        """
+        import torch
         
-        current_lr = optimizer.param_groups[0]['lr']
+        if hasattr(torch.optim.lr_scheduler, 'SequentialLR'):
+            return isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+        return False
+    
+    def _step_composite_scheduler(self, scheduler):
+        """
+        Step composite scheduler with proper epoch synchronization
+        """
+        import torch
         
-        # If LR has been reset to initial value and we're not in round 0, restore correct LR
-        if current_lr == scheduler.base_lrs[0] and self.state > 0 and self.state not in self._fl_scheduler_applied_rounds:
-            # Restore the LR that should be used for this round
-            optimizer.param_groups[0]['lr'] = self._fl_scheduler_current_lr
-            self._fl_scheduler_applied_rounds.add(self.state)
-            logger.info(f"[FL-Scheduler] Client {self.ID}: FL round {self.state}, LR restored before training: {current_lr:.6e} → {self._fl_scheduler_current_lr:.6e}")
-        elif self.state == 0:
-            # First round, record initial state
-            self._fl_scheduler_applied_rounds.add(0)
-            logger.debug(f"[FL-Scheduler] Client {self.ID}: FL round 0, using initial LR: {current_lr:.6e}")
+        if isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR):
+            # For SequentialLR, manually synchronize internal scheduler states
+            self._step_sequential_lr(scheduler)
+        else:
+            # For other composite schedulers, use default method
+            if hasattr(scheduler, 'last_epoch'):
+                scheduler.last_epoch = self.state - 1
+            scheduler.step()
+    
+    def _step_sequential_lr(self, scheduler):
+        """
+        Properly step SequentialLR by synchronizing internal scheduler epochs
+        """
+        target_epoch = self.state
+        
+        # Set the main scheduler's last_epoch
+        scheduler.last_epoch = target_epoch - 1
+        
+        # Manually synchronize internal scheduler epochs
+        current_scheduler_idx = 0
+        cumulative_epochs = 0
+        
+        # Find which sub-scheduler should be active
+        for i, milestone in enumerate(scheduler._milestones):
+            if target_epoch < milestone:  # Changed <= to < for correct milestone boundary
+                current_scheduler_idx = i
+                break
+            cumulative_epochs = milestone
+        else:
+            # After all milestones, use last scheduler
+            current_scheduler_idx = len(scheduler._schedulers) - 1
+            if scheduler._milestones:
+                cumulative_epochs = scheduler._milestones[-1]
+        
+        # Debug: log scheduler selection
+        logger.info(f"[FL-Scheduler-Debug] Client {self.ID}: Round {target_epoch}, milestone check: {target_epoch} < {scheduler._milestones} → scheduler_idx={current_scheduler_idx}, cumulative_epochs={cumulative_epochs}")
+        
+        # Set epoch for the currently active scheduler
+        if current_scheduler_idx < len(scheduler._schedulers):
+            active_scheduler = scheduler._schedulers[current_scheduler_idx]
+            relative_epoch = target_epoch - cumulative_epochs
+            
+            if hasattr(active_scheduler, 'last_epoch'):
+                # Unified handling for all schedulers - use PyTorch's native step() mechanism
+                # Special case: LinearLR already applies start_factor during creation (last_epoch=0)
+                # So for round 0, we should NOT step it again
+                scheduler_type = active_scheduler.__class__.__name__
+                if scheduler_type == 'LinearLR' and relative_epoch == 0:
+                    # LinearLR was just created and already at epoch 0 with factor applied
+                    # Don't reset last_epoch or step for round 0
+                    pass  # Will skip the stepping below
+                else:
+                    # For other cases, set last_epoch and step normally
+                    active_scheduler.last_epoch = relative_epoch - 1
+                
+                # Debug: check scheduler state before step
+                scheduler_type = 'LinearLR' if hasattr(active_scheduler, 'start_factor') else 'CosineAnnealingLR'
+                if scheduler_type == 'LinearLR':
+                    start_factor = getattr(active_scheduler, 'start_factor', 'N/A')
+                    total_iters = getattr(active_scheduler, 'total_iters', 'N/A')
+                    base_lrs = getattr(active_scheduler, 'base_lrs', 'N/A')
+                    logger.info(f"[FL-Debug] Client {self.ID}: Round {target_epoch}, LinearLR config: start_factor={start_factor}, total_iters={total_iters}, base_lrs={base_lrs}")
+                
+                if hasattr(active_scheduler, 'base_lrs'):
+                    logger.info(f"[FL-Debug] Client {self.ID}: base_lrs JUST BEFORE STEP: {active_scheduler.base_lrs}")
+          
+                
+                # Pre-step debugging for LinearLR
+                if scheduler_type == 'LinearLR':
+                    optimizer_lr_before = self.trainer.ctx.optimizer.param_groups[0]['lr']
+                    logger.info(f"[FL-Debug] Client {self.ID}: Optimizer LR BEFORE step: {optimizer_lr_before:.6e}")
+                    
+                    if hasattr(active_scheduler, 'get_lr'):
+                        pytorch_lr_before = active_scheduler.get_lr()
+                        logger.info(f"[FL-Debug] Client {self.ID}: PyTorch LinearLR.get_lr() BEFORE step: {pytorch_lr_before}")
+                
+                logger.info(f"[FL-Debug] Client {self.ID}: Round {target_epoch}, {scheduler_type} before step: last_epoch={getattr(active_scheduler, 'last_epoch', 'N/A')}, relative_epoch={relative_epoch}")
+                
+                # Step the scheduler to update LR (unless it's LinearLR at round 0)
+                should_step = not (scheduler_type == 'LinearLR' and relative_epoch == 0)
+                if should_step:
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("ignore", message="Detected call of.*lr_scheduler.step.*before.*optimizer.step.*")
+                        active_scheduler.step()
+                
+                current_lr = self.trainer.ctx.optimizer.param_groups[0]['lr']
+                logger.info(f"[FL-Debug] Client {self.ID}: Round {target_epoch}, {scheduler_type} after step: last_epoch={getattr(active_scheduler, 'last_epoch', 'N/A')}, LR={current_lr:.6e}")
+                
+                # Post-step analysis for LinearLR
+                if scheduler_type == 'LinearLR':
+                    last_epoch = getattr(active_scheduler, 'last_epoch', 0)
+                    expected_factor = start_factor + (1.0 - start_factor) * last_epoch / total_iters
+                    expected_lr = base_lrs[0] * expected_factor if base_lrs != 'N/A' else 'Unknown'
+                    
+                    if hasattr(active_scheduler, 'get_lr'):
+                        pytorch_lr_after = active_scheduler.get_lr()
+                        logger.info(f"[FL-Debug] Client {self.ID}: PyTorch LinearLR.get_lr() AFTER step: {pytorch_lr_after}")
+                    
+                    logger.info(f"[FL-Debug] Client {self.ID}: LinearLR expected calculation: epoch={last_epoch}, factor={expected_factor:.6f}, expected_LR={expected_lr}")
+        
+        # Don't step the SequentialLR again - we've already handled the active sub-scheduler manually
+        # The SequentialLR's main logic is just to select which sub-scheduler is active
+        scheduler.last_epoch = target_epoch
+        
+        logger.debug(f"[FL-Scheduler] Client {self.ID}: SequentialLR synchronized to epoch {target_epoch}, active scheduler: {current_scheduler_idx}")
+    
+    def _restore_composite_scheduler_state(self, scheduler):
+        """
+        Restore composite scheduler state to current FL round
+        """
+        import torch
+        
+        if isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR):
+            # For SequentialLR, handle milestone transitions properly
+            if self.state > 0:
+                self._restore_sequential_lr_state(scheduler)
+        else:
+            # For other composite schedulers, use stored LR if available
+            if hasattr(self, '_fl_next_round_lr') and self.state in self._fl_next_round_lr:
+                target_lr = self._fl_next_round_lr[self.state]
+                self.trainer.ctx.optimizer.param_groups[0]['lr'] = target_lr
+                logger.info(f"[FL-Scheduler] Client {self.ID}: Restored composite scheduler LR to {target_lr:.6e}")
+    
+    def _restore_sequential_lr_state(self, scheduler):
+        """
+        Restore SequentialLR state with proper milestone handling
+        """
+        target_round = self.state
+        
+        # Determine which scheduler should be active and adjust initial LR accordingly
+        current_scheduler_idx = 0
+        cumulative_rounds = 0
+        
+        for i, milestone in enumerate(scheduler._milestones):
+            if target_round < milestone:
+                current_scheduler_idx = i
+                break
+            cumulative_rounds = milestone
+        else:
+            current_scheduler_idx = len(scheduler._schedulers) - 1
+            if scheduler._milestones:
+                cumulative_rounds = scheduler._milestones[-1]
+        
+        if current_scheduler_idx >= len(scheduler._schedulers):
+            current_scheduler_idx = len(scheduler._schedulers) - 1
+        
+        # Special handling for phase transitions
+        if current_scheduler_idx > 0:
+            # We're in phase 2 or later - need to adjust initial LR
+            # Calculate what LR should be at the start of this phase
+            phase1_end_lr = self._calculate_phase_end_lr(scheduler, 0, scheduler._milestones[0])
+            
+            # Temporarily adjust optimizer's initial LR for the current phase
+            original_lr = self.trainer.ctx.optimizer.param_groups[0]['lr']
+            self.trainer.ctx.optimizer.param_groups[0]['lr'] = phase1_end_lr
+            
+            # Update the active scheduler's base_lrs to match
+            active_scheduler = scheduler._schedulers[current_scheduler_idx]
+            if hasattr(active_scheduler, 'base_lrs'):
+                active_scheduler.base_lrs = [phase1_end_lr]
+            
+            logger.debug(f"[FL-Scheduler] Client {self.ID}: Adjusted phase {current_scheduler_idx+1} initial LR from {original_lr:.6e} to {phase1_end_lr:.6e}")
+        
+        # Don't call _step_sequential_lr again to avoid double stepping
+        # The scheduler state should be maintained across rounds
+        logger.debug(f"[FL-Scheduler] Client {self.ID}: Skipping restore step to maintain scheduler continuity")
+        
+        current_lr = self.trainer.ctx.optimizer.param_groups[0]['lr']
+        logger.info(f"[FL-Scheduler] Client {self.ID}: Restored SequentialLR to FL round {target_round}, LR: {current_lr:.6e}, Phase: {current_scheduler_idx+1}")
+    
+    def _calculate_phase_end_lr(self, scheduler, phase_idx, phase_end_round):
+        """
+        Calculate the LR at the end of a specific phase
+        """
+        import torch
+        import math
+        
+        if phase_idx >= len(scheduler._schedulers):
+            return 0.1  # fallback
+        
+        phase_scheduler = scheduler._schedulers[phase_idx]
+        
+        if isinstance(phase_scheduler, torch.optim.lr_scheduler.CosineAnnealingLR):
+            # Calculate end LR for CosineAnnealingLR
+            T_max = phase_scheduler.T_max
+            eta_min = phase_scheduler.eta_min
+            
+            # At the end of the phase (step = T_max), LR should be eta_min
+            return eta_min
+        else:
+            # For other schedulers, fallback to empirical calculation
+            # This would require stepping through the scheduler
+            return 0.001  # reasonable fallback for phase 1 end
+    
+    def _reset_sequential_lr_to_initial_state(self, scheduler):
+        """
+        Reset SequentialLR and its sub-schedulers to initial state
+        """
+        # Reset main scheduler
+        scheduler.last_epoch = 0
+        
+        # Reset all sub-schedulers
+        for sub_scheduler in scheduler._schedulers:
+            if hasattr(sub_scheduler, 'last_epoch'):
+                sub_scheduler.last_epoch = 0
+        
+        # Reset optimizer learning rate to initial value
+        initial_lr = self._get_scheduler_initial_lr(scheduler)
+        self.trainer.ctx.optimizer.param_groups[0]['lr'] = initial_lr
     
     def _get_baseline_params_for_completion(self):
         """
@@ -1296,23 +1536,39 @@ class Client(BaseClient):
         
         # Configuration parameters with round-based dynamic adjustment
         eps = 1e-12
-        
+        alpha_cap = 1.0 
+        rho_floor = 1e-13
         # Round-based parameter adjustment
-        current_round = self.state
-        if current_round < 10:  # R ∈ [0, 10): 起势阶段更大胆
-            c_max = 3.0
-            clip_ratio = 0.08  # rel_clip
-            ema_beta = 0.85    # beta
-        elif current_round < 30:  # R ∈ [10, 30): 中期调整
-            c_max = 3.0
-            clip_ratio = 0.05
-            ema_beta = 0.88
-        else:  # R ≥ 30: 后期稳收敛
-            c_max = 2.0
-            clip_ratio = 0.03
-            ema_beta = 0.90
         
-        # Step 1: Calculate participation weights for each parameter
+        current_round = self.state
+        if current_round < 9:  
+            c_max = 3
+            # clip_ratio = 0.16  # rel_clip
+            # ema_beta = 0.50    # beta
+            clip_ratio = 1.16  # rel_clip
+            ema_beta = 0.0    # beta
+            # alpha_cap=0.70
+            rho_floor=0.12
+        elif current_round < 20:  
+            c_max = 2.5
+            # clip_ratio = 0.12
+            clip_ratio = 1.16  # rel_clip
+            ema_beta = 0.00
+        # elif current_round < 51:  
+        #     c_max = 2.5
+        #     clip_ratio = 0.08
+        #     ema_beta = 0.80
+        else:  
+            c_max = 2.5
+            # clip_ratio = 0.03
+            # ema_beta = 0.90
+            clip_ratio = 1.16  # rel_clip
+            ema_beta = 0.0
+            
+        # c_max = 1.0
+        # clip_ratio = 1000.16  
+        # ema_beta = 0.0
+        # # Step 1: Calculate participation weights for each parameter
         present_weight = defaultdict(float)  # k -> sum n_i * covered_len_i,k / total_len_k  
         total_weight = 0.0  # sum n_i
         
@@ -1378,7 +1634,9 @@ class Client(BaseClient):
                 logger.debug(f"[BT-FL] Client {self.ID}: {param_name}: rho=0, using baseline")
             else:
                 # Apply compensation with capping
-                alpha = min(1.0, c_max * rho)  # Cap the compensation factor
+                alpha = min(alpha_cap, c_max * rho)  # Cap the compensation factor
+                # if rho < rho_floor:
+                #     alpha *= (rho / rho_floor)
                 
                 # Unbiased correction: (fed - base) / ρ  
                 delta = (fed_param_cpu - base_param) / rho
@@ -1495,7 +1753,8 @@ class Client(BaseClient):
                     from federatedscope.core.chunk_manager import ChunkManager
                     self.chunk_manager = ChunkManager(
                         client_id=self.ID,
-                        change_callback=self._send_chunk_info_to_server
+                        change_callback=self._send_chunk_info_to_server,
+                        cfg=self._cfg
                     )
                     logger.info(f"[BT-FL] Client {self.ID}: Successfully initialized chunk_manager for aggregation")
                 except Exception as e:
@@ -1658,12 +1917,16 @@ class Client(BaseClient):
             
             # Perform aggregation (on CPU with float32)
             aggregated_model = aggregator.aggregate(agg_info)
-            
-            # 🔧 Post-aggregation parameter-level compensation
-            if aggregated_model is not None and isinstance(aggregated_model, dict):
+
+            # 🔧 Post-aggregation parameter-level compensation (only if enabled in config)
+            enable_compensation = self._cfg.bittorrent.enable_compensation if hasattr(self._cfg, 'bittorrent') and hasattr(self._cfg.bittorrent, 'enable_compensation') else True
+            if enable_compensation and aggregated_model is not None and isinstance(aggregated_model, dict):
+                logger.debug(f"[BT-FL] Client {self.ID}: Post-aggregation compensation enabled, applying correction")
                 aggregated_model = self._apply_post_aggregation_compensation(
                     aggregated_model, completed_client_models, baseline_params
                 )
+            elif not enable_compensation:
+                logger.debug(f"[BT-FL] Client {self.ID}: Post-aggregation compensation disabled, skipping correction")
             
             # Move aggregated results back to target device and original dtype if needed
             if aggregated_model is not None and isinstance(aggregated_model, dict):
@@ -1810,7 +2073,8 @@ class Client(BaseClient):
                 from federatedscope.core.chunk_manager import ChunkManager
                 self.chunk_manager = ChunkManager(
                     client_id=self.ID,
-                    change_callback=self._send_chunk_info_to_server
+                    change_callback=self._send_chunk_info_to_server,
+                    cfg=self._cfg
                 )
                 logger.info(f"[BT] Client {self.ID}: Successfully initialized chunk_manager")
             except Exception as e:

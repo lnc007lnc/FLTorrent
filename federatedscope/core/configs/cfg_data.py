@@ -25,6 +25,8 @@ def extend_data_cfg(cfg):
     cfg.data.consistent_label_distribution = True  # If True, the label
     # distributions of train/val/test set over clients will be kept
     # consistent during splitting
+    cfg.data.share_test_dataset = False  # If True, all clients will use the
+    # same complete test dataset for global evaluation
     cfg.data.cSBM_phi = [0.5, 0.5, 0.5]
 
     cfg.data.transform = [

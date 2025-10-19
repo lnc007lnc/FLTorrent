@@ -123,7 +123,12 @@ class BaseDataTranslator:
         if len(val) > 0:
             split_val = self.splitter(val, prior=train_label_distribution)
         if len(test) > 0:
-            split_test = self.splitter(test, prior=train_label_distribution)
+            if self.global_cfg.data.share_test_dataset:
+                # All clients use the same complete test set for global evaluation
+                split_test = [test] * client_num
+            else:
+                # Normal splitting: each client gets a portion of test set
+                split_test = self.splitter(test, prior=train_label_distribution)
 
         # Build data dict with `ClientData`, key `0` for server.
         data_dict = {

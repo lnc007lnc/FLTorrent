@@ -1,19 +1,53 @@
 configuration:
-  chunk_num: 20
-  client_num: 3
+  chunk_num: 1
+  client_num: 20
   dataset: CIFAR10@torchvision
   importance_method: fisher
   model: resnet18
-  total_rounds: 2
+  total_rounds: 50
 log_files:
   clients:
   - logs/client_1.log
   - logs/client_2.log
   - logs/client_3.log
+  - logs/client_4.log
+  - logs/client_5.log
+  - logs/client_6.log
+  - logs/client_7.log
+  - logs/client_8.log
+  - logs/client_9.log
+  - logs/client_10.log
+  - logs/client_11.log
+  - logs/client_12.log
+  - logs/client_13.log
+  - logs/client_14.log
+  - logs/client_15.log
+  - logs/client_16.log
+  - logs/client_17.log
+  - logs/client_18.log
+  - logs/client_19.log
+  - logs/client_20.log
   server: logs/server.log
 output_directories:
   clients:
   - ray_v2_output/client_1_output
   - ray_v2_output/client_2_output
   - ray_v2_output/client_3_output
+  - ray_v2_output/client_4_output
+  - ray_v2_output/client_5_output
+  - ray_v2_output/client_6_output
+  - ray_v2_output/client_7_output
+  - ray_v2_output/client_8_output
+  - ray_v2_output/client_9_output
+  - ray_v2_output/client_10_output
+  - ray_v2_output/client_11_output
+  - ray_v2_output/client_12_output
+  - ray_v2_output/client_13_output
+  - ray_v2_output/client_14_output
+  - ray_v2_output/client_15_output
+  - ray_v2_output/client_16_output
+  - ray_v2_output/client_17_output
+  - ray_v2_output/client_18_output
+  - ray_v2_output/client_19_output
+  - ray_v2_output/client_20_output
   server: ray_v2_output/server_output

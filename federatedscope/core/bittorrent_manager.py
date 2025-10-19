@@ -718,13 +718,21 @@ class BitTorrentManager:
                 tau = 0.01      # rarity weight
                 eps = 1e-6      # rarity adjustment parameter  
                 gamma = 1e-4    # random perturbation strength
-            
-            needed_chunks.sort(
-                key=lambda x: (
-                    x['importance'] + (tau - eps) * x['rarity'] + gamma * random.uniform(-1, 1)
-                ),
-                reverse=True
-            )
+            if tau < 1:
+                needed_chunks.sort(
+                    key=lambda x: (
+                        x['importance'] + (tau - eps) * x['rarity'] + gamma * random.uniform(-1, 1)
+                    ),
+                    reverse=True
+                )
+            else:
+                # Sort needed chunks by rarity
+                needed_chunks.sort(
+                    key=lambda x: (
+                        (tau - eps) * x['rarity'] + gamma * random.uniform(-1, 1)
+                    ),
+                    reverse=True
+                )
             
             # Fill queue, maximum to MAX_PENDING_QUEUE size
             for i, chunk in enumerate(needed_chunks[:self.MAX_PENDING_QUEUE]):

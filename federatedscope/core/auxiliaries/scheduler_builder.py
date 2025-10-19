@@ -79,6 +79,29 @@ def get_scheduler(optimizer, type, **kwargs):
 
     if torch is None or type == '':
         return None
+    
+    # Special handling for SequentialLR
+    if type == 'SequentialLR':
+        if 'schedulers' in tmp_kwargs and 'milestones' in tmp_kwargs:
+            schedulers_config = tmp_kwargs.pop('schedulers')
+            milestones = tmp_kwargs.pop('milestones')
+            
+            # Build individual schedulers
+            schedulers = []
+            for sched_config in schedulers_config:
+                sched_config_copy = sched_config.copy()  # Avoid modifying original config
+                sched_type = sched_config_copy.pop('type')
+                
+                if hasattr(torch.optim.lr_scheduler, sched_type):
+                    sched = getattr(torch.optim.lr_scheduler, sched_type)(optimizer, **sched_config_copy)
+                    schedulers.append(sched)
+                else:
+                    raise NotImplementedError(f'Scheduler {sched_type} not implemented')
+            
+            return torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers, milestones)
+        else:
+            raise ValueError('SequentialLR requires schedulers and milestones parameters')
+    
     if isinstance(type, str):
         if hasattr(torch.optim.lr_scheduler, type):
             return getattr(torch.optim.lr_scheduler, type)(optimizer,

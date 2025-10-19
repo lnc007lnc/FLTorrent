@@ -137,16 +137,18 @@ class ChunkManager:
       }
     """
     
-    def __init__(self, client_id: int, change_callback: Optional[Callable[[ChunkInfo], None]] = None):
+    def __init__(self, client_id: int, change_callback: Optional[Callable[[ChunkInfo], None]] = None, cfg=None):
         """
         Initialize ChunkManager, create independent database files for each round
-        
+
         Args:
             client_id: Client ID, used to create node-specific database directory
             change_callback: Callback function for database changes, used to report chunk changes to server
+            cfg: Configuration object (optional, for accessing bittorrent settings)
         """
         self.client_id = client_id
         self.change_callback = change_callback
+        self._cfg = cfg  # 🚀 NEW: Store config for fast path optimization
         self.chunk_write_queue = None  # 🚀 NEW: Reference to ChunkWriteQueue
         self._bt_session_ids = {}  # 🚀 Track session IDs by round
         
@@ -2051,70 +2053,40 @@ class ChunkManager:
                 
                 if expected_size != actual_size:
                     logger.warning(f"[ChunkManager] Size mismatch for {pname}: expected {expected_size}, got {actual_size}")
-                    
-                    # Determine fill strategy based on baseline availability
-                    if fill_missing_with_baseline is not None and pname in fill_missing_with_baseline:
-                        baseline_tensor = fill_missing_with_baseline[pname]
-                        if hasattr(baseline_tensor, 'detach'):
-                            fill_values = baseline_tensor.detach().cpu().numpy().flatten().astype(flat.dtype)
-                        else:
-                            fill_values = np.array(baseline_tensor).flatten().astype(flat.dtype)
-                        fill_strategy = "baseline"
-                    else:
-                        fill_values = None  # Will use zeros
-                        fill_strategy = "zeros"
-                    
+
+                    # 🔧 SIMPLE LOGIC (user's original requirement):
+                    # "If length is enough, directly restore shape; if not enough, fill with zeros"
+                    # No baseline filling to avoid shape mismatch issues
+
                     if actual_size == 0:
-                        # No data received
-                        if fill_strategy == "baseline":
-                            # Fill with baseline values
-                            if len(fill_values) >= expected_size:
-                                params[pname] = torch.from_numpy(fill_values[:expected_size].reshape(shp))
-                            else:
-                                # Baseline too small, pad with zeros
-                                padded = np.zeros(expected_size, dtype=flat.dtype)
-                                padded[:len(fill_values)] = fill_values
-                                params[pname] = torch.from_numpy(padded.reshape(shp))
-                        else:
-                            # Fill with zeros
-                            params[pname] = torch.zeros(shp, dtype=torch.float32)
-                        
+                        # No data received - fill with zeros
+                        params[pname] = torch.zeros(shp, dtype=torch.float32)
                         mask[pname] = torch.zeros(shp, dtype=torch.bool)
                         coverage[pname] = 0.0
-                        logger.info(f"[ChunkManager] {pname}: No data received, filled with {fill_strategy}")
-                        
+                        logger.info(f"[ChunkManager] {pname}: No data received, filled with zeros")
+
+                    elif actual_size < expected_size:
+                        # Partial data received - pad with zeros
+                        padded_flat = np.zeros(expected_size, dtype=flat.dtype)
+                        padded_flat[:actual_size] = flat
+                        padded_mask = np.zeros(expected_size, dtype=bool)
+                        padded_mask[:actual_size] = mflat
+
+                        params[pname] = torch.from_numpy(padded_flat.reshape(shp))
+                        mask[pname] = torch.from_numpy(padded_mask.reshape(shp))
+                        coverage[pname] = float(actual_size) / float(expected_size)
+                        logger.info(f"[ChunkManager] {pname}: Partial data ({actual_size}/{expected_size}), "
+                                   f"filled missing with zeros, coverage={coverage[pname]:.3f}")
                     else:
-                        # Partial data received
-                        if actual_size < expected_size:
-                            # Pad to match expected shape
-                            if fill_strategy == "baseline" and len(fill_values) >= expected_size:
-                                # Use baseline for missing parts
-                                padded_flat = fill_values[:expected_size].copy()
-                                padded_flat[:actual_size] = flat  # Override with received data
-                                padded_mask = np.zeros(expected_size, dtype=bool)
-                                padded_mask[:actual_size] = mflat
-                            else:
-                                # Use zeros for missing parts
-                                padded_flat = np.zeros(expected_size, dtype=flat.dtype)
-                                padded_flat[:actual_size] = flat
-                                padded_mask = np.zeros(expected_size, dtype=bool)
-                                padded_mask[:actual_size] = mflat
-                            
-                            params[pname] = torch.from_numpy(padded_flat.reshape(shp))
-                            mask[pname] = torch.from_numpy(padded_mask.reshape(shp))
-                            coverage[pname] = float(actual_size) / float(expected_size)
-                            logger.info(f"[ChunkManager] {pname}: Partial data ({actual_size}/{expected_size}), "
-                                       f"filled missing with {fill_strategy}, coverage={coverage[pname]:.3f}")
-                        else:
-                            # More data than expected, truncate
-                            truncated_flat = flat[:expected_size]
-                            truncated_mask = mflat[:expected_size]
-                            
-                            params[pname] = torch.from_numpy(truncated_flat.reshape(shp))
-                            mask[pname] = torch.from_numpy(truncated_mask.reshape(shp))
-                            coverage[pname] = float(truncated_mask.sum()) / float(expected_size)
-                            logger.warning(f"[ChunkManager] {pname}: Excess data ({actual_size}/{expected_size}), "
-                                          f"truncated, coverage={coverage[pname]:.3f}")
+                        # More data than expected - truncate
+                        truncated_flat = flat[:expected_size]
+                        truncated_mask = mflat[:expected_size]
+
+                        params[pname] = torch.from_numpy(truncated_flat.reshape(shp))
+                        mask[pname] = torch.from_numpy(truncated_mask.reshape(shp))
+                        coverage[pname] = float(truncated_mask.sum()) / float(expected_size)
+                        logger.warning(f"[ChunkManager] {pname}: Excess data ({actual_size}/{expected_size}), "
+                                      f"truncated, coverage={coverage[pname]:.3f}")
                 else:
                     # Size matches, normal reshape
                     params[pname] = torch.from_numpy(flat.reshape(shp))
@@ -2145,12 +2117,12 @@ class ChunkManager:
     def reconstruct_with_coverage_info(self, client_id: int, round_num: int, baseline_params: Optional[Dict] = None) -> Optional[tuple]:
         """
         🔧 NEW: Reconstruction that preserves coverage information for post-aggregation compensation
-        
+
         Args:
             client_id: Target client ID
-            round_num: Target round  
+            round_num: Target round
             baseline_params: Baseline parameters for completion
-            
+
         Returns:
             Tuple[Dict, Dict[str, float]]: (model_params, coverage_ratios) or None if failed
         """
@@ -2159,11 +2131,35 @@ class ChunkManager:
             if reconstruction:
                 params = {name: param.clone() for name, param in reconstruction.params.items()}
                 # For full reconstruction without baseline, assume coverage from mask
-                coverage = {name: float(mask.sum().item()) / float(mask.numel()) 
+                coverage = {name: float(mask.sum().item()) / float(mask.numel())
                            for name, mask in reconstruction.mask.items()}
                 return params, coverage
             return None
-        
+
+        # 🚀 FAST PATH: When compensation disabled, use standard reconstruction without baseline filling
+        # Check config with detailed logging
+        has_cfg = hasattr(self, '_cfg') and self._cfg is not None
+        has_bittorrent = has_cfg and hasattr(self._cfg, 'bittorrent')
+        enable_compensation = True  # Default
+
+        if has_bittorrent:
+            enable_compensation = getattr(self._cfg.bittorrent, 'enable_compensation', True)
+            logger.debug(f"[ChunkManager] Client {client_id}: enable_compensation from config = {enable_compensation}")
+        else:
+            logger.warning(f"[ChunkManager] Client {client_id}: No bittorrent config found (has_cfg={has_cfg}, has_bittorrent={has_bittorrent}), defaulting to compensation enabled")
+
+        if not enable_compensation:
+            # Use the standard reconstruction method without baseline (no compensation needed)
+            # Pass None for baseline to avoid shape mismatch - function will fill missing data with zeros
+            logger.info(f"[ChunkManager] Client {client_id}: Using FAST PATH (compensation disabled)")
+            reconstruction = self.reconstruct_model_from_client_chunks(client_id, round_num, fill_missing_with_baseline=None)
+            if reconstruction:
+                logger.info(f"[ChunkManager] Client {client_id}: Reconstruction completed without compensation")
+                return reconstruction.params, reconstruction.coverage
+            return None
+
+        # Standard path with compensation
+        logger.debug(f"[ChunkManager] Client {client_id}: Using STANDARD PATH (compensation enabled)")
         result = self._compensate_from_chunks_fast(client_id, round_num, baseline_params)
         if result is not None:
             return result.params, result.coverage
@@ -2172,9 +2168,11 @@ class ChunkManager:
     def _compensate_from_chunks_fast(self, client_id: int, round_num: int, baseline_params: Dict) -> Optional[Dict]:
         """
         🔧 FIXED: Pure reconstruction + completion, NO compensation to avoid double compensation
-        
+
         Only fills received chunks into baseline without any scaling/compensation.
         Post-aggregation compensation will handle bias correction at parameter level.
+
+        🚀 NEW: Fast path for complete chunk collection - directly deserialize without per-chunk processing
         """
         try:
             # 1) 取 chunk 列表
@@ -2305,10 +2303,7 @@ class ChunkManager:
             import traceback
             logger.debug(traceback.format_exc())
             return self._filter_bn_keys(baseline_params) if baseline_params else None
-    
-    
-    
-    
+
     def _get_local_sample_size(self) -> Optional[int]:
         """
         Calculate local sample size using the same logic as client worker
