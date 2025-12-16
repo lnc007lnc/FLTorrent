@@ -54,6 +54,26 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
+# === Project root on all AWS nodes ===
+# All AWS machines have code at /home/ubuntu/FLTorrent
+PROJECT_ROOT = "/home/ubuntu/FLTorrent"
+
+
+def get_public_ip() -> str:
+    """Get public IP address for cross-region communication (AWS EC2).
+
+    Uses AWS EC2 metadata service to get public IPv4 address.
+    Falls back to ray.util.get_node_ip_address() if metadata service is unavailable.
+    """
+    import urllib.request
+    try:
+        # AWS EC2 metadata service
+        with urllib.request.urlopen('http://169.254.169.254/latest/meta-data/public-ipv4', timeout=2) as response:
+            return response.read().decode('utf-8').strip()
+    except Exception:
+        # Fallback to Ray's internal IP detection
+        return ray.util.get_node_ip_address()
+
 # ============================================================================
 # 🔧 Configuration Area - All settings centralized here for easy modification
 # ============================================================================
@@ -88,20 +108,22 @@ class EdgeDeviceProfile:
 @dataclass
 class FLConfig:
     """Federated learning configuration parameters"""
-    
+
     # === Basic Settings ===
-    CLIENT_NUM: int = 50                    # Number of clients for FL experiments
+    CLIENT_NUM: int = 50                   # Number of clients for FL experiments
     TOTAL_ROUNDS: int = 100                  # Extended to 100 rounds for two-phase training
     CHUNK_NUM: int = 16                     # More chunks for ResNet layers
     IMPORTANCE_METHOD: str = "fisher"         # Chunk importance method: magnitude, l2_norm, snip, fisher
+    SEED: int = 12345                       # Random seed for reproducibility (server uses SEED, clients use SEED + client_id)
     
     # === Dataset Settings ===
     # CNN Settings (current active for ResNet-18)
-    DATASET: str = "CIFAR10@torchvision"    # CIFAR-10 dataset (32x32 RGB)
+    DATASET: str = "celeba"                 # CelebA dataset (84x84 RGB, binary classification)
+    # DATASET: str = "CIFAR10@torchvision"    # CIFAR-10 dataset (32x32 RGB)
     # DATASET: str = "MNIST@torchvision"      # MNIST dataset (28x28 grayscale)
-    BATCH_SIZE: int = 64                    # Standard batch size for CIFAR-10
+    BATCH_SIZE: int = 32                    # Standard batch size for CIFAR-10
     # BATCH_SIZE: int = 10                    # Standard batch size for MNIST in FL
-    DATA_SPLIT_ALPHA: float = 1000           # Non-IID data split parameter
+    DATA_SPLIT_ALPHA: float = 10000           # Non-IID data split parameter
     
     # Transformer/NLP Settings (commented for future use)
     # DATASET: str = "shakespeare"            # Shakespeare text dataset
@@ -113,7 +135,9 @@ class FLConfig:
     MODEL_TYPE: str = "resnet18"            # ResNet-18 for CIFAR-10 (32x32 RGB, requires 3 channels)
     # MODEL_TYPE: str = "convnet2"            # ConvNet2 for MNIST (28x28 grayscale, supports 1 channel)
     # MODEL_HIDDEN: int = 2048                # Hidden layer size for ConvNet2
-    MODEL_OUT_CHANNELS: int = 10            # CIFAR-10 classes
+    # MODEL_OUT_CHANNELS: int = 2             # Original: For CrossEntropyLoss (2 output neurons for binary)
+    MODEL_OUT_CHANNELS: int = 1             # For BCEWithLogitsLoss (1 output neuron, Sigmoid applied internally)
+    # MODEL_OUT_CHANNELS: int = 10            # CIFAR-10 classes
     # MODEL_OUT_CHANNELS: int = 10            # MNIST classes (10 digits: 0-9)
     MODEL_DROPOUT: float = 0.0              # Dropout for regularization
     
@@ -141,15 +165,22 @@ class FLConfig:
     
     # === Training Settings ===
     LOCAL_UPDATE_STEPS: int = 1           # 2 epochs for ResNet-18 on CIFAR-10
-    LEARNING_RATE: float = 0.1            # Higher learning rate for ResNet-18 on CIFAR-10
-    OPTIMIZER: str = "SGD"                # SGD optimizer for ResNet (standard choice)
-    OPTIMIZER_MOMENTUM: float = 0.90       # SGD momentum for better convergence
+    # LEARNING_RATE: float = 0.1            # Original: High LR for CIFAR-10 (32×32), too high for CelebA (84×84)
+    # LEARNING_RATE: float = 0.01           # Reduced for CelebA with SGD
+    # LEARNING_RATE: float = 0.001          # Adam optimizer with lower LR (recommended for CelebA 84×84)
+    LEARNING_RATE: float = 0.0001         # Further reduced for CelebA with ResNet+BN in FL (BN instability)
+    # OPTIMIZER: str = "SGD"                # Original: SGD optimizer for ResNet (standard choice)
+    OPTIMIZER: str = "Adam"               # Adam optimizer (better for CelebA, more stable convergence)
+    OPTIMIZER_MOMENTUM: float = 0.90       # SGD momentum for better convergence (not used with Adam)
     WEIGHT_DECAY: float = 5e-4            # Weight decay for ResNet regularization
     GRAD_CLIP: float = 5.0                # Higher gradient clipping for CNN
     
     # === Aggregator Settings ===
     AGGREGATOR_TYPE: str = "fedavg"       # Aggregator type: fedavg, krum, median, trimmedmean, bulyan, normbounding
-    
+
+    # === Personalization Settings (FedBN) ===
+    PERSONALIZATION_LOCAL_PARAM: List[str] = field(default_factory=lambda: ['bn'])  # Local parameters not aggregated (e.g., ['bn'] for FedBN)
+
     # === Learning Rate Scheduler Settings ===
     # Examples:
     # - No scheduler: LR_SCHEDULER_TYPE = ""
@@ -164,8 +195,8 @@ class FLConfig:
     LR_SCHEDULER_PHASE1_TOTAL_ITERS: int = 10       # Warmup for 10 rounds
     
     # Phase 2: Cosine annealing (rounds 11-100) 
-    LR_SCHEDULER_PHASE2_T_MAX: int = 90             # Cosine annealing for 90 rounds (11-100)
-    LR_SCHEDULER_PHASE2_ETA_MIN: float = 1e-5       # End at very small LR
+    LR_SCHEDULER_PHASE2_T_MAX: int = 90             # Cosine annealing for 40 rounds (11-50)
+    LR_SCHEDULER_PHASE2_ETA_MIN: float = 1e-8       # End at very small LR
     
     # Scheduler switch point: after round 10, switch from warmup to cosine annealing
     LR_SCHEDULER_MILESTONES: List[int] = field(default_factory=lambda: [11])
@@ -177,7 +208,7 @@ class FLConfig:
     # LR_SCHEDULER_ETA_MIN: float = 1e-6    # CosineAnnealingLR: minimum learning rate
     
     # === BitTorrent Settings ===
-    BITTORRENT_TIMEOUT: float = 120.0     # BitTorrent timeout 5min
+    BITTORRENT_TIMEOUT: float = 160.0     # BitTorrent timeout 5min
     BT_CHUNK_SELECTION: str = "rarest_first"  # Chunk selection strategy
     BT_MIN_COMPLETION_RATIO: float = 0.8   # Minimum completion ratio
     BT_PARAMETER_COMPLETION: str = "global_model"  # Parameter completion strategy: 'global_model', 'zeros', 'local_model'
@@ -224,7 +255,10 @@ class FLConfig:
     EARLY_STOP_MODE: str = "best"         # Improvement tracking mode
     
     # === Training Framework Settings ===
-    CRITERION_TYPE: str = "CrossEntropyLoss"  # Loss function: CrossEntropyLoss, character_loss
+    # CRITERION_TYPE: str = "CrossEntropyLoss"  # Original: Multi-class loss (for >2 classes), not optimal for binary classification
+    CRITERION_TYPE: str = "BCEWithLogitsLoss"  # Binary Cross-Entropy with Logits (for CelebA binary: male/female)
+                                               # BCEWithLogitsLoss = Sigmoid + BCE, numerically stable
+                                               # Requires: model output = raw logits (no Sigmoid), labels = [0, 1] float
     TRAINER_TYPE: str = "cvtrainer"           # Trainer type: cvtrainer, nlptrainer
     EVAL_FREQ: int = 1                        # Evaluation frequency
     EVAL_METRICS: List[str] = field(default_factory=lambda: ['acc', 'correct', 'f1'])  # Evaluation metrics: acc, correct, f1 (macro F1 score)
@@ -232,7 +266,7 @@ class FLConfig:
     
     # === Data Processing Settings ===
     DATA_ROOT: str = "data/"                  # Data root directory
-    DATA_SPLITS: List[float] = field(default_factory=lambda: [0.8, 0.1, 0.1])  # Train/val/test splits
+    DATA_SPLITS: List[float] = field(default_factory=lambda: [0.8, 0.1, 0.1])  # Train/val/test splits (CelebA default)
     DATA_SUBSAMPLE: float = 1.0               # Data subsample ratio - controls total dataset size 1.0 = use full dataset, 0.1 = use only 10% of data
     DATA_SPLITTER: str = "lda"                # Data splitter method
                                               # Supported splitters:
@@ -244,8 +278,14 @@ class FLConfig:
                                               # Custom: can register via register_splitter()
                                               # Note: DATA_SPLIT_ALPHA (line 100) is used as the 'alpha' parameter
                                               # for LDA splitter - smaller alpha = more heterogeneous data
-    DATA_TRANSFORM_MEAN: List[float] = field(default_factory=lambda: [0.4914, 0.4822, 0.4465])  # CIFAR-10 normalize mean (RGB channels)
-    DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.2470, 0.2435, 0.2616])   # CIFAR-10 normalize std (RGB channels)
+    DATA_MERGE_LEAF_BEFORE_SPLIT: bool = True  # For LEAF datasets (femnist, celeba, etc.):
+                                              # False: Use original user-based split (1 client = 1 celebrity/writer)
+                                              # True: Merge all users' data, then re-split using DATA_SPLITTER
+                                              # Only affects LEAF datasets; other datasets unaffected
+    DATA_TRANSFORM_MEAN: List[float] = field(default_factory=lambda: [0.485, 0.456, 0.406])  # CelebA/ImageNet normalize mean (RGB channels)
+    DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.229, 0.224, 0.225])   # CelebA/ImageNet normalize std (RGB channels)
+    # DATA_TRANSFORM_MEAN: List[float] = field(default_factory=lambda: [0.4914, 0.4822, 0.4465])  # CIFAR-10 normalize mean (RGB channels)
+    # DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.2470, 0.2435, 0.2616])   # CIFAR-10 normalize std (RGB channels)
     # DATA_TRANSFORM_MEAN: List[float] = field(default_factory=lambda: [0.1307])  # MNIST normalize mean (grayscale)
     # DATA_TRANSFORM_STD: List[float] = field(default_factory=lambda: [0.3081])   # MNIST normalize std (grayscale)
     DATA_AUTO_DOWNLOAD: bool = True           # Auto-download dataset
@@ -264,7 +304,7 @@ class FLConfig:
     TARGET_UTILIZATION: float = 0.95      # Target GPU utilization (95%)
     
     # === Chunk Database Retention Settings ===
-    CHUNK_KEEP_ROUNDS: int = 2             # Number of recent rounds to keep in database
+    CHUNK_KEEP_ROUNDS: int = 1             # Number of recent rounds to keep in database
     
     # === Advanced FederatedScope Settings ===
     BACKEND: str = "torch"                 # Backend framework: torch, tensorflow
@@ -484,12 +524,12 @@ class NetworkSimulator:
 
 class DockerManager:
     """Docker environment manager with local storage configuration"""
-    
+
     def __init__(self):
         self.client = None
         self.network_simulator = NetworkSimulator()
         self.fl_network = None
-        self.local_docker_root = f"{os.getcwd()}/docker_data"
+        self.local_docker_root = os.path.join(PROJECT_ROOT, "docker_data")
         self.docker_available = self._check_docker_availability()
         
         if self.docker_available:
@@ -511,8 +551,7 @@ class DockerManager:
             used_percent = ((total_space_gb - free_space_gb) / total_space_gb) * 100
             
             if used_percent > 85:
-                current_dir = os.getcwd()
-                parent_dir = os.path.dirname(current_dir)
+                parent_dir = os.path.dirname(PROJECT_ROOT)
                 suggested_docker_root = os.path.join(parent_dir, "docker")
                 
                 print(f"⚠️  WARNING: System disk is {used_percent:.1f}% full ({free_space_gb:.1f}GB free)")
@@ -707,15 +746,15 @@ class DockerManager:
             
             # Clean up local Docker storage temp files and all mount directories
             try:
-                # Clean Docker data directories completely
+                # Clean Docker data directories completely (use PROJECT_ROOT for consistency)
                 docker_cleanup_dirs = [
                     f"{self.local_docker_root}/tmp",
-                    f"{os.getcwd()}/docker_data/tmp", 
-                    f"{os.getcwd()}/docker_data/app_tmp"
+                    os.path.join(PROJECT_ROOT, "docker_data/tmp"),
+                    os.path.join(PROJECT_ROOT, "docker_data/app_tmp"),
                 ]
-                
+
                 # Clean individual client directories in docker_data/app_tmp/client_*/
-                app_tmp_dir = f"{os.getcwd()}/docker_data/app_tmp"
+                app_tmp_dir = os.path.join(PROJECT_ROOT, "docker_data/app_tmp")
                 if os.path.exists(app_tmp_dir):
                     try:
                         for item in os.listdir(app_tmp_dir):
@@ -873,28 +912,18 @@ class DockerManager:
         if not self.docker_available:
             print("⚠️  Docker not available, skipping image check")
             return False
-        
+
         print("🔍 Checking Docker image status...")
-        
+
         # First check if images exist
         if self.check_required_images():
             return True
-        
-        # Images are incomplete, ask user if auto-build should proceed
-        print("\n🤔 Auto-build missing Docker images?")
+
+        # Images are incomplete, auto-build without confirmation
+        print("\n🔨 Missing Docker images detected, starting auto-build...")
         print("   This may take 5-10 minutes...")
-        
-        # In automated environment, build directly without user confirmation
-        if os.getenv('CI') or os.getenv('AUTOMATED_BUILD'):
-            user_choice = 'y'
-        else:
-            user_choice = input("   Enter [y/N]: ").lower().strip()
-        
-        if user_choice in ['y', 'yes']:
-            return self.build_required_images()
-        else:
-            print("⚠️  User canceled auto-build, will use non-Docker mode")
-            return False
+
+        return self.build_required_images()
 
 # ============================================================================
 # 📊 Logging Setup
@@ -923,12 +952,13 @@ def setup_logging():
 @ray.remote
 class FallbackFederatedScopeServer:
     """Fallback FederatedScope server Actor (non-Docker mode)"""
-    
-    def __init__(self, config: Dict[str, Any], gpu_id: Optional[int] = None):
+
+    def __init__(self, config: Dict[str, Any], use_gpu: bool = False):
         self.config = config
-        self.gpu_id = gpu_id
+        self.use_gpu = use_gpu
         self.process = None
-        self.node_ip = ray.util.get_node_ip_address()
+        # Use public IP for cross-region communication
+        self.node_ip = get_public_ip()
         self.server_port = None
         
     def start(self) -> Tuple[str, int]:
@@ -962,8 +992,11 @@ class FallbackFederatedScopeServer:
             # Set environment variables (simple way as in original version)
             env = os.environ.copy()
             env['PYTHONPATH'] = '.'
-            if self.gpu_id is not None:
-                env['CUDA_VISIBLE_DEVICES'] = str(self.gpu_id)
+            if self.use_gpu:
+                # Get GPU IDs assigned by Ray
+                ray_gpu_ids = ray.get_gpu_ids()
+                if ray_gpu_ids:
+                    env['CUDA_VISIBLE_DEVICES'] = str(int(ray_gpu_ids[0]))
             
             # Start process (using original version approach, including log redirection)
             cmd = [sys.executable, 'federatedscope/main.py', '--cfg', config_path]
@@ -1002,8 +1035,8 @@ class FallbackFederatedScopeServer:
 @ray.remote
 class FallbackFederatedScopeClient:
     """Fallback FederatedScope client Actor (non-Docker mode)"""
-    
-    def __init__(self, client_id: int, config: Dict[str, Any], 
+
+    def __init__(self, client_id: int, config: Dict[str, Any],
                  server_ip: str, server_port: int, device_profile: EdgeDeviceProfile):
         self.client_id = client_id
         self.config = config.copy()
@@ -1011,7 +1044,8 @@ class FallbackFederatedScopeClient:
         self.server_port = server_port
         self.device_profile = device_profile
         self.process = None
-        self.node_ip = ray.util.get_node_ip_address()
+        # Use public IP for cross-region communication
+        self.node_ip = get_public_ip()
         self.client_port = None
         
     def start(self) -> bool:
@@ -1029,9 +1063,9 @@ class FallbackFederatedScopeClient:
         self.config['distribute']['client_host'] = self.node_ip
         self.config['distribute']['client_port'] = self.client_port
         self.config['distribute']['data_idx'] = self.client_id
-        
-        # Client-specific seed
-        self.config['seed'] = 12345 + self.client_id
+
+        # Client-specific seed (base seed + client_id for reproducibility with different data splits)
+        self.config['seed'] = CONFIG.SEED + self.client_id
         
         # GPU mode configuration - all clients use GPU (fractional allocation)
         self.config['use_gpu'] = True
@@ -1099,29 +1133,25 @@ class FallbackFederatedScopeClient:
 @ray.remote
 class DockerFederatedScopeServer:
     """Dockerized FederatedScope Server Actor"""
-    
-    def __init__(self, config: Dict[str, Any], gpu_id: Optional[int] = None):
+
+    def __init__(self, config: Dict[str, Any], use_gpu: bool = False):
         self.config = config
-        self.gpu_id = gpu_id
+        self.use_gpu = use_gpu
         self.container = None
         self.docker_client = docker.from_env()
-        self.node_ip = ray.util.get_node_ip_address()
+        # Use public IP for cross-region communication
+        self.node_ip = get_public_ip()
         self.server_port = None
         self.container_name = "fl_server"
         
     def _get_absolute_path(self, path: str) -> str:
-        """Safely get absolute path, handling working directory issues in Ray Actor"""
-        try:
-            # If path is already absolute, return directly
-            if os.path.isabs(path):
-                return path
-            # Try to get absolute path
-            return os.path.abspath(path)
-        except (OSError, FileNotFoundError):
-            # If current working directory doesn't exist, use fixed base directory
-            base_dir = "/mnt/g/FLtorrent_combine/FederatedScope-master"
-            return os.path.join(base_dir, path)
-    
+        """Map relative paths to /home/ubuntu/FLTorrent on all Ray nodes."""
+        # If already absolute, return directly
+        if os.path.isabs(path):
+            return path
+        # Otherwise map to PROJECT_ROOT
+        return os.path.join(PROJECT_ROOT, path)
+
     def start(self) -> Tuple[str, int]:
         """Start Docker server container"""
         # Dynamically allocate port
@@ -1138,23 +1168,22 @@ class DockerFederatedScopeServer:
         self.config['distribute']['server_host'] = f"{container_bind_ip}|{external_access_ip}|{external_access_port}"
         self.config['distribute']['server_port'] = 50051  # Container internal port (keep integer type)
         
-        if self.gpu_id is not None:
-            self.config['device'] = 0  # Container internal GPU ID
+        if self.use_gpu:
+            self.config['device'] = 0  # Container internal GPU ID (always 0 inside container)
             self.config['use_gpu'] = True
         
-        # Prepare configuration file
-        config_dir = f"{CONFIG.OUTPUT_DIR}/configs"
+        # === Use absolute paths under PROJECT_ROOT for consistency across all Ray nodes ===
+        config_dir = self._get_absolute_path(f"{CONFIG.OUTPUT_DIR}/configs")
         os.makedirs(config_dir, exist_ok=True)
-        config_path = f"{config_dir}/server.yaml"
-        
+        config_path = os.path.join(config_dir, "server.yaml")
+
         with open(config_path, 'w') as f:
             yaml.safe_dump(self.config, f)
-        
-        # Prepare log directory - use CONFIG.LOG_DIR to ensure path consistency
-        log_dir = CONFIG.LOG_DIR  # Use unified log directory
+
+        log_dir = self._get_absolute_path(CONFIG.LOG_DIR)
         os.makedirs(log_dir, exist_ok=True)
-        
-        server_output_dir = f"{CONFIG.OUTPUT_DIR}/server_output"
+
+        server_output_dir = self._get_absolute_path(f"{CONFIG.OUTPUT_DIR}/server_output")
         os.makedirs(server_output_dir, exist_ok=True)
         
         # Docker container configuration with ultra-high concurrency optimizations
@@ -1173,17 +1202,17 @@ class DockerFederatedScopeServer:
                 "PYTHONPATH": "/app"
             },
             
-            # Volume mounts - fix path issues in Ray Actor, use local storage
+            # Volume mounts - use PROJECT_ROOT for consistent paths across all Ray nodes
             "volumes": {
                 self._get_absolute_path(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
                 self._get_absolute_path(server_output_dir): {"bind": "/app/output", "mode": "rw"},  # Mount server output directory
                 self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
                 self._get_absolute_path("data"): {"bind": "/app/data", "mode": "rw"},
-                f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"},
-                f"{os.getcwd()}/docker_data/app_tmp": {"bind": "/app/tmp", "mode": "rw"},  # Mount for chunk databases
-                f"{os.getcwd()}/federatedscope": {"bind": "/app/federatedscope", "mode": "rw"},  # 🚀 Mount local source code
-                f"{os.getcwd()}/materials": {"bind": "/app/materials", "mode": "ro"},  # Mount materials directory
-                f"{os.getcwd()}/scripts": {"bind": "/app/scripts", "mode": "ro"}  # Mount scripts directory
+                os.path.join(PROJECT_ROOT, "docker_data/tmp"): {"bind": "/tmp", "mode": "rw"},
+                os.path.join(PROJECT_ROOT, "docker_data/app_tmp"): {"bind": "/app/tmp", "mode": "rw"},  # Mount for chunk databases
+                os.path.join(PROJECT_ROOT, "federatedscope"): {"bind": "/app/federatedscope", "mode": "rw"},  # 🚀 Mount local source code
+                os.path.join(PROJECT_ROOT, "materials"): {"bind": "/app/materials", "mode": "ro"},  # Mount materials directory
+                os.path.join(PROJECT_ROOT, "scripts"): {"bind": "/app/scripts", "mode": "ro"},  # Mount scripts directory
             },
             
             # Container-safe network optimizations (removing restricted sysctls)
@@ -1217,11 +1246,15 @@ class DockerFederatedScopeServer:
             "command": ["sh", "-c", "cd /app && PYTHONPATH=/app python federatedscope/main.py --cfg /app/config.yaml > /app/logs/server.log 2>&1"]
         }
         
-        # GPU support
-        if self.gpu_id is not None:
-            container_config["device_requests"] = [
-                docker.types.DeviceRequest(device_ids=[str(self.gpu_id)], capabilities=[['gpu']])
-            ]
+        # GPU support - Use Ray's GPU allocation for correct local GPU ID
+        if self.use_gpu:
+            ray_gpu_ids = ray.get_gpu_ids()
+            if ray_gpu_ids:
+                local_gpu_id = int(ray_gpu_ids[0])
+                container_config["device_requests"] = [
+                    docker.types.DeviceRequest(device_ids=[str(local_gpu_id)], capabilities=[['gpu']])
+                ]
+                print(f"🎮 Server: Using GPU {local_gpu_id} (Ray assigned: {ray_gpu_ids})")
         
         try:
             # Start container
@@ -1244,7 +1277,7 @@ class DockerFederatedScopeServer:
                 "container_id": self.container.id[:12], 
                 "node_ip": self.node_ip,
                 "server_port": self.server_port,
-                "gpu_id": self.gpu_id,
+                "use_gpu": self.use_gpu,
                 "container_name": self.container_name
             }
         except Exception as e:
@@ -1261,35 +1294,31 @@ class DockerFederatedScopeServer:
 @ray.remote
 class DockerFederatedScopeClient:
     """Dockerized FederatedScope Client Actor"""
-    
-    def __init__(self, client_id: int, config: Dict[str, Any], 
+
+    def __init__(self, client_id: int, config: Dict[str, Any],
                  server_ip: str, server_port: int, device_profile: EdgeDeviceProfile,
-                 gpu_id: Optional[int] = None):
+                 use_gpu: bool = False):
         self.client_id = client_id
         self.config = config.copy()
         self.server_ip = server_ip
         self.server_port = server_port
         self.device_profile = device_profile
-        self.gpu_id = gpu_id  # Save assigned GPU ID
+        self.use_gpu = use_gpu  # Flag indicating whether to use GPU
         self.container = None
         self.docker_client = docker.from_env()
-        self.node_ip = ray.util.get_node_ip_address()
+        # Use public IP for cross-region communication
+        self.node_ip = get_public_ip()
         self.client_port = None
         self.container_name = f"fl_client_{client_id}"
         
     def _get_absolute_path(self, path: str) -> str:
-        """Safely get absolute path, handling working directory issues in Ray Actor"""
-        try:
-            # If path is already absolute, return directly
-            if os.path.isabs(path):
-                return path
-            # Try to get absolute path
-            return os.path.abspath(path)
-        except (OSError, FileNotFoundError):
-            # If current working directory doesn't exist, use fixed base directory
-            base_dir = "/mnt/g/FLtorrent_combine/FederatedScope-master"
-            return os.path.join(base_dir, path)
-    
+        """Map relative paths to /home/ubuntu/FLTorrent on all Ray nodes."""
+        # If already absolute, return directly
+        if os.path.isabs(path):
+            return path
+        # Otherwise map to PROJECT_ROOT
+        return os.path.join(PROJECT_ROOT, path)
+
     def start(self) -> bool:
         """Start Docker client container"""
         # Dynamically allocate port
@@ -1312,9 +1341,9 @@ class DockerFederatedScopeClient:
         self.config['distribute']['client_host'] = f"{container_bind_ip}|{external_access_ip}|{external_access_port}"
         self.config['distribute']['client_port'] = 50052  # Container internal port (keep integer type)
         self.config['distribute']['data_idx'] = self.client_id
-        
-        # Client-specific seed
-        self.config['seed'] = 12345 + self.client_id
+
+        # Client-specific seed (base seed + client_id for reproducibility with different data splits)
+        self.config['seed'] = CONFIG.SEED + self.client_id
         
         # 🎮 GPU configuration: based on Ray resource allocation, not container detection
         # Cannot detect CUDA before Docker container startup, should decide based on Ray GPU allocation
@@ -1322,21 +1351,21 @@ class DockerFederatedScopeClient:
         self.config['device'] = 0  # Container default use GPU 0 (if available)
         self.config['use_gpu'] = True  # Temporary setting, will be re-detected inside container
         
-        # Client output directory
-        self.config['outdir'] = f"/app/output"
-        
-        # Prepare configuration and output directories
-        config_dir = f"{CONFIG.OUTPUT_DIR}/configs"
-        output_dir = f"{CONFIG.OUTPUT_DIR}/client_{self.client_id}_output"
-        log_dir = CONFIG.LOG_DIR  # Use unified log directory, keep consistent with host
-        data_dir = "data"
-        
+        # Client output directory inside container
+        self.config['outdir'] = "/app/output"
+
+        # === Use absolute paths under PROJECT_ROOT for consistency across all Ray nodes ===
+        config_dir = self._get_absolute_path(f"{CONFIG.OUTPUT_DIR}/configs")
+        output_dir = self._get_absolute_path(f"{CONFIG.OUTPUT_DIR}/client_{self.client_id}_output")
+        log_dir = self._get_absolute_path(CONFIG.LOG_DIR)
+        data_dir = self._get_absolute_path(CONFIG.DATA_ROOT)
+
         os.makedirs(config_dir, exist_ok=True)
-        os.makedirs(output_dir, exist_ok=True) 
+        os.makedirs(output_dir, exist_ok=True)
         os.makedirs(log_dir, exist_ok=True)
         os.makedirs(data_dir, exist_ok=True)
-        
-        config_path = f"{config_dir}/client_{self.client_id}.yaml"
+
+        config_path = os.path.join(config_dir, f"client_{self.client_id}.yaml")
         with open(config_path, 'w') as f:
             yaml.safe_dump(self.config, f)
         
@@ -1388,17 +1417,17 @@ class DockerFederatedScopeClient:
                 "PYTHONPATH": "/app"
             },
             
-            # Volume mounts - fix path issues in Ray Actor, use local storage
+            # Volume mounts - use PROJECT_ROOT for consistent paths across all Ray nodes
             "volumes": {
                 self._get_absolute_path(config_path): {"bind": "/app/config.yaml", "mode": "ro"},
                 self._get_absolute_path(output_dir): {"bind": "/app/output", "mode": "rw"},
                 self._get_absolute_path(log_dir): {"bind": "/app/logs", "mode": "rw"},
                 self._get_absolute_path(data_dir): {"bind": "/app/data", "mode": "rw"},
-                f"{os.getcwd()}/docker_data/tmp": {"bind": "/tmp", "mode": "rw"},
-                f"{os.getcwd()}/docker_data/app_tmp": {"bind": "/app/tmp", "mode": "rw"},  # Mount for chunk databases
-                f"{os.getcwd()}/federatedscope": {"bind": "/app/federatedscope", "mode": "rw"},  # 🚀 Mount local source code
-                f"{os.getcwd()}/materials": {"bind": "/app/materials", "mode": "ro"},  # Mount materials directory
-                f"{os.getcwd()}/scripts": {"bind": "/app/scripts", "mode": "ro"}  # Mount scripts directory
+                os.path.join(PROJECT_ROOT, "docker_data/tmp"): {"bind": "/tmp", "mode": "rw"},
+                os.path.join(PROJECT_ROOT, "docker_data/app_tmp"): {"bind": "/app/tmp", "mode": "rw"},  # Mount for chunk databases
+                os.path.join(PROJECT_ROOT, "federatedscope"): {"bind": "/app/federatedscope", "mode": "rw"},  # 🚀 Mount local source code
+                os.path.join(PROJECT_ROOT, "materials"): {"bind": "/app/materials", "mode": "ro"},  # Mount materials directory
+                os.path.join(PROJECT_ROOT, "scripts"): {"bind": "/app/scripts", "mode": "ro"},  # Mount scripts directory
             },
             
             # Container-safe network optimizations (removing restricted sysctls)
@@ -1435,15 +1464,23 @@ class DockerFederatedScopeClient:
             "command": ["sh", "-c", f"cd /app && PYTHONPATH=/app python federatedscope/main.py --cfg /app/config.yaml > /app/logs/client_{self.client_id}.log 2>&1"]
         }
         
-        # 🎮 GPU support - Use specified GPU ID for precise allocation
-        if self.gpu_id is not None:
-            # Specify specific GPU device
-            container_config["device_requests"] = [
-                docker.types.DeviceRequest(device_ids=[str(self.gpu_id)], capabilities=[['gpu']])
-            ]
-            # Set CUDA environment variable to limit visible GPUs
-            container_config["environment"]["CUDA_VISIBLE_DEVICES"] = str(self.gpu_id)
-            print(f"🎮 Client {self.client_id}: Assigned GPU {self.gpu_id}")
+        # 🎮 GPU support - Use Ray's GPU allocation for correct local GPU ID
+        if self.use_gpu:
+            # Get GPU IDs assigned by Ray to this Actor
+            ray_gpu_ids = ray.get_gpu_ids()
+            if ray_gpu_ids:
+                # Use the first GPU assigned by Ray (local device ID on this node)
+                local_gpu_id = int(ray_gpu_ids[0])
+                container_config["device_requests"] = [
+                    docker.types.DeviceRequest(device_ids=[str(local_gpu_id)], capabilities=[['gpu']])
+                ]
+                # Set CUDA environment variable to limit visible GPUs
+                container_config["environment"]["CUDA_VISIBLE_DEVICES"] = str(local_gpu_id)
+                print(f"🎮 Client {self.client_id}: Using GPU {local_gpu_id} (Ray assigned: {ray_gpu_ids})")
+            else:
+                # Ray didn't assign any GPU, fall back to CPU mode
+                container_config["environment"]["CUDA_VISIBLE_DEVICES"] = ""
+                print(f"⚠️ Client {self.client_id}: use_gpu=True but Ray assigned no GPUs, using CPU mode")
         else:
             # CPU mode
             container_config["environment"]["CUDA_VISIBLE_DEVICES"] = ""
@@ -1674,13 +1711,110 @@ def build_scheduler_config():
 
 class RayV2FederatedLearning:
     """Ray V2 Federated Learning Main Controller"""
-    
+
     def __init__(self):
         self.logger = setup_logging()
         self.server_actor = None
         self.client_actors = []
         self.server_info = None
         self.cleanup_performed = False
+        self.head_node_id = None
+        self.worker_node_ids = []
+
+    def _get_cluster_nodes(self) -> Tuple[str, List[str]]:
+        """
+        Get Ray cluster node information.
+        Returns: (head_node_id, [worker_node_ids])
+
+        The head node is identified as the node running the GCS (Global Control Store).
+        """
+        nodes = ray.nodes()
+        head_node_id = None
+        worker_node_ids = []
+
+        for node in nodes:
+            if not node["Alive"]:
+                continue
+
+            node_id = node["NodeID"]
+            # Head node typically has the GCS running on it
+            # We can identify it by checking if it's the node with the Ray dashboard or GCS
+            # A simpler heuristic: the head node is usually the first one or has specific resources
+
+            # Check node resources and metadata
+            resources = node.get("Resources", {})
+
+            # Store node info for logging
+            node_ip = node.get("NodeManagerAddress", "unknown")
+            self.logger.debug(f"Found node: {node_id[:12]}... IP: {node_ip}, Resources: {resources}")
+
+            worker_node_ids.append(node_id)
+
+        if not worker_node_ids:
+            self.logger.error("No alive nodes found in Ray cluster!")
+            return None, []
+
+        # The head node is typically the one we're running on (first connected)
+        # Get current node's ID
+        current_node_ip = ray.util.get_node_ip_address()
+
+        for node in nodes:
+            if node["Alive"] and node.get("NodeManagerAddress") == current_node_ip:
+                head_node_id = node["NodeID"]
+                break
+
+        # If we couldn't find head by IP, use the first node as head
+        if head_node_id is None:
+            head_node_id = worker_node_ids[0]
+
+        # Remove head from worker list
+        worker_node_ids = [nid for nid in worker_node_ids if nid != head_node_id]
+
+        return head_node_id, worker_node_ids
+
+    def _get_node_scheduling_strategy(self, node_id: str):
+        """
+        Create a NodeAffinitySchedulingStrategy for the given node.
+        """
+        from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+        return NodeAffinitySchedulingStrategy(
+            node_id=node_id,
+            soft=False  # Hard affinity - must run on this node
+        )
+
+    def _assign_clients_to_workers(self, num_clients: int, worker_node_ids: List[str]) -> List[Tuple[str, float]]:
+        """
+        Assign clients evenly to worker nodes.
+
+        Returns: List of (node_id, cpu_fraction) for each client
+
+        Example:
+        - 2 clients, 2 workers -> [(worker1, 1.0), (worker2, 1.0)]
+        - 2 clients, 1 worker -> [(worker1, 0.5), (worker1, 0.5)]
+        - 4 clients, 2 workers -> [(worker1, 0.5), (worker1, 0.5), (worker2, 0.5), (worker2, 0.5)]
+        """
+        if not worker_node_ids:
+            self.logger.warning("No worker nodes available, clients will run on head node")
+            return [(self.head_node_id, 1.0 / num_clients)] * num_clients
+
+        assignments = []
+        num_workers = len(worker_node_ids)
+
+        # Calculate how many clients per worker
+        clients_per_worker = num_clients / num_workers
+
+        for i in range(num_clients):
+            # Round-robin assignment to workers
+            worker_idx = i % num_workers
+            worker_node_id = worker_node_ids[worker_idx]
+
+            # CPU fraction based on how many clients share this worker
+            clients_on_this_worker = sum(1 for j in range(num_clients) if j % num_workers == worker_idx)
+            cpu_fraction = 1.0 / clients_on_this_worker
+
+            assignments.append((worker_node_id, cpu_fraction))
+
+        return assignments
         
     def _find_available_port(self, start_port: int = 8265, max_attempts: int = 50) -> int:
         """Find an available port starting from start_port"""
@@ -1709,7 +1843,18 @@ class RayV2FederatedLearning:
             ray.shutdown()
         except:
             pass  # Ignore if no cluster is running
-        
+
+        # Check if external Ray cluster address is provided
+        external_addr = os.environ.get("RAY_ADDRESS")
+        if external_addr:
+            # Connect to external Ray cluster
+            ray.init(address=external_addr, ignore_reinit_error=True)
+            resources = ray.cluster_resources()
+            self.logger.info(f"🚀 Connected to external Ray cluster: {external_addr}")
+            self.logger.info(f"   📊 Resources: {dict(resources)}")
+            return
+
+        # ---- If no external address, initialize local Ray cluster ----
         # Detect hardware resources
         num_cpus = CONFIG.RAY_MAX_CPUS or psutil.cpu_count()
         num_gpus = CONFIG.RAY_MAX_GPUS
@@ -1723,8 +1868,7 @@ class RayV2FederatedLearning:
         
         # Create new Ray cluster configuration
         # Use parent directory to avoid Unix socket path length limit (107 bytes)
-        current_dir = os.getcwd()
-        parent_dir = os.path.dirname(current_dir)
+        parent_dir = os.path.dirname(PROJECT_ROOT)
         ray_temp_dir = os.path.join(parent_dir, "ray")
         os.makedirs(ray_temp_dir, exist_ok=True)
         
@@ -1781,7 +1925,7 @@ class RayV2FederatedLearning:
         return {
             'use_gpu': use_gpu,
             'device': 0 if use_gpu else -1,  # GPU device ID or CPU mode
-            'seed': 12345,  # Will be dynamically overridden
+            'seed': CONFIG.SEED,  # Will be dynamically overridden for clients (CONFIG.SEED + client_id)
             
             'federate': {
                 'client_num': CONFIG.CLIENT_NUM,
@@ -1815,6 +1959,7 @@ class RayV2FederatedLearning:
                 'splitter': CONFIG.DATA_SPLITTER,
                 'splitter_args': [{'alpha': CONFIG.DATA_SPLIT_ALPHA}],
                 'share_test_dataset': CONFIG.DATA_SHARE_TEST_DATASET,
+                'merge_leaf_before_split': CONFIG.DATA_MERGE_LEAF_BEFORE_SPLIT,
                 'transform': [
                     ['ToTensor'],
                     ['Normalize', {'mean': CONFIG.DATA_TRANSFORM_MEAN, 'std': CONFIG.DATA_TRANSFORM_STD}]
@@ -1844,7 +1989,7 @@ class RayV2FederatedLearning:
                     'lr': CONFIG.LEARNING_RATE,
                     'type': CONFIG.OPTIMIZER,
                     'weight_decay': CONFIG.WEIGHT_DECAY,
-                    'momentum': CONFIG.OPTIMIZER_MOMENTUM    # SGD momentum parameter
+                    # 'momentum': CONFIG.OPTIMIZER_MOMENTUM    # Only for SGD, not for Adam
                 },
                 'scheduler': build_scheduler_config()
             },
@@ -1866,11 +2011,15 @@ class RayV2FederatedLearning:
                 'metrics': CONFIG.EVAL_METRICS,
                 'best_res_update_round_wise_key': CONFIG.EVAL_BEST_KEY
             },
-            
+
             'early_stop': {
                 'patience': CONFIG.EARLY_STOP_PATIENCE,
                 'delta': CONFIG.EARLY_STOP_DELTA,
                 'improve_indicator_mode': CONFIG.EARLY_STOP_MODE
+            },
+
+            'personalization': {
+                'local_param': CONFIG.PERSONALIZATION_LOCAL_PARAM  # FedBN: keep BN parameters local (not aggregated)
             },
             
             'topology': {
@@ -1931,103 +2080,106 @@ class RayV2FederatedLearning:
             'outdir': '/app/output'
         }
         
-    def allocate_gpu_resources(self) -> Tuple[Optional[float], List[Tuple[Optional[float], Optional[int]]]]:
-        """Dynamic GPU resource allocation with explicit GPU device assignment"""
+    def allocate_gpu_resources(self, client_node_assignments: List[Tuple[str, float]] = None,
+                                clients_per_node: Dict[str, int] = None) -> Tuple[Optional[float], List[Tuple[Optional[float], Optional[int]]]]:
+        """
+        Dynamic GPU resource allocation with per-node constraints.
+
+        Key insight: GPU allocation must respect per-node limits. If a node has 1 GPU and 9 clients,
+        each client can only get 1/9 = 0.111 GPU, not the global average of 6/50 = 0.12 GPU.
+
+        Args:
+            client_node_assignments: List of (node_id, _) tuples for each client
+            clients_per_node: Dict mapping node_id to number of clients on that node
+        """
         cluster_resources = ray.cluster_resources()
         available_gpus = float(cluster_resources.get('GPU', 0))
         num_physical_gpus = int(available_gpus)  # Number of physical GPUs
-        
+
         if available_gpus == 0:
             self.logger.warning("⚠️ No GPU detected, all nodes use CPU mode")
             return None, [(None, None)] * CONFIG.CLIENT_NUM
-        
+
         # 🖥️ Server fixed to use CPU (no GPU allocation)
-        server_gpu = None
-        
-        # 🎮 Define GPU resource allocation ratios corresponding to device performance
-        device_gpu_ratios = CONFIG.DEVICE_GPU_RATIOS
-        
-        # Calculate total GPU needed by all clients
-        total_required_gpu = 0.0
-        client_requirements = []
-        
-        # Only use device types with ratio>0 for GPU allocation
-        active_device_types = [dt for dt, ratio in CONFIG.DEVICE_DISTRIBUTION.items() if ratio > 0]
-        if not active_device_types:
-            active_device_types = ["smartphone_high"]  # Default device type
-            
-        for i in range(CONFIG.CLIENT_NUM):
-            device_type = active_device_types[i % len(active_device_types)]
-            required_gpu = device_gpu_ratios.get(device_type, 0.3)  # Default 0.3
-            client_requirements.append((device_type, required_gpu))
-            total_required_gpu += required_gpu
-        
-        # 🎯 Smart scaling: always maintain 90-100% GPU utilization
-        target_utilization = CONFIG.TARGET_UTILIZATION  # Target GPU utilization (from CONFIG)
-        target_gpu_usage = available_gpus * target_utilization
-        scaling_factor = target_gpu_usage / total_required_gpu
-        
-        if scaling_factor < 1.0:
-            self.logger.warning(f"⚠️ GPU demand ({total_required_gpu:.2f}) exceeds target usage ({target_gpu_usage:.2f}), scaling down ({scaling_factor:.2f})")
-        elif scaling_factor > 1.0:
-            self.logger.info(f"🚀 GPU sufficient ({total_required_gpu:.2f} < {target_gpu_usage:.2f}), scaling up ({scaling_factor:.2f}) to improve performance")
-        else:
-            self.logger.info(f"⚡ GPU allocation optimized, reaching target utilization ({target_utilization*100:.0f}%)")
-        
-        # 🧠 Smart GPU grouping allocation: Group clients by GPU count
-        clients_per_gpu = CONFIG.CLIENT_NUM // num_physical_gpus
-        remainder_clients = CONFIG.CLIENT_NUM % num_physical_gpus
-        
-        # Allocate GPU resources to each client and specify GPU ID
+        server_gpu = False  # use_gpu flag for server
+
+        # 🎮 Get per-node GPU resources
+        node_gpu_resources = {}
+        for node in ray.nodes():
+            if node['Alive']:
+                node_id = node['NodeID']
+                node_gpu = node['Resources'].get('GPU', 0)
+                node_gpu_resources[node_id] = node_gpu
+
+        # 🎯 Calculate max GPU per client for each node (considering node-level constraints)
+        # This ensures that total GPU allocation on each node doesn't exceed node's GPU
+        node_gpu_per_client = {}
+        if clients_per_node:
+            for node_id, num_clients in clients_per_node.items():
+                node_gpu = node_gpu_resources.get(node_id, 0)
+                if node_gpu > 0 and num_clients > 0:
+                    # Leave small margin (95%) to avoid floating point issues
+                    max_gpu_per_client = (node_gpu * CONFIG.TARGET_UTILIZATION) / num_clients
+                    node_gpu_per_client[node_id] = max_gpu_per_client
+                    self.logger.info(f"   Node {node_id[:12]}...: {node_gpu} GPU, {num_clients} clients -> max {max_gpu_per_client:.4f} GPU/client")
+
+        # Allocate GPU resources to each client based on their assigned node
         client_gpu_assignments = []
         actual_total_gpu = 0.0
-        
-        for i, (device_type, required_gpu) in enumerate(client_requirements):
-            allocated_gpu = required_gpu * scaling_factor
-            
+
+        for i in range(CONFIG.CLIENT_NUM):
+            # Get the node this client is assigned to
+            if client_node_assignments and i < len(client_node_assignments):
+                target_node_id = client_node_assignments[i][0]
+                max_gpu = node_gpu_per_client.get(target_node_id, 0)
+            else:
+                # Fallback: use global average if no node assignment info
+                max_gpu = (available_gpus * CONFIG.TARGET_UTILIZATION) / CONFIG.CLIENT_NUM
+
+            # Round to 4 decimal places for precision
+            allocated_gpu = round(max_gpu, 4)
+
             # Ray constraint: GPU quantities >1 must be whole numbers
             if allocated_gpu > 1.0:
                 allocated_gpu = int(allocated_gpu)  # Round down to integer
-            else:
-                # For fractional GPU allocation, use higher precision to prevent CUDA OOM
-                # Round to 4 decimal places instead of 2 to avoid under-allocation
-                allocated_gpu = round(allocated_gpu, 4)
-            
-            # 🎯 Group allocation GPU ID: Assign to different GPUs by group
-            gpu_id = i % num_physical_gpus  # Round-robin allocation to different GPUs
-            client_gpu_assignments.append((allocated_gpu, gpu_id))
+
+            # use_gpu flag: True if any GPU is allocated
+            use_gpu = allocated_gpu > 0
+            client_gpu_assignments.append((allocated_gpu, use_gpu))
             actual_total_gpu += allocated_gpu
         
-        # Generate allocation summary with GPU grouping info
-        device_summary = {}
-        gpu_group_summary = {}
-        
-        for i, ((device_type, _), (allocated_gpu, gpu_id)) in enumerate(zip(client_requirements, client_gpu_assignments)):
-            # Device type summary
-            if device_type not in device_summary:
-                device_summary[device_type] = {'count': 0, 'total_gpu': 0.0}
-            device_summary[device_type]['count'] += 1
-            device_summary[device_type]['total_gpu'] += allocated_gpu
-            
-            # GPU group summary
-            if gpu_id not in gpu_group_summary:
-                gpu_group_summary[gpu_id] = {'client_count': 0, 'total_allocation': 0.0}
-            gpu_group_summary[gpu_id]['client_count'] += 1
-            gpu_group_summary[gpu_id]['total_allocation'] += allocated_gpu
-        
+        # Generate allocation summary
+        gpu_clients = 0
+        cpu_clients = 0
+        node_allocation_summary = {}
+
+        for i, (allocated_gpu, use_gpu) in enumerate(client_gpu_assignments):
+            # Count GPU vs CPU clients
+            if use_gpu:
+                gpu_clients += 1
+            else:
+                cpu_clients += 1
+
+            # Per-node summary
+            if client_node_assignments and i < len(client_node_assignments):
+                node_id = client_node_assignments[i][0][:12]
+                if node_id not in node_allocation_summary:
+                    node_allocation_summary[node_id] = {'count': 0, 'total_gpu': 0.0}
+                node_allocation_summary[node_id]['count'] += 1
+                node_allocation_summary[node_id]['total_gpu'] += allocated_gpu
+
         gpu_summary = {
             "total_available_gpus": available_gpus,
             "total_allocated_gpus": round(actual_total_gpu, 4),
             "utilization_rate": f"{(actual_total_gpu/available_gpus)*100:.2f}%",
             "server": "CPU only",
-            "scaling_factor": round(scaling_factor, 6),
-            "device_allocation": device_summary,
-            "gpu_grouping": {f"GPU_{gid}": f"{info['client_count']} clients, {info['total_allocation']:.3f} total" 
-                           for gid, info in gpu_group_summary.items()}
+            "per_node_allocation": node_allocation_summary,
+            "gpu_clients": gpu_clients,
+            "cpu_clients": cpu_clients
         }
-        
-        self.logger.info(f"🎯 Smart GPU group allocation: {gpu_summary}")
-        self.logger.info(f"📋 GPU grouping details: {gpu_summary['gpu_grouping']}")
+
+        self.logger.info(f"🎯 GPU allocation summary: {gpu_summary}")
+        self.logger.info(f"📋 Client distribution: {gpu_clients} GPU clients, {cpu_clients} CPU clients")
         
         return server_gpu, client_gpu_assignments
     
@@ -2095,20 +2247,44 @@ class RayV2FederatedLearning:
         
         return variant
     
-    def _get_ray_resources_for_device(self, device_profile: EdgeDeviceProfile) -> Dict[str, Any]:
-        """Get Ray resource allocation based on device type"""
-        # Calculate fractional CPU to fit within available cluster resources
-        cluster_resources = ray.cluster_resources()
-        available_cpus = cluster_resources.get('CPU', 64)  # Default to 64 if unknown
-        
+    def _get_node_resources(self, node_id: str) -> Dict[str, float]:
+        """Get resources available on a specific node"""
+        nodes = ray.nodes()
+        for node in nodes:
+            if node["NodeID"] == node_id and node["Alive"]:
+                return node.get("Resources", {})
+        return {}
+
+    def _get_ray_resources_for_device(self, device_profile: EdgeDeviceProfile,
+                                       target_node_id: str = None,
+                                       clients_on_node: int = 1) -> Dict[str, Any]:
+        """
+        Get Ray resource allocation based on device type and target node.
+
+        Args:
+            device_profile: Device configuration profile
+            target_node_id: The node where this client will run (for per-node resource calculation)
+            clients_on_node: Number of clients sharing this node
+        """
+        if target_node_id:
+            # Get resources for the specific target node
+            node_resources = self._get_node_resources(target_node_id)
+            available_cpus = node_resources.get('CPU', 4)  # Default to 4 if unknown
+        else:
+            # Fallback: use cluster-wide resources (legacy behavior)
+            cluster_resources = ray.cluster_resources()
+            available_cpus = cluster_resources.get('CPU', 64)
+
         # Reserve some CPU for Ray system overhead (10%)
         usable_cpus = available_cpus * 0.9
-        cpu_per_client = usable_cpus / CONFIG.CLIENT_NUM
-        
+
+        # Calculate CPU per client based on how many clients share this node
+        cpu_per_client = usable_cpus / clients_on_node
+
         # Ensure minimum viable CPU allocation
-        cpu_per_client = max(0.1, min(cpu_per_client, 1.0))
-        
-        # Parse memory limit from device configuration  
+        cpu_per_client = max(0.1, cpu_per_client)
+
+        # Parse memory limit from device configuration
         memory_str = device_profile.memory_limit.lower()
         if memory_str.endswith('g'):
             memory_bytes = int(float(memory_str[:-1]) * 1024 * 1024 * 1024)
@@ -2116,19 +2292,19 @@ class RayV2FederatedLearning:
             memory_bytes = int(float(memory_str[:-1]) * 1024 * 1024)
         else:
             memory_bytes = 1024 * 1024 * 1024  # Default 1GB
-        
+
         # Use calculated fractional CPU for all device types
         return {"num_cpus": cpu_per_client, "memory": memory_bytes}
-    
+
     def cleanup_environment(self):
         """Clean environment"""
         if self.cleanup_performed:
             return
-            
+
         self.logger.info("🧹 Clean environment...")
-        
+
         # Stop old processes
-        subprocess.run(['pkill', '-9', '-f', 'python.*federatedscope'], 
+        subprocess.run(['pkill', '-9', '-f', 'python.*federatedscope'],
                       capture_output=True, check=False)
         
         # Clean chunk database files (both local and Docker mount points)
@@ -2154,12 +2330,12 @@ class RayV2FederatedLearning:
             
             # Clean Docker data directories - use Docker to handle permission issues
             docker_cleanup_dirs = [
-                f"{os.getcwd()}/docker_data/tmp",
-                f"{os.getcwd()}/docker_data/app_tmp"
+                os.path.join(PROJECT_ROOT, "docker_data/tmp"),
+                os.path.join(PROJECT_ROOT, "docker_data/app_tmp"),
             ]
-            
+
             # Clean individual client directories in docker_data/app_tmp/client_*/
-            app_tmp_dir = f"{os.getcwd()}/docker_data/app_tmp"
+            app_tmp_dir = os.path.join(PROJECT_ROOT, "docker_data/app_tmp")
             if os.path.exists(app_tmp_dir):
                 try:
                     for item in os.listdir(app_tmp_dir):
@@ -2195,17 +2371,18 @@ class RayV2FederatedLearning:
         except Exception as e:
             self.logger.debug(f"Failed to clean database files: {e}")
         
-        # Clean log directory
-        for log_dir in ['connection_logs', 'topology_logs', 'bittorrent_logs']:
-            subprocess.run(['rm', '-rf', log_dir], check=False)
-        
+        # Clean log directories (use PROJECT_ROOT for consistency)
+        for log_dir_name in ['connection_logs', 'topology_logs', 'bittorrent_logs']:
+            subprocess.run(['rm', '-rf', os.path.join(PROJECT_ROOT, log_dir_name)], check=False)
+
         # Clean previous Ray temp directory
-        subprocess.run(['rm', '-rf', f"{os.getcwd()}/tmp/ray"], check=False)
-        
+        ray_tmp = os.path.join(PROJECT_ROOT, "tmp/ray")
+        subprocess.run(['rm', '-rf', ray_tmp], check=False)
+
         # Create output and Ray temporary directories
-        os.makedirs(CONFIG.OUTPUT_DIR, exist_ok=True)
-        os.makedirs(CONFIG.LOG_DIR, exist_ok=True)
-        os.makedirs(f"{os.getcwd()}/tmp/ray", exist_ok=True)
+        os.makedirs(os.path.join(PROJECT_ROOT, CONFIG.OUTPUT_DIR), exist_ok=True)
+        os.makedirs(os.path.join(PROJECT_ROOT, CONFIG.LOG_DIR), exist_ok=True)
+        os.makedirs(ray_tmp, exist_ok=True)
         
         time.sleep(1)
         self.cleanup_performed = True
@@ -2262,22 +2439,53 @@ class RayV2FederatedLearning:
         
         # Initialize Ray
         self.initialize_ray_cluster()
-        
-        # GPU resource allocation
-        server_gpu, client_gpu_assignments = self.allocate_gpu_resources()
-        
+
+        # === 🌐 Get cluster node information for distributed scheduling ===
+        self.head_node_id, self.worker_node_ids = self._get_cluster_nodes()
+
+        # Log cluster topology
+        self.logger.info(f"🌐 Ray Cluster Topology:")
+        self.logger.info(f"   📍 Head node: {self.head_node_id[:12]}... (Server will run here)")
+        if self.worker_node_ids:
+            self.logger.info(f"   📍 Worker nodes: {len(self.worker_node_ids)} available")
+            for i, wid in enumerate(self.worker_node_ids):
+                self.logger.info(f"      Worker {i+1}: {wid[:12]}...")
+        else:
+            self.logger.warning(f"   ⚠️ No worker nodes found! Clients will run on head node (not recommended)")
+
+        # === 🎯 Calculate client-to-worker assignments FIRST (needed for GPU allocation) ===
+        client_node_assignments = self._assign_clients_to_workers(CONFIG.CLIENT_NUM, self.worker_node_ids)
+
+        # Count how many clients are on each node (for per-node resource calculation)
+        clients_per_node = {}
+        for node_id, _ in client_node_assignments:
+            clients_per_node[node_id] = clients_per_node.get(node_id, 0) + 1
+
+        # GPU resource allocation (now with node assignment info for proper per-node limits)
+        server_gpu, client_gpu_assignments = self.allocate_gpu_resources(client_node_assignments, clients_per_node)
+
         # Generate configuration
         base_config = self.generate_base_config()
-        
-        # 🖥️ Start server (fixed to use CPU resources)
+
+        # === 🖥️ Start server on HEAD node (fixed to use CPU resources) ===
         server_config = base_config.copy()
         server_config['distribute']['role'] = 'server'
         server_config['use_gpu'] = False  # Server forced to use CPU
-        
+
+        # 🚀 Server 不需要加载数据集（除非 make_global_eval=True）
+        # 这避免了 server 加载整个数据集导致 OOM
+        if not CONFIG.FEDERATE_MAKE_GLOBAL_EVAL:
+            server_config['data'] = server_config['data'].copy()  # 避免影响 base_config
+            server_config['data']['type'] = ''  # 空字符串跳过数据加载
+
         # Server resource configuration: CPU only, no GPU
         server_resources = {"num_cpus": 2}
-        # Note: server_gpu is always None, server does not use GPU
-        
+
+        # 🎯 Add scheduling strategy to pin Server to head node
+        if self.head_node_id:
+            server_resources["scheduling_strategy"] = self._get_node_scheduling_strategy(self.head_node_id)
+            self.logger.info(f"📍 Server scheduled to head node: {self.head_node_id[:12]}...")
+
         # Choose Actor type based on Docker availability
         if CONFIG.USE_DOCKER:
             self.server_actor = DockerFederatedScopeServer.options(**server_resources).remote(
@@ -2287,57 +2495,78 @@ class RayV2FederatedLearning:
             self.server_actor = FallbackFederatedScopeServer.options(**server_resources).remote(
                 server_config, server_gpu
             )
-        
+
         server_ip, server_port = ray.get(self.server_actor.start.remote())
         self.server_info = (server_ip, server_port)
-        
+
         self.logger.info(f"✅ Server started: {server_ip}:{server_port}")
         time.sleep(15)
-        
+
         # Create diverse edge devices
         device_assignments = self._create_diverse_device_fleet(CONFIG.CLIENT_NUM)
-        
-        # Start Docker clients
+
+        self.logger.info(f"📊 Client distribution plan:")
+        for i, (node_id, _) in enumerate(client_node_assignments):
+            node_type = "head" if node_id == self.head_node_id else "worker"
+            node_resources = self._get_node_resources(node_id)
+            node_cpus = node_resources.get('CPU', 'unknown')
+            clients_on_this_node = clients_per_node[node_id]
+            self.logger.info(f"   Client {i+1} -> {node_type} ({node_id[:12]}...), "
+                           f"Node CPUs: {node_cpus}, Clients on node: {clients_on_this_node}")
+
+        # Start Docker clients with node affinity scheduling
         successful_clients = 0
         for i, device_profile in enumerate(device_assignments):
             client_id = i + 1
-            
+
             client_config = base_config.copy()
             client_config['distribute']['role'] = 'client'
-            
-            # Ray resource allocation (based on device type and GPU allocation)
-            client_resources = self._get_ray_resources_for_device(device_profile)
-            
-            # 🎮 Smart GPU group allocation: Get GPU resources and GPU ID
-            assigned_gpu_id = None
+
+            # 🎯 Get target node and calculate resources based on that node
+            target_node_id, _ = client_node_assignments[i]
+            clients_on_this_node = clients_per_node[target_node_id]
+
+            # Ray resource allocation (based on device type AND target node resources)
+            client_resources = self._get_ray_resources_for_device(
+                device_profile,
+                target_node_id=target_node_id,
+                clients_on_node=clients_on_this_node
+            )
+
+            # 🎮 GPU allocation: Get GPU resources and use_gpu flag
+            use_gpu = False
             if i < len(client_gpu_assignments):
-                client_gpu_alloc, client_gpu_id = client_gpu_assignments[i]
+                client_gpu_alloc, client_use_gpu = client_gpu_assignments[i]
                 client_resources["num_gpus"] = client_gpu_alloc  # Fractional GPU allocation
-                assigned_gpu_id = client_gpu_id  # Save GPU ID for Docker configuration
-            
+                use_gpu = client_use_gpu  # Flag for Docker GPU configuration
+
+            # 🎯 Add scheduling strategy to pin Client to assigned worker node
+            client_resources["scheduling_strategy"] = self._get_node_scheduling_strategy(target_node_id)
+            node_type = "head" if target_node_id == self.head_node_id else "worker"
+
             try:
                 # Choose Actor type based on Docker availability
                 if CONFIG.USE_DOCKER:
                     client_actor = DockerFederatedScopeClient.options(**client_resources).remote(
-                        client_id, client_config, server_ip, server_port, device_profile, assigned_gpu_id
+                        client_id, client_config, server_ip, server_port, device_profile, use_gpu
                     )
                 else:
                     client_actor = FallbackFederatedScopeClient.options(**client_resources).remote(
                         client_id, client_config, server_ip, server_port, device_profile
                     )
-                
+
                 self.client_actors.append(client_actor)
-                
+
                 # Start client container
                 start_result = ray.get(client_actor.start.remote())
                 if start_result:
                     successful_clients += 1
-                    self.logger.info(f"✅ Client {client_id} ({device_profile.device_type}) started successfully")
+                    self.logger.info(f"✅ Client {client_id} ({device_profile.device_type}) started on {node_type} node ({target_node_id[:12]}...)")
                 else:
-                    self.logger.error(f"❌ Client {client_id} ({device_profile.device_type}) failed to start")
-                    
+                    self.logger.error(f"❌ Client {client_id} ({device_profile.device_type}) failed to start on {node_type} node")
+
                 time.sleep(3)  # Give Docker containers more startup time
-                
+
             except Exception as e:
                 self.logger.error(f"❌ Client {client_id} creation failed: {e}")
         
@@ -2365,12 +2594,28 @@ class RayV2FederatedLearning:
                 self.logger.info("⏰ Monitoring time ended")
                 break
             
-            # Check status
-            server_status = ray.get(self.server_actor.get_status.remote())
-            client_statuses = ray.get([
-                actor.get_status.remote() for actor in self.client_actors
-            ])
-            
+            # Check status with retry for network resilience
+            max_retries = 3
+            status_ok = False
+            for retry in range(max_retries):
+                try:
+                    server_status = ray.get(self.server_actor.get_status.remote(), timeout=30)
+                    client_statuses = ray.get([
+                        actor.get_status.remote() for actor in self.client_actors
+                    ], timeout=60)
+                    status_ok = True
+                    break  # Success, exit retry loop
+                except (ray.exceptions.ActorUnavailableError, ray.exceptions.RayTaskError, ray.exceptions.GetTimeoutError) as e:
+                    if retry < max_retries - 1:
+                        self.logger.warning(f"⚠️ Status check failed (attempt {retry+1}/{max_retries}): {type(e).__name__}, retrying in 10s...")
+                        time.sleep(10)
+                    else:
+                        self.logger.warning(f"⚠️ Status check failed after {max_retries} attempts, skipping this cycle...")
+
+            if not status_ok:
+                time.sleep(30)
+                continue  # Skip this monitoring cycle
+
             running_clients = sum(1 for s in client_statuses if s["status"] == "running")
             
             # Resource usage
@@ -2385,10 +2630,16 @@ class RayV2FederatedLearning:
             # Count running clients (all clients use fractional GPU)
             total_clients = sum(1 for s in client_statuses if s["status"] == "running")
             
+            # Build GPU usage string (avoid division by zero when no GPUs available)
+            if total_gpus > 0:
+                gpu_usage_str = f"Ray GPU usage: {gpu_used:.1f}/{total_gpus:.1f} ({(gpu_used/total_gpus)*100:.1f}%)"
+            else:
+                gpu_usage_str = "Ray GPU usage: N/A (no GPUs)"
+
             self.logger.info(
                 f"⏰ {elapsed}s | Server: {server_status['status']} (CPU) | "
                 f"Clients: {total_clients} nodes (fractional GPU) | "
-                f"Ray GPU usage: {gpu_used:.1f}/{total_gpus:.1f} ({(gpu_used/total_gpus)*100:.1f}%)"
+                f"{gpu_usage_str}"
             )
             
             # Check training completion

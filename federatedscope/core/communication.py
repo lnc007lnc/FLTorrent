@@ -225,10 +225,10 @@ class gRPCCommManager(object):
             # 🚀 Apply high-performance client options consistent with server
             client_options = [
                 ('grpc.enable_http_proxy', 0),
-                
+
                 ('grpc.keepalive_time_ms', 120000),          # 120s
                 ('grpc.keepalive_timeout_ms', 20000),        # 20s
-                ('grpc.keepalive_permit_without_calls', 0),  
+                ('grpc.keepalive_permit_without_calls', 0),
                 ('grpc.http2.min_time_between_pings_ms', 60000),
                 ('grpc.http2.max_pings_without_data', 1),
 
@@ -239,37 +239,64 @@ class gRPCCommManager(object):
 
                 ('grpc.use_local_subchannel_pool', 1),
             ]
-            
+
             channel = grpc.insecure_channel(receiver_address,
                                             compression=self.comp_method,
                                             options=client_options)
             stub = gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub(channel)
             return stub, channel
 
-        stub, channel = _create_stub(receiver_address)
+        # 🚀 RETRY LOGIC: Add retry with exponential backoff for network resilience
+        import time
+        max_retries = 3
+        base_delay = 1.0  # Initial delay in seconds
+
         request = message.transform(to_list=True)
-        try:
-            stub.sendMessage(request)
-            # Notify connection monitor about successful send (if available)
-            if hasattr(self, 'connection_monitor') and self.connection_monitor:
-                # This indicates connection is active
-                pass
-        except grpc._channel._InactiveRpcError as error:
-            logger.warning(f"Connection error to {receiver_address}: {error}")
-            # Notify connection monitor about connection failure
-            if hasattr(self, 'connection_monitor') and self.connection_monitor:
-                from federatedscope.core.connection_monitor import ConnectionEvent
-                self.connection_monitor.report_connection_lost(
-                    peer_id=message.receiver,
-                    details={
-                        'error_type': type(error).__name__,
-                        'error_message': str(error),
-                        'receiver_address': receiver_address,
-                        'message_type': message.msg_type
-                    }
-                )
-            pass
-        channel.close()
+        last_error = None
+
+        for attempt in range(max_retries):
+            stub, channel = _create_stub(receiver_address)
+            try:
+                stub.sendMessage(request)
+                # Success - close channel and return
+                channel.close()
+                return
+            except grpc._channel._InactiveRpcError as error:
+                last_error = error
+                channel.close()
+
+                # Check if error is retryable (network issues)
+                error_code = error.code() if hasattr(error, 'code') else None
+                retryable_codes = [
+                    grpc.StatusCode.UNAVAILABLE,
+                    grpc.StatusCode.DEADLINE_EXCEEDED,
+                    grpc.StatusCode.RESOURCE_EXHAUSTED,
+                ]
+
+                is_retryable = error_code in retryable_codes if error_code else True
+
+                if attempt < max_retries - 1 and is_retryable:
+                    # Exponential backoff with jitter
+                    delay = base_delay * (2 ** attempt) + (time.time() % 0.5)
+                    logger.warning(f"Connection error to {receiver_address} (attempt {attempt+1}/{max_retries}): {error_code}, retrying in {delay:.2f}s...")
+                    time.sleep(delay)
+                else:
+                    # Final attempt failed or non-retryable error
+                    logger.warning(f"Connection error to {receiver_address} after {attempt+1} attempts: {error}")
+                    # Notify connection monitor about connection failure
+                    if hasattr(self, 'connection_monitor') and self.connection_monitor:
+                        from federatedscope.core.connection_monitor import ConnectionEvent
+                        self.connection_monitor.report_connection_lost(
+                            peer_id=message.receiver,
+                            details={
+                                'error_type': type(error).__name__,
+                                'error_message': str(error),
+                                'receiver_address': receiver_address,
+                                'message_type': message.msg_type,
+                                'retry_attempts': attempt + 1
+                            }
+                        )
+                    break
 
     def send(self, message):
         receiver = message.receiver

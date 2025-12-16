@@ -33,6 +33,73 @@ class RegexInverseMap:
         return str(self._items.items())
 
 
+# LEAF datasets that support merge-and-resplit functionality
+LEAF_DATASETS = ['femnist', 'celeba', 'shakespeare', 'twitter', 'subreddit', 'synthetic']
+
+
+def should_load_all_leaf_users(config):
+    """
+    Determine if all LEAF users should be loaded for merge-and-resplit.
+
+    Args:
+        config: Configuration object
+
+    Returns:
+        bool: True if should load all users, False otherwise
+    """
+    dataset_type = config.data.type.lower()
+
+    # Check if this is a LEAF dataset
+    if dataset_type not in LEAF_DATASETS:
+        return False
+
+    # Check if merge_leaf_before_split is enabled
+    if not hasattr(config.data, 'merge_leaf_before_split'):
+        return False
+
+    return config.data.merge_leaf_before_split
+
+
+def get_num_users_to_load(dataset, config):
+    """
+    Calculate how many LEAF users to load based on config.
+
+    For LEAF datasets:
+    - Merge mode (merge_leaf_before_split=True): Load ALL users
+    - Original mode (merge_leaf_before_split=False): Load min(total_users, client_num)
+
+    For non-LEAF datasets: Returns None (not applicable)
+
+    Args:
+        dataset: LEAF dataset object with len() support
+        config: Configuration object
+
+    Returns:
+        int: Number of users to load, or None if not a LEAF dataset
+    """
+    dataset_type = config.data.type.lower()
+
+    # Only applicable for LEAF datasets
+    if dataset_type not in LEAF_DATASETS:
+        return None
+
+    total_users = len(dataset)
+
+    if should_load_all_leaf_users(config):
+        # Merge mode: load ALL users for re-distribution
+        logger.info(f"🔄 LEAF merge mode enabled for '{dataset_type}': "
+                   f"Loading all {total_users} users for re-distribution into "
+                   f"{config.federate.client_num} clients")
+        return total_users
+    else:
+        # Original mode: 1 user = 1 client
+        num_users = min(total_users, config.federate.client_num) \
+                   if config.federate.client_num > 0 else total_users
+        logger.info(f"📌 LEAF original mode for '{dataset_type}': "
+                   f"Loading {num_users} users (1 user = 1 client)")
+        return num_users
+
+
 def load_dataset(config, client_cfgs=None):
     """
     Loads the dataset for the given config from branches

@@ -419,46 +419,61 @@ class StreamingChannel:
     #         return None
                 
     def _enhanced_control_response_handler(self):
-        """🚀 优化1：增强的控制消息响应处理器 - 高性能响应处理"""
+        """🚀 优化1：增强的控制消息响应处理器 - 高性能响应处理 + 断线检测"""
         logger.debug(f"[StreamChannel] 🎛️ Control pipeline response handler started for peer {self.peer_id}")
-        
+
         processed_responses = 0
         error_count = 0
         last_stats_report = time.time()
-        
+        consecutive_errors = 0  # 🚀 Track consecutive errors for connection health
+
         try:
             for response in self.control_stream:
                 if not self.is_active:
                     logger.debug(f"[StreamChannel] 🎛️ Control response handler stopping for peer {self.peer_id}")
                     break
-                
+
                 # 🚀 Optimization: Fast response processing
                 start_time = time.time()
                 try:
                     self._handle_control_response(response)
                     processed_responses += 1
                     self.last_activity_time = time.time()
-                    
+                    consecutive_errors = 0  # Reset on success
+
                     # 🚀 Performance monitoring
                     processing_time = time.time() - start_time
                     if processing_time > 0.1:  # Slow response over 100ms
                         logger.warning(f"[StreamChannel] 🐌 Slow control response processing: {processing_time:.3f}s for peer {self.peer_id}")
-                    
+
                 except Exception as e:
                     error_count += 1
+                    consecutive_errors += 1
                     logger.error(f"[StreamChannel] 🎛️ Control response processing error for peer {self.peer_id}: {e}")
                     if error_count > 10:  # Too many errors, disconnect
                         logger.error(f"[StreamChannel] 🎛️ Too many errors ({error_count}), stopping control pipeline for peer {self.peer_id}")
                         break
-                
+
                 # 🚀 Regular performance reports
                 current_time = time.time()
                 if current_time - last_stats_report > 60.0:  # Report every minute
                     logger.debug(f"[StreamChannel] 📊 Control pipeline stats for peer {self.peer_id}: {processed_responses} responses, {error_count} errors")
                     last_stats_report = current_time
-                    
+
+        except grpc.RpcError as e:
+            # 🚀 NETWORK FAILURE DETECTION: gRPC connection error
+            error_code = e.code() if hasattr(e, 'code') else None
+            logger.warning(f"[StreamChannel] 🔌 Control stream disconnected from peer {self.peer_id}: {error_code} - {e.details() if hasattr(e, 'details') else str(e)}")
+
+            # Mark channel as inactive to trigger reconnection
+            if error_code in [grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.CANCELLED, grpc.StatusCode.INTERNAL]:
+                logger.warning(f"[StreamChannel] 🔄 Marking channel to peer {self.peer_id} as inactive due to network error")
+                self.is_active = False
+
         except Exception as e:
             logger.error(f"[StreamChannel] 🎛️ Control response handler fatal error for peer {self.peer_id}: {e}")
+            # 🚀 Mark channel as potentially disconnected
+            self.is_active = False
         finally:
             logger.debug(f"[StreamChannel] 🎛️ Control response handler ended for peer {self.peer_id}: {processed_responses} responses processed, {error_count} errors")
             
@@ -956,9 +971,9 @@ class StreamingChannel:
         """Close streaming channel"""
         if not self.is_active:
             return
-            
+
         self.is_active = False
-        
+
         # Send shutdown signals to all queues
         try:
             self.request_queue.put(None)
@@ -968,24 +983,99 @@ class StreamingChannel:
             self.download_request_queue.put((shutdown_priority, None))
         except:
             pass
-        
+
         # Wait for threads to finish
         threads = [
             self.control_receiver_thread,
             self.download_sender_thread,
             self.upload_sender_thread,
         ]
-        
+
         for thread in threads:
             if thread and thread.is_alive():
                 thread.join(timeout=1.0)
-            
+
         # Close gRPC channel
         try:
             self.channel.close()
             logger.debug(f"[StreamChannel] Closed streaming to peer {self.peer_id}")
         except:
             pass
+
+    def reconnect(self, new_channel=None, new_stub=None) -> bool:
+        """
+        🚀 RECONNECT: Reconnect streaming channel after network failure
+        This method safely closes existing connection and establishes a new one.
+
+        Args:
+            new_channel: Optional pre-created gRPC channel (if None, cannot reconnect)
+            new_stub: Optional pre-created gRPC stub (if None, cannot reconnect)
+
+        Returns:
+            bool: True if reconnection successful, False otherwise
+        """
+        logger.info(f"[StreamChannel] 🔄 Attempting reconnection to peer {self.peer_id}")
+
+        # 1. Safely close existing connection
+        old_is_active = self.is_active
+        self.is_active = False
+
+        # Close old channel
+        try:
+            if self.channel:
+                self.channel.close()
+        except Exception as e:
+            logger.debug(f"[StreamChannel] Error closing old channel: {e}")
+
+        # Wait for old threads to stop (short timeout)
+        threads = [
+            getattr(self, 'control_receiver_thread', None),
+            getattr(self, 'download_sender_thread', None),
+            getattr(self, 'upload_sender_thread', None),
+        ]
+        for thread in threads:
+            if thread and thread.is_alive():
+                thread.join(timeout=0.5)
+
+        # 2. Validate new connection parameters
+        if new_channel is None or new_stub is None:
+            logger.error(f"[StreamChannel] 🔄 Cannot reconnect: missing channel or stub")
+            return False
+
+        # 3. Setup new connection
+        self.channel = new_channel
+        self.stub = new_stub
+
+        # 4. Clear old queues and create new ones
+        try:
+            # Drain old queues
+            while not self.control_request_queue.empty():
+                try:
+                    self.control_request_queue.get_nowait()
+                except:
+                    break
+            while not self.upload_request_queue.empty():
+                try:
+                    self.upload_request_queue.get_nowait()
+                except:
+                    break
+            while not self.download_request_queue.empty():
+                try:
+                    self.download_request_queue.get_nowait()
+                except:
+                    break
+        except Exception as e:
+            logger.debug(f"[StreamChannel] Error draining queues: {e}")
+
+        # 5. Restart streaming
+        try:
+            self._start_multi_streaming()
+            logger.info(f"[StreamChannel] ✅ Reconnection successful to peer {self.peer_id}")
+            return True
+        except Exception as e:
+            logger.error(f"[StreamChannel] ❌ Reconnection failed to peer {self.peer_id}: {e}")
+            self.is_active = False
+            return False
             
     def get_stats(self):
         """Get channel statistics"""
@@ -1164,14 +1254,105 @@ class StreamingChannelManager:
     def close_all_channels(self):
         """Close all streaming channels"""
         logger.debug(f"[StreamingManager] Client {self.client_id}: Closing all streaming channels")
-        
+
         for peer_id, channel in self.channels.items():
             channel.close()
-            
+
         self.channels.clear()
         self.server_stubs.clear()
-        
+
         logger.debug(f"[StreamingManager] Client {self.client_id}: All streaming channels closed")
+
+    def reconnect_channel(self, peer_id: int, host: str, port: int) -> bool:
+        """
+        🚀 RECONNECT: Reconnect a specific streaming channel after network failure
+
+        Args:
+            peer_id: The peer ID to reconnect to
+            host: The host address of the peer
+            port: The port number of the peer
+
+        Returns:
+            bool: True if reconnection successful, False otherwise
+        """
+        logger.info(f"[StreamingManager] 🔄 Client {self.client_id}: Attempting to reconnect to peer {peer_id}")
+
+        # Check if channel exists
+        if peer_id not in self.channels:
+            logger.warning(f"[StreamingManager] No existing channel to peer {peer_id}, creating new one")
+            # Create new channel instead of reconnect
+            try:
+                self.create_channels_for_topology({peer_id: (host, port)})
+                return peer_id in self.channels and self.channels[peer_id].is_active
+            except Exception as e:
+                logger.error(f"[StreamingManager] Failed to create new channel to peer {peer_id}: {e}")
+                return False
+
+        # 🚀 HIGH-PERFORMANCE gRPC OPTIONS (same as create_channels_for_topology)
+        max_message_size = 512 * 1024 * 1024
+        grpc_options = [
+            ('grpc.max_send_message_length', max_message_size),
+            ('grpc.max_receive_message_length', max_message_size),
+            ('grpc.keepalive_time_ms', 120000),
+            ('grpc.keepalive_timeout_ms', 20000),
+            ('grpc.keepalive_permit_without_calls', False),
+            ('grpc.http2.max_pings_without_data', 2),
+            ('grpc.http2.min_time_between_pings_ms', 30000),
+            ('grpc.http2.min_ping_interval_without_data_ms', 600000),
+            ('grpc.so_reuseaddr', 1),
+            ('grpc.max_connection_idle_ms', 300000),
+            ('grpc.http2.max_frame_size', 16777215),
+            ('grpc.http2.bdp_probe', True),
+            ('grpc.use_local_subchannel_pool', 1),
+        ]
+
+        try:
+            # Create new gRPC channel and stub
+            address = f"{host}:{port}"
+            new_channel = grpc.insecure_channel(address, options=grpc_options)
+            new_stub = gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub(new_channel)
+
+            # Call reconnect on existing StreamingChannel
+            success = self.channels[peer_id].reconnect(new_channel, new_stub)
+
+            if success:
+                self.server_stubs[address] = new_stub
+                logger.info(f"[StreamingManager] ✅ Client {self.client_id}: Reconnected to peer {peer_id}")
+            else:
+                logger.error(f"[StreamingManager] ❌ Client {self.client_id}: Reconnection failed to peer {peer_id}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"[StreamingManager] ❌ Client {self.client_id}: Reconnection error to peer {peer_id}: {e}")
+            return False
+
+    def check_and_reconnect_inactive_channels(self, neighbor_addresses: Dict[int, Tuple[str, int]]) -> int:
+        """
+        🚀 AUTO-RECONNECT: Check all channels and reconnect inactive ones
+
+        Args:
+            neighbor_addresses: {peer_id: (host, port)} - addresses for reconnection
+
+        Returns:
+            int: Number of channels successfully reconnected
+        """
+        reconnected_count = 0
+
+        for peer_id, channel in list(self.channels.items()):
+            if not channel.is_active:
+                if peer_id in neighbor_addresses:
+                    host, port = neighbor_addresses[peer_id]
+                    logger.info(f"[StreamingManager] 🔄 Client {self.client_id}: Detected inactive channel to peer {peer_id}, attempting reconnect...")
+                    if self.reconnect_channel(peer_id, host, port):
+                        reconnected_count += 1
+                else:
+                    logger.warning(f"[StreamingManager] Cannot reconnect to peer {peer_id}: address not available")
+
+        if reconnected_count > 0:
+            logger.info(f"[StreamingManager] ✅ Client {self.client_id}: Reconnected {reconnected_count} channels")
+
+        return reconnected_count
         
     def get_channel_stats(self):
         """Get statistics for all channels"""

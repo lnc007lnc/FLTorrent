@@ -1028,47 +1028,6 @@ class Client(BaseClient):
             import traceback
             logger.debug(f"Traceback: {traceback.format_exc()}")
     
-    def _filter_bn_keys(self, state_dict):
-        """
-        Filter out BatchNorm keys from state_dict as they should not be aggregated
-        
-        Args:
-            state_dict: PyTorch model state_dict
-            
-        Returns:
-            dict: Filtered state_dict without BN keys
-        """
-        if state_dict is None:
-            return None
-            
-        # Common BN key patterns
-        bn_patterns = [
-            'bn',           # batch_norm
-            'batchnorm',    # batch_norm 
-            'batch_norm',   # batch_norm
-            '_bn',          # _bn suffix
-            '.bn.',         # .bn. in middle
-            'running_mean', # BN running stats
-            'running_var',  # BN running stats
-            'num_batches_tracked'  # BN tracking
-        ]
-        
-        filtered_dict = {}
-        for key, value in state_dict.items():
-            # Check if key contains any BN patterns (case insensitive)
-            key_lower = key.lower()
-            is_bn_key = any(pattern in key_lower for pattern in bn_patterns)
-            
-            if not is_bn_key:
-                filtered_dict[key] = value
-            else:
-                logger.debug(f"[BT-FL] Client {self.ID}: Filtered out BN key: {key}")
-                
-        if len(filtered_dict) != len(state_dict):
-            logger.info(f"[BT-FL] Client {self.ID}: Filtered {len(state_dict) - len(filtered_dict)} BN keys, kept {len(filtered_dict)} parameters")
-            
-        return filtered_dict
-    
     def _hook_apply_fl_lr(self, ctx):
         """
         Hook to restore FL scheduler learning rate after optimizer recreation.
@@ -1423,18 +1382,19 @@ class Client(BaseClient):
         logger.info(f"[BT-FL] Client {self.ID}: Using parameter completion strategy: {completion_strategy}")
         
         # Get the reference model (usually the global model)
+        # Use trainer's _param_filter to respect cfg.personalization.local_param (e.g., FedBN)
         reference_params = None
         if hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'model'):
             reference_params = self.trainer.ctx.model.state_dict()
         elif hasattr(self.trainer, 'model'):
             reference_params = self.trainer.model.state_dict()
-        
+
         if reference_params is None:
             logger.error(f"[BT-FL] Client {self.ID}: No reference model available for parameter completion")
             return None
-        
-        # Filter out BN keys to prevent accidental aggregation
-        filtered_reference = self._filter_bn_keys(reference_params)
+
+        # Filter parameters using trainer's built-in filter (respects cfg.personalization.local_param)
+        filtered_reference = self.trainer._param_filter(reference_params)
         if not filtered_reference:
             logger.error(f"[BT-FL] Client {self.ID}: No valid parameters after BN filtering")
             return None
