@@ -24,6 +24,7 @@ from contextlib import closing
 # Import ChunkInfo for change monitoring
 from federatedscope.core.chunk_tracker import ChunkInfo, ChunkAction
 from federatedscope.core.chunk_cache import ChunkDataCache
+from federatedscope.core.trainers.utils import filter_by_specified_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -152,9 +153,10 @@ class ChunkManager:
         self.chunk_write_queue = None  # 🚀 NEW: Reference to ChunkWriteQueue
         self._bt_session_ids = {}  # 🚀 Track session IDs by round
         
-        # Create database directory by node name: /tmp/client_X/
+        # Create database directory by node name: /tmp/fl_chunks/client_X/
+        # Use /tmp (tmpfs, 2.8GB/s) instead of NFS (441MB/s) for 6x faster I/O
         client_name = f"client_{client_id}"
-        self.db_dir = os.path.join(os.getcwd(), "tmp", client_name)
+        self.db_dir = os.path.join("/tmp", "fl_chunks", client_name)
         os.makedirs(self.db_dir, exist_ok=True)
         
         # 🚀 NEW: Initialize high-performance chunk data cache (replaces database for chunk data)
@@ -2195,7 +2197,7 @@ class ChunkManager:
                     """, (client_id,))
                     local_chunks = cur.fetchall()
             if not local_chunks:
-                return self._filter_bn_keys(baseline_params)
+                return self._filter_personalized_params(baseline_params)
 
             # 2) 读 bytes（cache→queue）
             chunk_bytes_list = []
@@ -2208,7 +2210,7 @@ class ChunkManager:
                 if data is not None:
                     chunk_bytes_list.append((cid, data))
             if not chunk_bytes_list:
-                return self._filter_bn_keys(baseline_params)
+                return self._filter_personalized_params(baseline_params)
             chunk_bytes_list.sort(key=lambda x: x[0])
 
             # 3) 取 parts_info
@@ -2236,7 +2238,7 @@ class ChunkManager:
                         pos += (e - s)
 
             if not total_len:
-                return self._filter_bn_keys(baseline_params)
+                return self._filter_personalized_params(baseline_params)
 
             # 5) 🔧 FIXED: 准备 out 扁平向量，不计算补偿alpha（纯拼接模式）
             out = {}
@@ -2277,8 +2279,8 @@ class ChunkManager:
                 covered_elements = covered_len.get(pname, 0)
                 coverage[pname] = float(covered_elements) / float(total_elements) if total_elements > 0 else 0.0
 
-            # Apply BN filtering and add missing baseline parameters
-            filtered_baseline = self._filter_bn_keys(baseline_params)
+            # Apply personalization filtering and add missing baseline parameters
+            filtered_baseline = self._filter_personalized_params(baseline_params)
             for pname, base in filtered_baseline.items():
                 if pname not in final:
                     final[pname] = (base.detach().cpu().to(torch.float32) 
@@ -2302,7 +2304,7 @@ class ChunkManager:
             logger.error(f"[ChunkManager] fast compensation failed: {e}")
             import traceback
             logger.debug(traceback.format_exc())
-            return self._filter_bn_keys(baseline_params) if baseline_params else None
+            return self._filter_personalized_params(baseline_params) if baseline_params else None
 
     def _get_local_sample_size(self) -> Optional[int]:
         """
@@ -2336,27 +2338,37 @@ class ChunkManager:
             return None
     
     
-    def _filter_bn_keys(self, state_dict: Dict) -> Dict:
+    def _filter_personalized_params(self, state_dict: Dict) -> Dict:
         """
-        Filter out BatchNorm related keys to prevent accidental aggregation
-        
+        Filter out personalized parameters (e.g., BN) based on cfg.personalization.local_param
+        This ensures consistency with FederatedScope's native personalization mechanism.
+
         Args:
             state_dict: Original state dictionary
-            
+
         Returns:
-            Dict: Filtered state dictionary without BN keys
+            Dict: Filtered state dictionary without personalized parameters
         """
         if not state_dict:
             return state_dict
-            
-        bn_keywords = ['running_mean', 'running_var', 'num_batches_tracked']
-        
-        filtered_dict = {}
-        for key, value in state_dict.items():
-            should_filter = any(bn_keyword in key for bn_keyword in bn_keywords)
-            if not should_filter:
-                filtered_dict[key] = value
-        
+
+        # Get filter keywords from config (e.g., ['bn'] for FedBN)
+        filter_keywords = []
+        if self._cfg and hasattr(self._cfg, 'personalization'):
+            filter_keywords = self._cfg.personalization.local_param
+
+        # If no personalization config, return all parameters
+        if not filter_keywords:
+            return state_dict
+
+        # Use FederatedScope's native filter function
+        filtered_dict = dict(
+            filter(
+                lambda elem: filter_by_specified_keywords(elem[0], filter_keywords),
+                state_dict.items()
+            )
+        )
+
         return filtered_dict
 
     def get_client_sample_size(self, client_id: int, round_num: int) -> Optional[int]:

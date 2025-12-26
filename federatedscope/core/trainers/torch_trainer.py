@@ -291,6 +291,12 @@ class GeneralTorchTrainer(Trainer):
         if len(label.size()) == 0:
             label = label.unsqueeze(0)
 
+        # For BCEWithLogitsLoss with single output: squeeze pred from [N, 1] to [N]
+        if pred.shape[-1] == 1 and len(pred.shape) > 1:
+            pred = pred.squeeze(-1)
+            # BCEWithLogitsLoss requires labels to be float type, not Long
+            label = label.float()
+
         ctx.y_true = CtxVar(label, LIFECYCLE.BATCH)
         ctx.y_prob = CtxVar(pred, LIFECYCLE.BATCH)
         ctx.loss_batch = CtxVar(ctx.criterion(pred, label), LIFECYCLE.BATCH)

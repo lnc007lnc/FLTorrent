@@ -12,6 +12,10 @@ import queue
 from typing import Dict, Set, List, Tuple, Optional, Any
 from collections import defaultdict
 
+# 🚀 FIX: Import at module level to avoid import lock contention in multi-threaded environment
+# Dynamic imports inside functions can cause thread blocking due to Python's import lock
+from federatedscope.core.message import Message, ChunkData
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -90,13 +94,17 @@ class ChunkWriteQueue:
             
         logger.debug(f"[ChunkWriteQueue] Write thread stopped for client {self.client_id}")
         
-    def enqueue_chunk_write(self, round_num: int, source_client_id: int, chunk_id: int, 
-                          chunk_data: bytes, checksum: str, timestamp: float):
-        """Enqueue chunk write operation"""
+    def enqueue_chunk_write(self, round_num: int, source_client_id: int, chunk_id: int,
+                          chunk_data: bytes, checksum: str, timestamp: float) -> bool:
+        """Enqueue chunk write operation - NON-BLOCKING
+
+        Returns:
+            bool: True if successfully enqueued, False if queue is full (caller should NOT mark as processed)
+        """
         if not self.is_running:
             logger.warning(f"[ChunkWriteQueue] Writer thread not running, starting...")
             self.start_writer_thread()
-            
+
         write_task = {
             'type': 'chunk_write',
             'round_num': round_num,
@@ -106,12 +114,17 @@ class ChunkWriteQueue:
             'checksum': checksum,
             'timestamp': timestamp
         }
-        
+
         try:
-            self.write_queue.put(write_task, timeout=1.0)
+            # 🚀 DEADLOCK FIX: Use put_nowait, never block in callback thread
+            self.write_queue.put_nowait(write_task)
             logger.debug(f"[ChunkWriteQueue] Enqueued chunk write: {source_client_id}:{chunk_id}")
+            return True
         except queue.Full:
-            logger.error(f"[ChunkWriteQueue] Write queue full, dropping chunk {source_client_id}:{chunk_id}")
+            # Let caller know enqueue failed - they should NOT mark as processed
+            # Timeout mechanism will trigger retry from peer
+            logger.warning(f"[ChunkWriteQueue] Write queue FULL, reject chunk {source_client_id}:{chunk_id} for retry")
+            return False
     
     def search_pending_chunk(self, round_num: int, source_client_id: int, chunk_id: int):
         """
@@ -329,7 +342,10 @@ class BitTorrentManager:
         # Statistics
         self.total_downloaded = 0
         self.total_uploaded = 0
-        self.chunks_per_client = 10  # Default value, configurable
+        # 🔧 CRITICAL FIX: Read chunks_per_client from config instead of hardcoding
+        self.chunks_per_client = cfg.chunk.num_chunks if (cfg and hasattr(cfg, 'chunk') and hasattr(cfg.chunk, 'num_chunks')) else 16
+        # 🔧 CRITICAL FIX: Store total client count for proper expected_chunks calculation
+        self.total_clients = cfg.federate.client_num if (cfg and hasattr(cfg, 'federate') and hasattr(cfg.federate, 'client_num')) else 50
         
         # 🔧 CRITICAL FIX: Exchange state management
         self.is_stopped = False  # Stop flag for exchange termination
@@ -340,7 +356,18 @@ class BitTorrentManager:
         self.endgame_requests: Dict[Tuple, List[int]] = {}  # {chunk_key: [peer_id_list]} - Track multiple requests
         self.endgame_max_parallel_peers = 2  # Maximum parallel peers to request from in endgame
         self.endgame_start_time = None  # When endgame mode started
-        
+
+        # 🚀 DEADLOCK FIX S1: Upload task queue + worker thread
+        # Purpose: Make handle_request() non-blocking by moving DB read + send to background worker
+        # This breaks the deadlock cycle where callback threads block on DB/send operations
+        self._upload_task_queue = queue.Queue(maxsize=10000)
+        self._upload_worker_thread = None  # Will be started in start_exchange()
+
+        # 🚀 EVENT-DRIVEN: Request trigger queue
+        # Callbacks put chunk_keys here, main loop processes them to send REQUESTs
+        # This enables event-driven requests instead of busy-polling
+        self._request_trigger_queue = queue.Queue(maxsize=10000)
+
         logger.debug(f"[BT] BitTorrentManager initialized for client {client_id}, round {round_num}")
         logger.debug(f"[BT] Client {client_id}: Concurrent settings - Active requests: {self.MAX_ACTIVE_REQUESTS}, Pending queue: {self.MAX_PENDING_QUEUE}, Upload slots: {self.MAX_UPLOAD_SLOTS}")
         logger.debug(f"[BT] Client {client_id}: Endgame settings - Threshold: {self.min_completion_ratio:.1%}, Max parallel peers: {self.endgame_max_parallel_peers}")
@@ -349,10 +376,20 @@ class BitTorrentManager:
         """Start BitTorrent chunk exchange process (no Tracker needed)"""
         logger.info(f"[BT] Client {self.client_id}: Starting BitTorrent exchange")
         logger.debug(f"[BT] Client {self.client_id}: Neighbors: {self.neighbors}")
-        
+
         # 🚀 OPTIMIZATION 3: Start single writer thread
         self.chunk_write_queue.start_writer_thread()
-        
+
+        # 🚀 DEADLOCK FIX S1: Start upload worker thread
+        # This thread handles DB read + send operations, keeping callback thread non-blocking
+        self._upload_worker_thread = threading.Thread(
+            target=self._upload_worker_loop,
+            daemon=True,
+            name=f"UploadWorker-{self.client_id}"
+        )
+        self._upload_worker_thread.start()
+        logger.debug(f"[BT] Client {self.client_id}: Upload worker thread started")
+
         # 1. Send bitfield directly to all topology neighbors
         for neighbor_id in self.neighbors:
             logger.debug(f"[BT] Client {self.client_id}: Sending bitfield to neighbor {neighbor_id}")
@@ -365,57 +402,57 @@ class BitTorrentManager:
         self._schedule_optimistic_unchoke()
         
     def handle_bitfield(self, sender_id: int, bitfield_content: Dict):
-        """Handle received bitfield messages (containing importance scores)"""
-        # 🔧 CRITICAL FIX: Check if exchange is stopped
+        """
+        🚀 EVENT-DRIVEN: Non-blocking bitfield handler that triggers requests
+
+        Critical: This runs in gRPC callback thread. MUST NOT:
+        - Read DB (get_global_bitfield)
+        - Send network messages
+        - Block on any I/O
+
+        Only allowed: store bitfield in memory, enqueue needed chunks for request.
+        """
         if self.is_stopped:
-            logger.debug(f"[BT] Client {self.client_id}: Ignoring bitfield from peer {sender_id} - exchange stopped")
             return
-        
-        # 🆕 Handle new format bitfield (containing importance scores)
+
+        # Parse bitfield (memory operations only, no blocking)
         if isinstance(bitfield_content, dict) and 'bitfield' in bitfield_content:
-            # New format: {round_num: x, bitfield: [{round, source, chunk, importance_score}, ...]}
             bitfield_list = bitfield_content.get('bitfield', [])
-            
-            # Convert to internal format and store importance scores
             bitfield = {}
+
             if not hasattr(self, 'peer_importance_scores'):
-                self.peer_importance_scores = {}  # {peer_id: {chunk_key: importance_score}}
-            
+                self.peer_importance_scores = {}
+
             if sender_id not in self.peer_importance_scores:
                 self.peer_importance_scores[sender_id] = {}
-            
+
             for chunk_entry in bitfield_list:
                 chunk_key = (chunk_entry['round'], chunk_entry['source'], chunk_entry['chunk'])
                 bitfield[chunk_key] = True
-                
-                # 🆕 Store importance scores
                 importance_score = chunk_entry.get('importance_score', 0.0)
                 self.peer_importance_scores[sender_id][chunk_key] = importance_score
-                
-                logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has chunk {chunk_key} with importance {importance_score:.4f}")
+
+                # 🚀 EVENT-DRIVEN: Trigger request for each chunk we might need
+                # Check using in-memory structures only (no DB access)
+                if chunk_key not in self.pending_requests and chunk_key not in getattr(self, 'processed_pieces', set()):
+                    try:
+                        self._request_trigger_queue.put_nowait((chunk_key, sender_id, importance_score))
+                    except queue.Full:
+                        break  # Queue full, remaining chunks will be handled via HAVE messages
         else:
-            # Compatible with old format
             bitfield = bitfield_content
-        
+            # Old format: enqueue all chunks
+            for chunk_key in bitfield.keys():
+                if chunk_key not in self.pending_requests and chunk_key not in getattr(self, 'processed_pieces', set()):
+                    try:
+                        self._request_trigger_queue.put_nowait((chunk_key, sender_id, 0.0))
+                    except queue.Full:
+                        break
+
+        # Store bitfield (memory operation)
         self.peer_bitfields[sender_id] = bitfield
-        logger.debug(f"[BT] Client {self.client_id}: Received bitfield from peer {sender_id} with {len(bitfield)} chunks")
-        
-        # 🔧 Debug: output detailed bitfield analysis
-        logger.debug(f"[BT] Client {self.client_id}: BitTorrent Manager received bitfield from peer {sender_id}:")
-        if bitfield:
-            for chunk_key, has_chunk in bitfield.items():
-                round_num, source_id, chunk_id = chunk_key
-                importance_score = self.peer_importance_scores.get(sender_id, {}).get(chunk_key, 0.0)
-                logger.debug(f"[BT] Client {self.client_id}: - Round {round_num}, Source {source_id}, Chunk {chunk_id}: {has_chunk} (importance: {importance_score:.4f})")
-        else:
-            logger.warning(f"[BT] Client {self.client_id}: ⚠️ BitTorrent Manager got EMPTY bitfield from peer {sender_id}!")
-        
-        # Check if peer has chunks I need
-        if self._has_interesting_chunks(sender_id):
-            logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has interesting chunks, sending interested")
-            self._send_interested(sender_id)
-        else:
-            logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has no interesting chunks")
+
+        logger.info(f"[BT] Client {self.client_id}: Received bitfield from peer {sender_id} ({len(bitfield)} chunks), enqueued for requests")
             
     def handle_interested(self, sender_id: int):
         """Handle interested messages"""
@@ -425,113 +462,75 @@ class BitTorrentManager:
         self._evaluate_unchoke(sender_id)
         
     def handle_request(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int):
-        """Handle chunk requests"""
-        # 🔍 DEBUG LOG: Detailed request handling logs
-        logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: HANDLE_REQUEST called from peer {sender_id}")
-        logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: Request details - round={round_num}, source={source_client_id}, chunk={chunk_id}")
-        
-        # 🔧 CRITICAL FIX: Check if exchange is stopped
+        """🚀 DEADLOCK FIX S1: Non-blocking handle_request - only enqueue task, return immediately.
+
+        This breaks the deadlock cycle where callback threads block on DB read / send operations.
+        The actual DB read + send work is done by the upload worker thread.
+        """
+        # Quick checks that don't block
         if self.is_stopped:
-            logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: IGNORING request - exchange STOPPED")
-            logger.debug(f"[BT] Client {self.client_id}: Ignoring request from peer {sender_id} - exchange stopped")
+            logger.debug(f"[BT-HANDLE] Client {self.client_id}: Ignoring request - exchange stopped")
             return
-        logger.debug(f"[BT-HANDLE] Client {self.client_id}: Handling request from {sender_id} for chunk {source_client_id}:{chunk_id}")
-        
-        # 🔴 Verify round matching
+
         if round_num != self.round_num:
-            logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: ROUND MISMATCH - Request round {round_num} vs BitTorrent round {self.round_num}")
-            logger.warning(f"[BT-HANDLE] Client {self.client_id}: Round mismatch - Request round {round_num} vs BitTorrent round {self.round_num}")
-            logger.warning(f"[BT-HANDLE] Client {self.client_id}: Skipping request due to round mismatch")
+            logger.debug(f"[BT-HANDLE] Client {self.client_id}: Round mismatch {round_num} vs {self.round_num}, skipping")
             return
-            
-        logger.debug(f"⚡ [BT-HANDLE] Client {self.client_id}: Round check PASSED - processing request")
-            
-        if sender_id not in self.choked_peers:
-            logger.debug(f"[BT-HANDLE] Client {self.client_id}: Peer {sender_id} is not choked, processing request")
-            # Send chunk data
-            # 🔴 Add round_num parameter to get_chunk_data
-            logger.debug(f"[BT-HANDLE] Client {self.client_id}: Querying chunk_data with params (round={round_num}, source_client={source_client_id}, chunk_id={chunk_id})")
-            chunk_data = self.chunk_manager.get_chunk_data(round_num, source_client_id, chunk_id)
-            
-            # 🚀 GENTLE RETRY: If chunk not found, wait briefly for potential persistence completion
-            if chunk_data is None:
-                logger.debug(f"[BT-HANDLE] Client {self.client_id}: Chunk {source_client_id}:{chunk_id} not found, trying gentle retry...")
-                time.sleep(0.05)  # 50ms gentle wait for potential write queue completion
-                chunk_data = self.chunk_manager.get_chunk_data(round_num, source_client_id, chunk_id)
-                if chunk_data is not None:
-                    logger.debug(f"[BT-HANDLE] Client {self.client_id}: ✅ Chunk {source_client_id}:{chunk_id} found after gentle retry")
-            
-            if chunk_data is not None:
-                # Send chunk data, even if chunk is empty
-                chunk_size = len(chunk_data) if hasattr(chunk_data, '__len__') else 0
-                if chunk_size > 0:
-                    logger.debug(f"[BT-HANDLE] Client {self.client_id}: Found non-empty chunk data (size={chunk_size}), sending piece to {sender_id}")
-                else:
-                    logger.debug(f"[BT-HANDLE] Client {self.client_id}: Found empty chunk data (size={chunk_size}), sending empty piece to {sender_id}")
-                
-                self._send_piece(sender_id, round_num, source_client_id, chunk_id, chunk_data)
-                logger.debug(f"[BT-HANDLE] Client {self.client_id}: Successfully sent chunk {source_client_id}:{chunk_id} to peer {sender_id}")
-            else:
-                logger.warning(f"[BT-HANDLE] Client {self.client_id}: Chunk {source_client_id}:{chunk_id} not found in database (round={round_num} Requested by {sender_id})")
-                logger.warning(f"[BT-HANDLE] Client {self.client_id}: Database query returned: {chunk_data}")
-        else:
+
+        if sender_id in self.choked_peers:
             logger.debug(f"[BT-HANDLE] Client {self.client_id}: Peer {sender_id} is choked, ignoring request")
+            return
+
+        # 🚀 DEADLOCK FIX: Only enqueue the task, don't do DB read or send here
+        # This ensures callback thread returns immediately, never blocking message processing
+        try:
+            self._upload_task_queue.put_nowait((sender_id, round_num, source_client_id, chunk_id))
+            logger.debug(f"[BT-HANDLE] Client {self.client_id}: Queued upload task for chunk {source_client_id}:{chunk_id} to peer {sender_id}")
+        except queue.Full:
+            logger.warning(f"[BT-HANDLE] Client {self.client_id}: Upload task queue full, dropping request for {source_client_id}:{chunk_id} from {sender_id}")
             
     def handle_piece(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data, checksum: str):
         """
-        🔧 Optimization: Lightweight chunk reception callback - avoid duplicate statistics and processing
+        🚀 DEADLOCK FIX: Non-blocking chunk reception callback
+
+        Critical: This runs in gRPC callback thread. MUST NOT block on:
+        - Database reads
+        - Network sends
+        - Queue waits
+        - Any synchronization primitives
+
+        Only allowed: put_nowait to enqueue, then return immediately.
         """
-        # 🔧 CRITICAL FIX: Check if exchange is stopped
+        # Quick checks that don't block
         if self.is_stopped:
-            logger.debug(f"[BT] Client {self.client_id}: Ignoring piece from peer {sender_id} - exchange stopped")
-            return
-        
-        logger.debug(f"[BT-PIECE] Client {self.client_id}: Processing chunk {source_client_id}:{chunk_id} from peer {sender_id}")
-        
-        # 🔴 Verify if rounds match (quick check)
-        if round_num != self.round_num:
-            logger.warning(f"[BT-PIECE] Client {self.client_id}: Round mismatch - Piece round {round_num} vs BitTorrent round {self.round_num}")
             return False
-        
-        # 🔧 Anti-duplicate processing check
+
+        if round_num != self.round_num:
+            return False
+
         chunk_key = (round_num, source_client_id, chunk_id)
         if not hasattr(self, 'processed_pieces'):
             self.processed_pieces = set()
-        
+
+        # Check duplicate BEFORE any state changes
         if chunk_key in self.processed_pieces:
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: 🚫 Duplicate piece blocked for chunk {source_client_id}:{chunk_id}")
-            return True  # Already processed, return success directly
-        
-        # 🚀 Process ChunkData object, extract raw bytes
-        from federatedscope.core.message import ChunkData
+            return True  # Already processed
+
+        # Extract raw bytes (no blocking, just type conversion)
         if isinstance(chunk_data, ChunkData):
             raw_bytes = chunk_data.raw_bytes
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: ChunkData received, size: {len(raw_bytes)}B")
         elif isinstance(chunk_data, bytes):
             raw_bytes = chunk_data
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: Raw bytes received: {len(raw_bytes)}B")
         else:
             logger.error(f"[BT-PIECE] Client {self.client_id}: Unexpected data type: {type(chunk_data)}")
             return False
-            
-        # Quick size reasonableness check
-        if len(raw_bytes) == 0 or len(raw_bytes) > 50 * 1024 * 1024:  # 0 bytes or >50MB suspicious
-            logger.error(f"[BT-PIECE] Client {self.client_id}: Suspicious chunk size: {len(raw_bytes)} bytes")
+
+        # Quick size check
+        if len(raw_bytes) == 0 or len(raw_bytes) > 50 * 1024 * 1024:
             return False
-        
-        # 🔧 Mark as processed to prevent duplicates
-        self.processed_pieces.add(chunk_key)
-        
-        # 🚀 FIX: Check queue capacity, wait if approaching full capacity
-        queue_size = self.chunk_write_queue.write_queue.qsize()
-        max_size = self.chunk_write_queue.write_queue.maxsize
-        if queue_size >= max_size * 0.9:  # Start waiting when queue usage reaches 90%
-            logger.warning(f"[BT] Write queue nearly full ({queue_size}/{max_size}), waiting for space...")
-            while self.chunk_write_queue.write_queue.qsize() >= max_size * 0.95:  # Wait until below 95% before continuing
-                time.sleep(0.01)  # Brief wait
-        
-        # 🚀 Background queue processing, count only once
-        self.chunk_write_queue.enqueue_chunk_write(
+
+        # 🚀 CRITICAL FIX: Try enqueue FIRST, before modifying ANY state
+        # If enqueue fails, return False immediately - let timeout trigger retry
+        ok = self.chunk_write_queue.enqueue_chunk_write(
             round_num=round_num,
             source_client_id=source_client_id,
             chunk_id=chunk_id,
@@ -539,48 +538,59 @@ class BitTorrentManager:
             checksum=checksum,
             timestamp=time.time()
         )
-        
-        # 🚀 Clear pending request status
+
+        if not ok:
+            # Enqueue failed (queue full) - DON'T mark as processed!
+            # Timeout mechanism will trigger retry from peer
+            logger.warning(f"[BT-PIECE] Client {self.client_id}: Enqueue failed for {source_client_id}:{chunk_id}, will retry")
+            return False
+
+        # 🚀 ONLY after successful enqueue: mark as processed and update state
+        self.processed_pieces.add(chunk_key)
+
         if chunk_key in self.pending_requests:
             del self.pending_requests[chunk_key]
-            logger.debug(f"[BT-PIECE] Client {self.client_id}: Cleared pending request for chunk {chunk_key}")
-        
-        # 🔧 Unified download statistics (count only once when successfully processed)
+
         self.total_downloaded += len(raw_bytes)
-        logger.debug(f"[BT-PIECE] Client {self.client_id}: ✅ Processed unique chunk {source_client_id}:{chunk_id} ({len(raw_bytes)}B)")
-            
-        # 🆕 Dual pool system: transfer requests from queue pool to active pool
-        self._transfer_from_queue_to_active()
-        
-        # 🚀 REMOVED: Immediate have broadcast - now done after persistence via callback
-        logger.debug(f"[BT-PIECE] Client {self.client_id}: Chunk {source_client_id}:{chunk_id} queued for background processing - HAVE will be broadcast after persistence")
-        
-        # Update download statistics (lightweight) - Note: do not duplicate count total_downloaded here
-        self._update_download_rate(sender_id, len(chunk_data))
+
+        # Lightweight stats update (no blocking)
+        self._update_download_rate(sender_id, len(raw_bytes))
         self.last_activity[sender_id] = time.time()
-        
-        logger.debug(f"[BT] Client {self.client_id}: Queued chunk {source_client_id}:{chunk_id} from peer {sender_id} for background processing")
+
+        # 🚀 NO _transfer_from_queue_to_active() here - main loop does it
         return True
         
     def handle_have(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int, importance_score: float = 0.0):
-        """Handle have messages (containing importance scores)"""
+        """
+        🚀 EVENT-DRIVEN: Handle have messages and trigger request if needed
+
+        When peer announces a chunk we need, enqueue it for request.
+        This is the core event-driven trigger for BitTorrent protocol.
+        """
         if round_num != self.round_num:
             return
-            
+
         chunk_key = (round_num, source_client_id, chunk_id)
+
+        # Update peer bitfield (memory only, no blocking)
         if sender_id not in self.peer_bitfields:
             self.peer_bitfields[sender_id] = {}
         self.peer_bitfields[sender_id][chunk_key] = True
-        
-        # 🆕 Store importance scores
+
+        # Store importance scores
         if not hasattr(self, 'peer_importance_scores'):
             self.peer_importance_scores = {}
         if sender_id not in self.peer_importance_scores:
             self.peer_importance_scores[sender_id] = {}
-        
         self.peer_importance_scores[sender_id][chunk_key] = importance_score
-        
-        logger.debug(f"[BT] Client {self.client_id}: Peer {sender_id} has chunk {source_client_id}:{chunk_id} with importance {importance_score:.4f}")
+
+        # 🚀 EVENT-DRIVEN: Trigger request if we need this chunk
+        # Check using in-memory structures only (no DB access in callback)
+        if chunk_key not in self.pending_requests and chunk_key not in getattr(self, 'processed_pieces', set()):
+            try:
+                self._request_trigger_queue.put_nowait((chunk_key, sender_id, importance_score))
+            except queue.Full:
+                pass  # Queue full, will retry via timeout mechanism
         
     def handle_choke(self, sender_id: int):
         """Handle choke messages"""
@@ -625,8 +635,9 @@ class BitTorrentManager:
             # 🚀 ENDGAME MODE: Check if we should enter endgame mode
             round_num, source_id, chunk_id = chunk_key
             current_chunks = len(self.chunk_manager.get_global_bitfield(round_num))
-            # Calculate total expected chunks (same logic as get_progress())
-            expected_chunks = len(self.neighbors) * self.chunks_per_client + self.chunks_per_client
+            # 🔧 CRITICAL FIX: Use total_clients for expected_chunks, not just neighbors
+            # Expected = all clients' chunks (total_clients * chunks_per_client)
+            expected_chunks = self.total_clients * self.chunks_per_client
             completion_ratio = current_chunks / max(expected_chunks, 1)
             
             
@@ -888,8 +899,8 @@ class BitTorrentManager:
         
     def _send_bitfield(self, peer_id: int):
         """Send bitfield to specified peer (containing importance scores)"""
-        from federatedscope.core.message import Message
-        
+        # Note: Message is imported at module level to avoid import lock contention
+
         # 🔧 Fix: convert bitfield to serializable format
         my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
         logger.debug(f"[BT] Client {self.client_id}: My bitfield for round {self.round_num}: {len(my_bitfield)} chunks")
@@ -1014,8 +1025,8 @@ class BitTorrentManager:
     def _broadcast_have(self, round_num: int, source_client_id: int, chunk_id: int):
         """Send have message to all neighbors (containing importance scores)"""
         # 🔴 have message contains round information
-        from federatedscope.core.message import Message
-        
+        # Note: Message is imported at module level to avoid import lock contention
+
         # 🚀 OPTIMIZATION: Get importance scores using cache
         importance_score = 0.0
         if source_client_id == self.client_id:
@@ -1127,7 +1138,82 @@ class BitTorrentManager:
                     del self.pending_requests[chunk_key]
                 if chunk_key in self.retry_count:
                     del self.retry_count[chunk_key]
-                        
+
+    def process_request_triggers(self, max_requests: int = 10) -> int:
+        """
+        🚀 EVENT-DRIVEN: Process request trigger queue and send REQUESTs
+
+        This is called by main loop to process chunks that need to be requested.
+        Returns the number of requests sent.
+
+        Args:
+            max_requests: Maximum number of requests to process in one call
+
+        Returns:
+            Number of requests actually sent
+        """
+        if self.is_stopped:
+            return 0
+
+        requests_sent = 0
+        processed_chunks = set()  # Avoid duplicate processing in same batch
+
+        while requests_sent < max_requests:
+            try:
+                item = self._request_trigger_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            chunk_key, peer_id, importance_score = item
+
+            # Skip if already processed in this batch
+            if chunk_key in processed_chunks:
+                continue
+            processed_chunks.add(chunk_key)
+
+            # Skip if we already have this chunk (check DB here, it's safe in main loop)
+            my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+            if chunk_key in my_bitfield:
+                continue
+
+            # Skip if already pending
+            if chunk_key in self.pending_requests:
+                continue
+
+            # Skip if already processed
+            if chunk_key in getattr(self, 'processed_pieces', set()):
+                continue
+
+            # Skip if peer is choked
+            if peer_id in self.choked_peers:
+                # Try to find another peer
+                alternative_peers = self._find_peer_with_chunk(chunk_key)
+                available_peers = [p for p in alternative_peers if p not in self.choked_peers]
+                if available_peers:
+                    peer_id = available_peers[0]
+                else:
+                    continue  # No available peer
+
+            # Check if we have room for more requests
+            if len(self.pending_requests) >= self.MAX_ACTIVE_REQUESTS:
+                # Put back in queue for later
+                try:
+                    self._request_trigger_queue.put_nowait((chunk_key, peer_id, importance_score))
+                except queue.Full:
+                    pass
+                break  # Stop processing, we're at capacity
+
+            # Send the request
+            round_num, source_id, chunk_id = chunk_key
+            try:
+                success = self._send_request(peer_id, source_id, chunk_id)
+                if success:
+                    requests_sent += 1
+            except Exception as e:
+                logger.warning(f"[BT] Client {self.client_id}: Failed to send request for {chunk_key}: {e}")
+
+        return requests_sent
+
     def _send_request(self, peer_id: int, source_id: int, chunk_id: int):
         """🔧 Refactor: Only use Streaming layer to handle chunk requests - unified entry, avoid duplication"""
         chunk_key = (self.round_num, source_id, chunk_id)
@@ -1158,7 +1244,74 @@ class BitTorrentManager:
         else:
             logger.error(f"[BT-REQ] Client {self.client_id}: No streaming available, cannot request {source_id}:{chunk_id}")
             return False
-    
+
+    def _upload_worker_loop(self):
+        """🚀 DEADLOCK FIX S1: Background worker for upload tasks (DB read + send).
+
+        This thread handles all potentially blocking operations:
+        - Database reads (chunk_manager.get_chunk_data)
+        - Network sends (_send_piece)
+
+        By moving these out of the callback thread, we break the deadlock cycle
+        where callback threads block on DB/send, preventing message processing.
+
+        The worker NEVER exits on errors - if it stops, the queue fills up forever.
+        """
+        logger.debug(f"[UploadWorker] Client {self.client_id}: Upload worker started")
+        processed_count = 0
+        retry_backoff = 0.02  # Initial backoff for congestion
+
+        while not self.is_stopped:
+            try:
+                # Block waiting for task with timeout (allows checking is_stopped)
+                try:
+                    sender_id, round_num, source_id, chunk_id = self._upload_task_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+
+                # Skip if exchange stopped or round changed
+                if self.is_stopped or round_num != self.round_num:
+                    self._upload_task_queue.task_done()
+                    continue
+
+                try:
+                    # DB read - may take time but won't block callback thread
+                    chunk_data = self.chunk_manager.get_chunk_data(round_num, source_id, chunk_id)
+
+                    # Gentle retry if not found (write queue might still be processing)
+                    if chunk_data is None:
+                        time.sleep(0.05)
+                        chunk_data = self.chunk_manager.get_chunk_data(round_num, source_id, chunk_id)
+
+                    if chunk_data is not None:
+                        # Send piece - may block on network but won't block callback thread
+                        success = self._send_piece(sender_id, round_num, source_id, chunk_id, chunk_data)
+                        if success:
+                            processed_count += 1
+                            if processed_count % 100 == 0:
+                                logger.debug(f"[UploadWorker] Client {self.client_id}: Processed {processed_count} upload tasks")
+                        else:
+                            # Send failed (congestion) - brief backoff then requeue
+                            time.sleep(retry_backoff)
+                            try:
+                                self._upload_task_queue.put_nowait((sender_id, round_num, source_id, chunk_id))
+                            except queue.Full:
+                                logger.warning(f"[UploadWorker] Client {self.client_id}: Failed to requeue task, queue full")
+                    else:
+                        logger.warning(f"[UploadWorker] Client {self.client_id}: Chunk {source_id}:{chunk_id} not found for peer {sender_id}")
+
+                except Exception as e:
+                    logger.error(f"[UploadWorker] Client {self.client_id}: Error processing task: {e}")
+                    # Don't exit on error - keep worker alive
+
+                self._upload_task_queue.task_done()
+
+            except Exception as e:
+                logger.error(f"[UploadWorker] Client {self.client_id}: Worker loop error: {e}")
+                time.sleep(0.1)  # Brief pause to avoid error spinning
+
+        logger.debug(f"[UploadWorker] Client {self.client_id}: Upload worker stopped, processed {processed_count} tasks")
+
     def _send_piece(self, peer_id: int, round_num: int, source_client_id: int, chunk_id: int, chunk_data):
         """🚀 Optimization 4: Smart sending strategy - multi-optimized chunk transmission"""
         import pickle
@@ -1225,9 +1378,9 @@ class BitTorrentManager:
         if not final_success:
             traditional_start = time.time()
             logger.debug(f"📤 [BT-PIECE-SEND] Client {self.client_id}: Using traditional message transmission to peer {peer_id}")
-            
+
             try:
-                from federatedscope.core.message import Message, ChunkData
+                # Note: Message and ChunkData are imported at module level to avoid import lock contention
                 chunk_wrapper = ChunkData(serialized_data, checksum)
                 
                 message = Message(
@@ -1443,7 +1596,8 @@ class BitTorrentManager:
     def get_progress(self) -> Dict[str, Any]:
         """Get exchange progress information"""
         my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
-        total_expected = len(self.neighbors) * self.chunks_per_client + self.chunks_per_client  # Including own chunks
+        # 🔧 CRITICAL FIX: Use total_clients for expected chunks calculation
+        total_expected = self.total_clients * self.chunks_per_client  # All clients' chunks
         
         return {
             'chunks_collected': len(my_bitfield),

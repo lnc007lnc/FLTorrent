@@ -109,6 +109,9 @@ class BaseDataTranslator:
         split_train, split_val, split_test = [[None] * client_num] * 3
         train_label_distribution = None
 
+        # 获取当前进程负责的 client ID（分布式模式下的优化）
+        my_data_idx = getattr(self.global_cfg.distribute, 'data_idx', None)
+
         # Split train/val/test to client
         if len(train) > 0:
             split_train = self.splitter(train)
@@ -131,10 +134,23 @@ class BaseDataTranslator:
                 split_test = self.splitter(test, prior=train_label_distribution)
 
         # Build data dict with `ClientData`, key `0` for server.
-        data_dict = {
-            0: ClientData(self.global_cfg, train=train, val=val, test=test)
-        }
+        data_dict = {}
+
+        # Server 数据
+        if my_data_idx is None or my_data_idx == 0:
+            # Standalone 模式或 Server 进程：保留完整 server 数据
+            data_dict[0] = ClientData(self.global_cfg, train=train, val=val, test=test)
+        else:
+            # Client 进程：server 数据不需要 train（节省内存）
+            data_dict[0] = ClientData(self.global_cfg, train=None, val=val, test=test)
+
+        # === 关键优化：只为当前进程负责的 client 创建 ClientData ===
         for client_id in range(1, client_num + 1):
+            # 分布式模式下，只创建自己负责的 client 的 ClientData
+            if my_data_idx is not None and my_data_idx > 0:
+                if client_id != my_data_idx:
+                    continue  # 跳过其他 client
+
             if self.client_cfgs is not None:
                 client_cfg = self.global_cfg.clone()
                 client_cfg.merge_from_other_cfg(
@@ -145,4 +161,8 @@ class BaseDataTranslator:
                                               train=split_train[client_id - 1],
                                               val=split_val[client_id - 1],
                                               test=split_test[client_id - 1])
+
+        if my_data_idx is not None and my_data_idx > 0:
+            logger.info(f"🎯 BaseDataTranslator: keeping only client {my_data_idx} data")
+
         return data_dict

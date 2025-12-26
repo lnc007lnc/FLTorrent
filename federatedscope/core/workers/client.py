@@ -185,12 +185,22 @@ class Client(BaseClient):
                 port=port,
                 client_num=self._cfg.federate.client_num,
                 cfg=self._cfg.distribute)
-            logger.info('Client: Listen to {}:{}...'.format(host, port))
-            self.comm_manager.add_neighbors(neighbor_id=server_id,
-                                            address={
-                                                'host': server_host,
-                                                'port': server_port
-                                            })
+            # Log listen address (handle UDS mode)
+            if str(host).startswith('unix://'):
+                logger.info('Client: Listen to {} (UDS mode)...'.format(host))
+            else:
+                logger.info('Client: Listen to {}:{}...'.format(host, port))
+
+            # Add server as neighbor (handle UDS mode for server address)
+            if str(server_host).startswith('unix://'):
+                self.comm_manager.add_neighbors(neighbor_id=server_id,
+                                                address=server_host)  # UDS: pass full address
+            else:
+                self.comm_manager.add_neighbors(neighbor_id=server_id,
+                                                address={
+                                                    'host': server_host,
+                                                    'port': server_port
+                                                })
             self.local_address = {
                 'host': self.comm_manager.host,
                 'port': self.comm_manager.port
@@ -1028,47 +1038,6 @@ class Client(BaseClient):
             import traceback
             logger.debug(f"Traceback: {traceback.format_exc()}")
     
-    def _filter_bn_keys(self, state_dict):
-        """
-        Filter out BatchNorm keys from state_dict as they should not be aggregated
-        
-        Args:
-            state_dict: PyTorch model state_dict
-            
-        Returns:
-            dict: Filtered state_dict without BN keys
-        """
-        if state_dict is None:
-            return None
-            
-        # Common BN key patterns
-        bn_patterns = [
-            'bn',           # batch_norm
-            'batchnorm',    # batch_norm 
-            'batch_norm',   # batch_norm
-            '_bn',          # _bn suffix
-            '.bn.',         # .bn. in middle
-            'running_mean', # BN running stats
-            'running_var',  # BN running stats
-            'num_batches_tracked'  # BN tracking
-        ]
-        
-        filtered_dict = {}
-        for key, value in state_dict.items():
-            # Check if key contains any BN patterns (case insensitive)
-            key_lower = key.lower()
-            is_bn_key = any(pattern in key_lower for pattern in bn_patterns)
-            
-            if not is_bn_key:
-                filtered_dict[key] = value
-            else:
-                logger.debug(f"[BT-FL] Client {self.ID}: Filtered out BN key: {key}")
-                
-        if len(filtered_dict) != len(state_dict):
-            logger.info(f"[BT-FL] Client {self.ID}: Filtered {len(state_dict) - len(filtered_dict)} BN keys, kept {len(filtered_dict)} parameters")
-            
-        return filtered_dict
-    
     def _hook_apply_fl_lr(self, ctx):
         """
         Hook to restore FL scheduler learning rate after optimizer recreation.
@@ -1423,18 +1392,19 @@ class Client(BaseClient):
         logger.info(f"[BT-FL] Client {self.ID}: Using parameter completion strategy: {completion_strategy}")
         
         # Get the reference model (usually the global model)
+        # Use trainer's _param_filter to respect cfg.personalization.local_param (e.g., FedBN)
         reference_params = None
         if hasattr(self.trainer, 'ctx') and hasattr(self.trainer.ctx, 'model'):
             reference_params = self.trainer.ctx.model.state_dict()
         elif hasattr(self.trainer, 'model'):
             reference_params = self.trainer.model.state_dict()
-        
+
         if reference_params is None:
             logger.error(f"[BT-FL] Client {self.ID}: No reference model available for parameter completion")
             return None
-        
-        # Filter out BN keys to prevent accidental aggregation
-        filtered_reference = self._filter_bn_keys(reference_params)
+
+        # Filter parameters using trainer's built-in filter (respects cfg.personalization.local_param)
+        filtered_reference = self.trainer._param_filter(reference_params)
         if not filtered_reference:
             logger.error(f"[BT-FL] Client {self.ID}: No valid parameters after BN filtering")
             return None
@@ -2170,69 +2140,64 @@ class Client(BaseClient):
                 logger.warning(f"[BT] Client {self.ID}: Unknown buffered message type: {message_type}")
     
     def _run_bittorrent_exchange_loop(self, expected_chunks):
-        """Run BitTorrent exchange main loop"""
-        logger.info(f"[BT] Client {self.ID}: Exchange loop started, expected_chunks={expected_chunks}")
+        """
+        🚀 EVENT-DRIVEN: BitTorrent exchange main loop
+
+        This loop is driven by events:
+        1. BITFIELD/HAVE messages trigger request queue entries
+        2. Main loop processes request queue and sends REQUESTs
+        3. PIECE reception triggers HAVE broadcast (in callback)
+        4. Timeout mechanism retries failed requests
+
+        No more busy-polling or active request filling.
+        """
+        logger.info(f"[BT] Client {self.ID}: Event-driven exchange loop started, expected_chunks={expected_chunks}")
         try:
             import time
-            # 🐛 Bug fix 20: Add safe loop termination condition
-            max_iterations = 999999999999999  # Prevent infinite loop
-            iteration = 0
-            
-            while not self._has_all_chunks(expected_chunks) and iteration < max_iterations:
-                iteration += 1
-                
-                # 🔧 CRITICAL FIX: Check if BitTorrent exchange was stopped
+            last_progress_time = time.time()
+            last_unchoke_time = time.time()
+
+            while not self._has_all_chunks(expected_chunks):
+                # Check if exchange was stopped
                 if hasattr(self.bt_manager, 'is_stopped') and self.bt_manager.is_stopped:
-                    logger.info(f"[BT] Client {self.ID}: BitTorrent exchange was stopped, breaking from loop at iteration {iteration}")
+                    logger.info(f"[BT] Client {self.ID}: BitTorrent exchange stopped")
                     break
-                
-                # Output progress every 100 iterations
-                if iteration % 10 == 1:
-                    # 🆕 FIX: Safe access to bt_manager - check if still exists and not stopped
-                    if self.bt_manager and not self.bt_manager.is_stopped:
-                        current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
-                        peer_count = len(self.bt_manager.peer_bitfields)
-                        logger.info(f"[BT] Client {self.ID}: Iteration {iteration}, current chunks: {current_chunks}/{expected_chunks}, peers: {peer_count}")
-                    else:
-                        logger.info(f"[BT] Client {self.ID}: BitTorrent manager stopped, skipping progress update at iteration {iteration}")
-                        break
-                
-                # 🆕 Dual pool request management: Only fill when queue is empty, reduce selection program call frequency
-                # 🆕 FIX: Check bt_manager is still valid before accessing
-                if self.bt_manager and not self.bt_manager.is_stopped and len(self.bt_manager.pending_queue) == 0:
-                    logger.debug(f"[BT] Client {self.ID}: Pending queue empty, filling with priority chunks...")
-                    self.bt_manager._fill_pending_queue()
-                elif not self.bt_manager or self.bt_manager.is_stopped:
-                    logger.info(f"[BT] Client {self.ID}: BitTorrent manager stopped, exiting exchange loop")
+
+                if not self.bt_manager:
+                    logger.info(f"[BT] Client {self.ID}: BitTorrent manager gone, exiting")
                     break
-                
-                # Transfer requests from queue to active pool
-                if (len(self.bt_manager.pending_requests) < self.bt_manager.MAX_ACTIVE_REQUESTS and
-                    len(self.bt_manager.pending_queue) > 0):
-                    logger.debug(f"[BT] Client {self.ID}: Transferring requests from queue to active pool...")
-                    self.bt_manager._transfer_from_queue_to_active()
-                else:
-                    if iteration % 100 == 1:  # Reduce log frequency
-                        active_count = len(self.bt_manager.pending_requests)
-                        queue_count = len(self.bt_manager.pending_queue)
-                        if active_count == 0 and queue_count == 0:
-                            logger.info(f"[BT] Client {self.ID}: No chunks to request in iteration {iteration}")
-                        else:
-                            logger.debug(f"[BT] Client {self.ID}: Pool status - Active: {active_count}/{self.bt_manager.MAX_ACTIVE_REQUESTS}, Queue: {queue_count}/{self.bt_manager.MAX_PENDING_QUEUE}")
-                        
-                # Periodically update choke/unchoke (every 10 iterations)
-                if iteration % 10 == 0:
-                    self.bt_manager._regular_unchoke_algorithm()
-                    
-                # Check timeout
+
+                current_time = time.time()
+
+                # 🚀 EVENT-DRIVEN: Process request triggers from HAVE/BITFIELD handlers
+                requests_sent = self.bt_manager.process_request_triggers(max_requests=20)
+
+                # Check timeouts (handles retries)
                 self.bt_manager.check_timeouts()
-                    
-                # Brief sleep to avoid excessive CPU usage
-                time.sleep(0.01)
+
+                # Periodic unchoke (every 10 seconds)
+                if current_time - last_unchoke_time >= 10.0:
+                    self.bt_manager._regular_unchoke_algorithm()
+                    last_unchoke_time = current_time
+
+                # Progress logging (every 5 seconds)
+                if current_time - last_progress_time >= 5.0:
+                    current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
+                    pending_count = len(self.bt_manager.pending_requests)
+                    queue_size = self.bt_manager._request_trigger_queue.qsize()
+                    logger.info(f"[BT] Client {self.ID}: Progress {current_chunks}/{expected_chunks}, pending={pending_count}, queue={queue_size}")
+                    last_progress_time = current_time
+
+                # 🚀 EVENT-DRIVEN: Wait for events instead of busy-polling
+                # If no requests were sent and queue is empty, wait longer
+                if requests_sent == 0 and self.bt_manager._request_trigger_queue.empty():
+                    time.sleep(0.5)  # Wait 500ms for events
+                else:
+                    time.sleep(0.01)  # Brief yield when active
                 
             # Record completion reason
             final_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
-            logger.info(f"[BT] Client {self.ID}: Exchange loop completed after {iteration} iterations. Final chunks: {final_chunks}/{expected_chunks}")
+            logger.info(f"[BT] Client {self.ID}: Exchange loop completed. Final chunks: {final_chunks}/{expected_chunks}")
             
             #Clear old file files
             keep_rounds = getattr(self._cfg, 'chunk_keep_rounds', 2) if hasattr(self, '_cfg') else 2

@@ -15,6 +15,9 @@ import json
 from federatedscope.core.proto import gRPC_comm_manager_pb2_grpc
 from federatedscope.core.proto import gRPC_comm_manager_pb2
 
+# 🚀 FIX: Import at module level to avoid import lock contention in multi-threaded environment
+from federatedscope.core.message import Message, ChunkData
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -97,23 +100,38 @@ class StreamingChannel:
             daemon=True,
             name=f"ControlPipeline-{self.peer_id}"
         )
-        
+
         self.download_sender_thread = threading.Thread(
             target=self._enhanced_download_batch_processor,
             daemon=True,
             name=f"DownloadPipeline-{self.peer_id}"
         )
-        
+
         self.upload_sender_thread = threading.Thread(
             target=self._enhanced_upload_stream_processor,
             daemon=True,
             name=f"UploadPipeline-{self.peer_id}"
         )
-        
+
+        # 🚀 DEADLOCK FIX: Decouple network read from callback processing
+        # Download response queue: capacity must >= max_batch_size to ensure single batch responses
+        # can be enqueued without blocking the read thread
+        self.max_download_batch_size = 8  # Conservative for small buffer environments
+        self.download_response_queue = queue.Queue(maxsize=self.max_download_batch_size)
+
+        self.download_response_worker_thread = threading.Thread(
+            target=self._download_response_worker,
+            daemon=True,
+            name=f"DownloadRespWorker-{self.peer_id}"
+        )
+
         # Start optimized streaming pipeline processors
         self.control_receiver_thread.start()
         self.download_sender_thread.start()
         self.upload_sender_thread.start()
+        self.download_response_worker_thread.start()
+
+        logger.debug(f"[StreamChannel] 🚀 Download response worker started for peer {self.peer_id}")
         
         logger.debug(f"[StreamChannel] 🚀 Multi-pipeline streaming ACTIVE for peer {self.peer_id}")
         logger.debug(f"[StreamChannel] 📊 Performance monitoring enabled - Control/Upload/Download pipelines ready")
@@ -462,27 +480,68 @@ class StreamingChannel:
         finally:
             logger.debug(f"[StreamChannel] 🎛️ Control response handler ended for peer {self.peer_id}: {processed_responses} responses processed, {error_count} errors")
             
+    def _download_response_worker(self):
+        """🚀 DEADLOCK FIX: Dedicated worker for callback processing (hash/callback).
+        This thread NEVER participates in gRPC stream reading, ensuring network reads
+        are completely decoupled from potentially blocking callback operations.
+        """
+        logger.debug(f"[StreamChannel] 📥 Download response worker started for peer {self.peer_id}")
+        processed_count = 0
+        error_count = 0
+
+        while self.is_active:
+            try:
+                # Block waiting for response from queue
+                resp = self.download_response_queue.get(timeout=1.0)
+                if resp is None:
+                    # Shutdown signal
+                    logger.debug(f"[StreamChannel] 📥 Download response worker shutdown signal for peer {self.peer_id}")
+                    break
+
+                try:
+                    # Process response (hash + callback) - may block but won't affect network reads
+                    self._handle_download_response(resp)
+                    processed_count += 1
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"[StreamChannel] 📥 Download response worker error for peer {self.peer_id}: {e}")
+                    if error_count > 50:
+                        logger.error(f"[StreamChannel] 📥 Too many errors ({error_count}), stopping worker for peer {self.peer_id}")
+                        break
+
+            except queue.Empty:
+                # Timeout, continue checking is_active
+                continue
+            except Exception as e:
+                logger.error(f"[StreamChannel] 📥 Download response worker fatal error for peer {self.peer_id}: {e}")
+                break
+
+        logger.debug(f"[StreamChannel] 📥 Download response worker ended for peer {self.peer_id}: "
+                    f"{processed_count} processed, {error_count} errors")
+
     def _enhanced_download_batch_processor(self):
-        """🚀 Optimization 3: Enhanced download batch processor - Intelligent batch processing of chunk requests"""
+        """🚀 Optimization 3: Enhanced download batch processor - Intelligent batch processing of chunk requests
+        🔧 DEADLOCK FIX: Read stream only enqueues to download_response_queue, never calls callbacks directly.
+        """
         logger.debug(f"[StreamChannel] 📥 Download pipeline processor started for peer {self.peer_id}")
-        
-        # 🚀 Intelligent batch processing parameters - Performance optimization
+
+        # 🚀 DEADLOCK FIX: Limit batch size to queue capacity to ensure responses can be enqueued
         batch_requests = []
-        adaptive_batch_size = 10   # Increase batch size to improve throughput
-        max_batch_size = 50        # Increase maximum batch size
-        min_batch_timeout = 0.02   # Reduce minimum timeout
-        max_batch_timeout = 0.1    # Reduce maximum timeout
+        adaptive_batch_size = 2   # Start small for safety
+        max_batch_size = getattr(self, "max_download_batch_size", 8)  # Must not exceed queue capacity
+        min_batch_timeout = 0.02
+        max_batch_timeout = 0.1
         current_batch_timeout = min_batch_timeout
-        
-        # 🚀 性能监控
+
+        # 🚀 Performance monitoring
         processed_batches = 0
         total_chunks_downloaded = 0
         total_download_time = 0.0
         last_performance_check = time.time()
-        
+
         while self.is_active:
             batch_start_time = time.time()
-            
+
             try:
                 # 🚀 Optimization: Adaptive batch collection
                 end_time = time.time() + current_batch_timeout
@@ -500,12 +559,27 @@ class StreamingChannel:
                         batch_requests.append(request)
                     except queue.Empty:
                         break
-                
+
                 # 🚀 Optimization: Intelligent batch sending
                 if batch_requests:
                     batch_size = len(batch_requests)
                     logger.debug(f"[StreamChannel] 📥 Sending batch of {batch_size} download requests to peer {self.peer_id}")
-                    
+
+                    # 🚀 DEADLOCK FIX: Wait for queue to have enough space BEFORE initiating gRPC stream
+                    # This ensures the read thread can drain the entire batch without blocking
+                    expected = batch_size
+                    wait_start = time.time()
+                    queue_wait_timeout = 60.0  # 60s timeout for queue space
+
+                    while self.is_active:
+                        free = self.download_response_queue.maxsize - self.download_response_queue.qsize()
+                        if free >= expected:
+                            break
+                        if time.time() - wait_start > queue_wait_timeout:
+                            logger.error(f"[StreamChannel] 📥 Queue blocked for {queue_wait_timeout}s, breaking to recover for peer {self.peer_id}")
+                            break
+                        time.sleep(0.005)  # Small sleep; gRPC stream not yet started, won't block server
+
                     batch_request = gRPC_comm_manager_pb2.ChunkBatchRequest(
                         client_id=self.peer_id,
                         sender_id=self.client_id,
@@ -518,59 +592,62 @@ class StreamingChannel:
                             ) for req in batch_requests
                         ]
                     )
-                    
-                    # 🚀 Performance optimization: Parallel processing of download responses
+
+                    # 🚀 DEADLOCK FIX: Only enqueue responses, never call callbacks directly
                     download_start = time.time()
                     try:
                         download_stream = self.stub.downloadChunks(batch_request)
                         chunks_received = 0
-                        
+
                         for chunk_response in download_stream:
-                            self._handle_download_response(chunk_response)
+                            # 🚀 DEADLOCK FIX: Only enqueue, no callback processing here!
+                            # This ensures the read thread drains the stream completely
+                            self.download_response_queue.put(chunk_response)
                             chunks_received += 1
                             self.download_request_count += 1
-                        
+
                         download_time = time.time() - download_start
                         total_download_time += download_time
                         total_chunks_downloaded += chunks_received
                         processed_batches += 1
-                        
+
                         # 🚀 Adaptive optimization: Adjust batch processing parameters based on performance
                         avg_time_per_chunk = download_time / max(chunks_received, 1)
                         if avg_time_per_chunk < 0.01:  # Very fast, increase batch size
-                            adaptive_batch_size = min(adaptive_batch_size + 2, max_batch_size)
+                            adaptive_batch_size = min(adaptive_batch_size + 1, max_batch_size)
                             current_batch_timeout = min(current_batch_timeout * 1.1, max_batch_timeout)
                         elif avg_time_per_chunk > 0.05:  # Slower, decrease batch size
-                            adaptive_batch_size = max(adaptive_batch_size - 1, 3)
+                            adaptive_batch_size = max(adaptive_batch_size - 1, 2)
                             current_batch_timeout = max(current_batch_timeout * 0.9, min_batch_timeout)
-                        
+
                         logger.debug(f"[StreamChannel] 📥 Batch completed: {chunks_received} chunks in {download_time:.3f}s, adaptive_size={adaptive_batch_size}")
-                        
+
                     except Exception as e:
                         logger.error(f"[StreamChannel] 📥 Download stream error for peer {self.peer_id}: {e}")
                         # Reset batch processing parameters on error
-                        adaptive_batch_size = 5
+                        adaptive_batch_size = 2
                         current_batch_timeout = min_batch_timeout
-                    
+
                     batch_requests.clear()
-                    
+
                 # 🚀 Regular performance reporting and optimization
                 current_time = time.time()
                 if current_time - last_performance_check > 30.0:  # Check every 30 seconds
                     if processed_batches > 0:
                         avg_batch_time = total_download_time / processed_batches
                         avg_chunks_per_batch = total_chunks_downloaded / processed_batches
+                        queue_size = self.download_response_queue.qsize()
                         logger.debug(f"[StreamChannel] 📊 Download pipeline performance for peer {self.peer_id}:")
                         logger.debug(f"[StreamChannel] 📊   {processed_batches} batches, {total_chunks_downloaded} chunks")
                         logger.debug(f"[StreamChannel] 📊   Avg: {avg_chunks_per_batch:.1f} chunks/batch, {avg_batch_time:.3f}s/batch")
-                        logger.debug(f"[StreamChannel] 📊   Current adaptive_size: {adaptive_batch_size}, timeout: {current_batch_timeout:.3f}s")
+                        logger.debug(f"[StreamChannel] 📊   Current adaptive_size: {adaptive_batch_size}, response_queue: {queue_size}/{self.max_download_batch_size}")
                     last_performance_check = current_time
-                    
+
             except Exception as e:
                 logger.error(f"[StreamChannel] 📥 Download batch processor error for peer {self.peer_id}: {e}")
                 batch_requests.clear()
                 time.sleep(0.1)  # Avoid error loops
-            
+
         logger.debug(f"[StreamChannel] 📥 Download pipeline processor ended for peer {self.peer_id}")
         logger.debug(f"[StreamChannel] 📊 Final stats: {processed_batches} batches, {total_chunks_downloaded} total chunks downloaded")
             
@@ -581,10 +658,10 @@ class StreamingChannel:
         if not self.client_instance:
             logger.warning(f"[StreamChannel] No client instance for peer {self.peer_id}, cannot process control response")
             return
-            
+
         try:
-            from federatedscope.core.message import Message
-            
+            # Note: Message is imported at module level to avoid import lock contention
+
             # 🔧 Fix: Correctly handle all ChunkResponseType enum values
             if response.response_type == gRPC_comm_manager_pb2.ChunkResponseType.CHUNK_ACK:
                 # ACK response: Confirm received control message
@@ -695,11 +772,11 @@ class StreamingChannel:
             # 🔧 Update deduplication state
             source_client_id = getattr(response, 'source_client_id', response.sender_id)
             self.mark_chunk_completed(response.round_num, source_client_id, response.chunk_id)
-            
+
             # Create ChunkData object
-            from federatedscope.core.message import Message, ChunkData
+            # Note: Message and ChunkData are imported at module level to avoid import lock contention
             import hashlib
-                
+
             # Calculate checksum
             checksum = hashlib.sha256(response.response_data).hexdigest()
             
@@ -956,9 +1033,9 @@ class StreamingChannel:
         """Close streaming channel"""
         if not self.is_active:
             return
-            
+
         self.is_active = False
-        
+
         # Send shutdown signals to all queues
         try:
             self.request_queue.put(None)
@@ -968,18 +1045,26 @@ class StreamingChannel:
             self.download_request_queue.put((shutdown_priority, None))
         except:
             pass
-        
-        # Wait for threads to finish
+
+        # 🚀 DEADLOCK FIX: Send shutdown signal to download response worker
+        try:
+            if hasattr(self, "download_response_queue"):
+                self.download_response_queue.put(None)
+        except:
+            pass
+
+        # Wait for threads to finish (including download response worker)
         threads = [
             self.control_receiver_thread,
             self.download_sender_thread,
             self.upload_sender_thread,
+            getattr(self, "download_response_worker_thread", None),  # 🚀 DEADLOCK FIX
         ]
-        
+
         for thread in threads:
             if thread and thread.is_alive():
                 thread.join(timeout=1.0)
-            
+
         # Close gRPC channel
         try:
             self.channel.close()
@@ -1031,37 +1116,45 @@ class StreamingChannelManager:
         max_receive_size = 512 * 1024 * 1024  # 512MB receive limit
         
         # 🚀 HIGH-PERFORMANCE gRPC OPTIONS - Optimized for high concurrency and large data transfer
+        # 🔧 CRITICAL FIX: Prevent TCP buffer deadlock in P2P chunk exchange
         grpc_options = [
             # === MESSAGE SIZE LIMITS ===
             ('grpc.max_send_message_length', max_message_size),
             ('grpc.max_receive_message_length', max_receive_size),
-            
+
+            # === 🔧 CRITICAL: TCP Socket Buffer - Prevent deadlock ===
+            ('grpc.so_reuseport', 1),                                # Allow port reuse
+            ('grpc.tcp_socket_recv_buffer_size', 8 * 1024 * 1024),   # 8MB receive buffer
+            ('grpc.tcp_socket_send_buffer_size', 8 * 1024 * 1024),   # 8MB send buffer
+
             # === 🔧 FIX: KEEPALIVE SETTINGS - Solve "too many pings" error ===
             ('grpc.keepalive_time_ms', 120000),         # 120s keepalive (reduced frequency)
             ('grpc.keepalive_timeout_ms', 20000),       # 20s keepalive timeout
             ('grpc.keepalive_permit_without_calls', False), # ❌ Disable ping without active calls
-            
+
             # === 🔧 CRITICAL: HTTP2 PING CONTROL - Prevent server rejection ===
-            ('grpc.http2.max_pings_without_data', 2),   # ✅ Limit to 2 pings without data 
+            ('grpc.http2.max_pings_without_data', 2),   # ✅ Limit to 2 pings without data
             ('grpc.http2.min_time_between_pings_ms', 30000), # 30s minimum ping interval
             ('grpc.http2.min_ping_interval_without_data_ms', 600000), # 10min interval without data
-            
+
             # === 🚀 HIGH-CONCURRENCY OPTIMIZATIONS ===
             ('grpc.so_reuseaddr', 1),                   # Socket reuse
             ('grpc.max_connection_idle_ms', 300000),    # 5min connection idle timeout
             ('grpc.max_connection_age_ms', 1800000),    # 30min max connection age
             ('grpc.max_connection_age_grace_ms', 60000), # 1min grace period before force close
-            
-            # === 🚀 HIGH-THROUGHPUT OPTIMIZATIONS ===
+
+            # === 🔧 CRITICAL: HTTP/2 Flow Control - Prevent blocking ===
+            ('grpc.http2.initial_window_size', 64 * 1024 * 1024),           # 64MB (was missing)
+            ('grpc.http2.initial_connection_window_size', 128 * 1024 * 1024),# 128MB (was missing)
             ('grpc.http2.max_frame_size', 16777215),    # 16MB max frame size
             ('grpc.http2.bdp_probe', True),             # Enable bandwidth-delay probing
-            ('grpc.http2.write_buffer_size', 65536),    # 64KB write buffer
-            
+            ('grpc.http2.write_buffer_size', 16 * 1024 * 1024),  # 16MB write buffer (was 64KB!)
+
             # === 🚀 FLOW CONTROL OPTIMIZATIONS ===
             ('grpc.http2.hpack_table_size.decoder', 65536), # 64KB HPACK decoder table
             ('grpc.http2.hpack_table_size.encoder', 65536), # 64KB HPACK encoder table
             ('grpc.http2.max_concurrent_streams', 1000), # Support 1000 concurrent streams
-            
+
             # === 🚀 MEMORY AND PERFORMANCE ===
             ('grpc.max_metadata_size', 16384),          # 16KB metadata limit
             ('grpc.use_local_subchannel_pool', 1),      # Use local subchannel pool
@@ -1071,13 +1164,27 @@ class StreamingChannelManager:
         logger.debug(f"[StreamingManager] 📦 Max message size: {max_message_size / (1024*1024):.0f}MB")
         logger.debug(f"[StreamingManager] 📥 Max receive size: {max_receive_size / (1024*1024):.0f}MB")
         
-        for peer_id, (host, port) in neighbor_addresses.items():
+        for peer_id, addr_info in neighbor_addresses.items():
             if peer_id == self.client_id:
                 continue  # Skip self
-                
+
+            # Handle both TCP and UDS address formats
+            if isinstance(addr_info, tuple):
+                host, port = addr_info
+                # Check if it's a UDS address (host starts with unix://)
+                if str(host).startswith('unix://'):
+                    address = host  # UDS: use directly
+                else:
+                    address = f"{host}:{port}"  # TCP: format as host:port
+            elif isinstance(addr_info, str):
+                address = addr_info  # Already formatted (could be UDS or TCP)
+            else:
+                logger.error(f"[StreamingManager] Unknown address format for peer {peer_id}: {addr_info}")
+                continue
+
             try:
                 # 🚀 Create enhanced gRPC channel - Support large message transmission
-                address = f"{host}:{port}"
+                # Works with both TCP (host:port) and UDS (unix:///path) addresses
                 channel = grpc.insecure_channel(address, options=grpc_options)
                 
                 # Create stub
@@ -1093,14 +1200,17 @@ class StreamingChannelManager:
                 self.channels[peer_id] = stream_channel
                 self.server_stubs[address] = stub
                 
+                is_uds = address.startswith('unix://')
+                mode_str = "UDS" if is_uds else "TCP"
+
                 if stream_channel.is_active:
-                    logger.debug(f"[StreamingManager] ✅ Enhanced streaming channel: Client {self.client_id} -> Peer {peer_id} ({address})")
+                    logger.debug(f"[StreamingManager] ✅ Enhanced streaming channel ({mode_str}): Client {self.client_id} -> Peer {peer_id} ({address})")
                     logger.debug(f"[StreamingManager] 🚀 Support for chunks up to {max_message_size / (1024*1024):.0f}MB")
                 else:
-                    logger.debug(f"[StreamingManager] 🔧 Traditional fallback channel: Client {self.client_id} -> Peer {peer_id} ({address})")
-                
+                    logger.debug(f"[StreamingManager] 🔧 Traditional fallback channel ({mode_str}): Client {self.client_id} -> Peer {peer_id} ({address})")
+
             except Exception as e:
-                logger.error(f"[StreamingManager] Failed to create enhanced channel to peer {peer_id} at {host}:{port}: {e}")
+                logger.error(f"[StreamingManager] Failed to create enhanced channel to peer {peer_id} at {address}: {e}")
                 
         logger.debug(f"[StreamingManager] Client {self.client_id}: Created {len(self.channels)} enhanced streaming channels")
         logger.debug(f"[StreamingManager] 🚀 STREAMING OPTIMIZATION: BitTorrent messages now support high-performance streaming:")

@@ -1,8 +1,8 @@
 import logging
 
 from importlib import import_module
-from federatedscope.core.data.utils import RegexInverseMap, load_dataset, \
-    convert_data_mode
+from federatedscope.core.data.utils import (RegexInverseMap, load_dataset,
+                                            convert_data_mode, LEAF_DATASETS)
 from federatedscope.core.auxiliaries.utils import setup_seed
 
 import federatedscope.register as register
@@ -18,6 +18,8 @@ except ImportError as error:
 
 # TODO: Add PyGNodeDataTranslator and PyGLinkDataTranslator
 # TODO: move splitter to PyGNodeDataTranslator and PyGLinkDataTranslator
+# Note: LEAF_DATASETS is imported from federatedscope.core.data.utils
+
 TRANS_DATA_MAP = {
     'BaseDataTranslator': [
         '.*?@.*?', 'hiv', 'proteins', 'imdb-binary', 'bbbp', 'tox21', 'bace',
@@ -34,6 +36,35 @@ TRANS_DATA_MAP = {
     'RawDataTranslator': ['hetero_nlp_tasks'],
 }
 DATA_TRANS_MAP = RegexInverseMap(TRANS_DATA_MAP, None)
+
+
+def get_translator_name(config):
+    """
+    Dynamically select translator based on config settings.
+
+    For LEAF datasets, choose between:
+    - DummyDataTranslator: Keep original user-based split
+    - MergedLeafTranslator: Merge all users and re-split using configured splitter
+
+    Args:
+        config: Configuration object
+
+    Returns:
+        str: Translator class name
+    """
+    dataset_type = config.data.type.lower()
+
+    # Check if this is a LEAF dataset and merge_leaf_before_split is enabled
+    if dataset_type in LEAF_DATASETS and \
+       hasattr(config.data, 'merge_leaf_before_split') and \
+       config.data.merge_leaf_before_split:
+        logger.info(f"🔄 Using MergedLeafTranslator for LEAF dataset '{dataset_type}' "
+                   f"(merge_leaf_before_split=True)")
+        return 'MergedLeafTranslator'
+
+    # Otherwise use default translator from mapping
+    translator_name = DATA_TRANS_MAP[dataset_type]
+    return translator_name
 
 
 def get_data(config, client_cfgs=None):
@@ -127,9 +158,10 @@ def get_data(config, client_cfgs=None):
     # Apply translator to non-FL dataset to transform it into its federated
     # counterpart
     if dataset is not None:
+        # Dynamically select translator based on config
+        translator_name = get_translator_name(modified_config)
         translator = getattr(import_module('federatedscope.core.data'),
-                             DATA_TRANS_MAP[config.data.type.lower()])(
-                                 modified_config, client_cfgs)
+                             translator_name)(modified_config, client_cfgs)
         data = translator(dataset)
 
         # Convert `StandaloneDataDict` to `ClientData` when in distribute mode

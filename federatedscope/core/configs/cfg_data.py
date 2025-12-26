@@ -27,6 +27,9 @@ def extend_data_cfg(cfg):
     # consistent during splitting
     cfg.data.share_test_dataset = False  # If True, all clients will use the
     # same complete test dataset for global evaluation
+    cfg.data.merge_leaf_before_split = False  # For LEAF datasets (femnist,
+    # celeba, etc.): If True, merge all original users' data and re-split
+    # using configured splitter; If False, use original user-based split
     cfg.data.cSBM_phi = [0.5, 0.5, 0.5]
 
     cfg.data.transform = [

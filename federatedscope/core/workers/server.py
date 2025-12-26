@@ -249,7 +249,11 @@ class Server(BaseServer, ConnectionHandlerMixin):
                                                 port=port,
                                                 client_num=client_num,
                                                 cfg=self._cfg.distribute)
-            logger.info('Server: Listen to {}:{}...'.format(host, port))
+            # Log listen address (handle UDS mode)
+            if str(host).startswith('unix://'):
+                logger.info('Server: Listen to {} (UDS mode)...'.format(host))
+            else:
+                logger.info('Server: Listen to {}:{}...'.format(host, port))
 
         # inject noise before broadcast
         self._noise_injector = None
@@ -496,8 +500,15 @@ class Server(BaseServer, ConnectionHandlerMixin):
                     if neighbor_id in self.comm_manager.neighbors:
                         neighbor_addr = self.comm_manager.neighbors[neighbor_id]
                         # Parse address string to dictionary format
-                        if ':' in neighbor_addr:
-                            host, port = neighbor_addr.split(':')
+                        if neighbor_addr.startswith('unix://'):
+                            # UDS mode: pass the full address directly
+                            neighbor_addresses[neighbor_id] = {
+                                'host': neighbor_addr,
+                                'port': 0  # Port not used in UDS mode
+                            }
+                        elif ':' in neighbor_addr:
+                            # TCP mode: split host:port
+                            host, port = neighbor_addr.rsplit(':', 1)
                             neighbor_addresses[neighbor_id] = {
                                 'host': host,
                                 'port': int(port)

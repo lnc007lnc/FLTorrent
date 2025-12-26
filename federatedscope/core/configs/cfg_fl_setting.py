@@ -77,6 +77,15 @@ def extend_fl_setting_cfg(cfg):
     cfg.distribute.grpc_enable_http_proxy = False
     cfg.distribute.grpc_compression = 'nocompression'  # [deflate, gzip]
 
+    # Unix Domain Socket (UDS) configuration - bypasses TCP buffer limits
+    cfg.distribute.use_uds = False  # Use UDS instead of TCP (single-node only)
+    cfg.distribute.uds_dir = '/tmp/federatedscope_uds'  # Directory for UDS files
+
+    # LFT (Lightweight Fragmented Transport) for reliable large chunk transfer
+    # Solves buffer overflow issue: system buffer ~208KB < gRPC message 300MB
+    cfg.distribute.lft_enabled = True  # Enable LFT fragmentation
+    cfg.distribute.lft_fragment_size = 128 * 1024  # 128KB per fragment (< 208KB buffer)
+
     # ---------------------------------------------------------------------- #
     # Vertical FL related options (for demo)
     # ---------------------------------------------------------------------- #

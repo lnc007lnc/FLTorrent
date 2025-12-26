@@ -9,6 +9,11 @@ from collections import deque
 from federatedscope.core.proto import gRPC_comm_manager_pb2, \
     gRPC_comm_manager_pb2_grpc
 
+# 🚀 FIX: Import at module level to avoid import lock contention in multi-threaded gRPC server
+# Dynamic imports inside functions cause thread blocking due to Python's import lock
+# This is CRITICAL for gRPC server thread pool performance
+from federatedscope.core.message import Message, ChunkData
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -360,18 +365,13 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
         
         if chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_PIECE:
             # 🚀 CRITICAL FIX: Correctly create piece message with all necessary chunk data
-            from federatedscope.core.message import ChunkData
-            
-            
+            # Note: Message and ChunkData are imported at module level to avoid import lock contention
+
             # Create ChunkData wrapper
             chunk_wrapper = ChunkData(chunk_request.chunk_data, chunk_request.checksum)
-            
+
             # Create complete protobuf message with all piece data
             message_request = gRPC_comm_manager_pb2.MessageRequest()
-            
-            # Set message content - simulate traditional piece message structure
-            # Note: We need to manually construct message content, like traditional messages in _send_piece
-            from federatedscope.core.message import Message
             
             # Create traditional format Message object
             traditional_msg = Message(
@@ -399,8 +399,6 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_REQUEST:
             # Process request message
-            from federatedscope.core.message import Message
-            
             traditional_msg = Message(
                 msg_type='request',
                 sender=chunk_request.sender_id,
@@ -417,8 +415,6 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_HAVE:
             # 🚀 处理have消息
-            from federatedscope.core.message import Message
-            
             traditional_msg = Message(
                 msg_type='have',
                 sender=chunk_request.sender_id,
@@ -437,8 +433,6 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_BITFIELD:
             # 🚀 Process bitfield message
-            from federatedscope.core.message import Message
-            
             # Decode bitfield data
             bitfield_data = []
             if chunk_request.chunk_data:
@@ -463,8 +457,6 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_CANCEL:
             # 🚀 Process cancel message
-            from federatedscope.core.message import Message
-            
             traditional_msg = Message(
                 msg_type='cancel',
                 sender=chunk_request.sender_id,
@@ -482,8 +474,6 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_INTERESTED_REQ:
             # 🔧 Process interested message
-            from federatedscope.core.message import Message
-            
             traditional_msg = Message(
                 msg_type='interested',
                 sender=chunk_request.sender_id,
@@ -500,8 +490,6 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_UNCHOKE_REQ:
             # 🔧 Process unchoke message
-            from federatedscope.core.message import Message
-            
             traditional_msg = Message(
                 msg_type='unchoke',
                 sender=chunk_request.sender_id,
@@ -518,8 +506,6 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             
         elif chunk_request.chunk_type == gRPC_comm_manager_pb2.ChunkType.CHUNK_CHOKE_REQ:
             # 🔧 Process choke message
-            from federatedscope.core.message import Message
-            
             traditional_msg = Message(
                 msg_type='choke',
                 sender=chunk_request.sender_id,
@@ -540,7 +526,9 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             return gRPC_comm_manager_pb2.MessageRequest()
 
     def receive(self):
+        # 🔧 FIX: Replace busy-wait with sleep to avoid CPU spin
+        # With 50+ clients, busy-wait caused 100% CPU usage and resource exhaustion
         while len(self.msg_queue) == 0:
-            continue
+            time.sleep(0.001)  # 1ms sleep prevents CPU burning
         msg = self.msg_queue.popleft()
         return msg
