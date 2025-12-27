@@ -318,6 +318,40 @@ class Client(BaseClient):
             if msg.msg_type == 'finish':
                 break
 
+        # 🚀 GRACEFUL SHUTDOWN: Stop all components after FL completes
+        self._cleanup_on_finish()
+
+    def _cleanup_on_finish(self):
+        """🚀 Clean up all resources after receiving finish message"""
+        logger.info(f"[Client {self.ID}] Starting graceful shutdown...")
+
+        # 1. Stop BitTorrent manager if exists
+        if hasattr(self, 'bt_manager') and self.bt_manager is not None:
+            try:
+                self.bt_manager.stop_exchange()
+                logger.info(f"[Client {self.ID}] BitTorrent manager stopped")
+            except Exception as e:
+                logger.warning(f"[Client {self.ID}] Error stopping BitTorrent: {e}")
+
+        # 2. Stop streaming channel manager if exists
+        if hasattr(self, 'streaming_channel_manager') and self.streaming_channel_manager is not None:
+            try:
+                self.streaming_channel_manager.close_all_channels()
+                logger.info(f"[Client {self.ID}] Streaming channels closed")
+            except Exception as e:
+                logger.warning(f"[Client {self.ID}] Error closing streaming channels: {e}")
+
+        # 3. Stop communication manager (gRPC server)
+        if hasattr(self, 'comm_manager') and self.comm_manager is not None:
+            try:
+                if hasattr(self.comm_manager, 'stop'):
+                    self.comm_manager.stop()
+                logger.info(f"[Client {self.ID}] Communication manager stopped")
+            except Exception as e:
+                logger.warning(f"[Client {self.ID}] Error stopping comm_manager: {e}")
+
+        logger.info(f"[Client {self.ID}] Graceful shutdown complete")
+
     def run_standalone(self):
         """
         Run in standalone mode

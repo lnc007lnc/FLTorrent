@@ -379,6 +379,24 @@ class Server(BaseServer, ConnectionHandlerMixin):
 
         self.terminate(msg_type='finish')
 
+        # 🚀 GRACEFUL SHUTDOWN: Clean up all resources after FL completes
+        self._cleanup_on_finish()
+
+    def _cleanup_on_finish(self):
+        """🚀 Clean up all resources after FL training completes"""
+        logger.info(f"[Server] Starting graceful shutdown...")
+
+        # 1. Stop communication manager (gRPC server)
+        if hasattr(self, 'comm_manager') and self.comm_manager is not None:
+            try:
+                if hasattr(self.comm_manager, 'stop'):
+                    self.comm_manager.stop()
+                logger.info(f"[Server] Communication manager stopped")
+            except Exception as e:
+                logger.warning(f"[Server] Error stopping comm_manager: {e}")
+
+        logger.info(f"[Server] Graceful shutdown complete")
+
     def check_and_move_on(self,
                           check_eval_result=False,
                           min_received_num=None):

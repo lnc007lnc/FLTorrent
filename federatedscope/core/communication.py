@@ -508,3 +508,31 @@ class gRPCCommManager(object):
         self._data_connection_pool.clear()
 
         logger.info(f"[ConnPool] Both control and data connection pools cleared")
+
+    def stop(self):
+        """🚀 GRACEFUL SHUTDOWN: Stop gRPC server and close all connections"""
+        logger.info(f"[gRPC] Stopping gRPC communication manager...")
+
+        # 1. Close connection pools first
+        self.close_connection_pool()
+
+        # 2. Stop gRPC server
+        if hasattr(self, 'grpc_server') and self.grpc_server is not None:
+            try:
+                # Grace period: allow 2 seconds for ongoing RPCs to complete
+                self.grpc_server.stop(grace=2.0)
+                logger.info(f"[gRPC] gRPC server stopped successfully")
+            except Exception as e:
+                logger.warning(f"[gRPC] Error stopping gRPC server: {e}")
+
+        # 3. Clean up UDS socket file if used
+        if self.use_uds and hasattr(self, 'uds_path') and self.uds_path:
+            import os
+            try:
+                if os.path.exists(self.uds_path):
+                    os.remove(self.uds_path)
+                    logger.debug(f"[gRPC] Removed UDS socket: {self.uds_path}")
+            except Exception as e:
+                logger.warning(f"[gRPC] Error removing UDS socket: {e}")
+
+        logger.info(f"[gRPC] Communication manager shutdown complete")
