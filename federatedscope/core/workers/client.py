@@ -2107,12 +2107,15 @@ class Client(BaseClient):
             self._streaming_manager  # 🚀 Pass streaming manager
         )
 
-        # 🚀 CRITICAL FIX: Initialize memory-based chunk counters to avoid DB queries in main loop
-        # Use memory bitfield (already populated by register_own_chunks when chunks were saved)
-        own_bitfield = self.bt_manager.get_memory_bitfield()
-        own_chunks_count = len(own_bitfield)
-        total_clients = self._cfg.federate.client_num if hasattr(self._cfg, 'federate') else 50
+        # 🚀 CRITICAL FIX: Register own chunks to memory AFTER bt_manager is created
+        # Query chunk_manager for own chunks and register them to bt_manager
         chunks_per_client = self._cfg.chunk.num_chunks if hasattr(self._cfg, 'chunk') else 16
+        own_chunk_keys = [(round_num, self.ID, i) for i in range(chunks_per_client)]
+        self.bt_manager.register_own_chunks(own_chunk_keys)
+
+        # Initialize memory-based chunk counters
+        own_chunks_count = len(own_chunk_keys)
+        total_clients = self._cfg.federate.client_num if hasattr(self._cfg, 'federate') else 50
         expected_total = total_clients * chunks_per_client
 
         self.bt_manager.set_own_chunks_count(own_chunks_count)
