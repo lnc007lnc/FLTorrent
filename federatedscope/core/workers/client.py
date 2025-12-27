@@ -2183,6 +2183,10 @@ class Client(BaseClient):
             BITFIELD_REFRESH_INTERVAL = 5.0
             cached_bitfield = {}
 
+            # 🚀 CRITICAL FIX: Initialize final_chunks to track early capture
+            # When is_stopped is detected, we capture the count immediately before it's cleared
+            final_chunks = None
+
             while True:
                 current_time = time.time()
 
@@ -2205,10 +2209,15 @@ class Client(BaseClient):
 
                 # Check if exchange was stopped
                 if hasattr(self.bt_manager, 'is_stopped') and self.bt_manager.is_stopped:
-                    logger.info(f"[BT] Client {self.ID}: BitTorrent exchange stopped")
+                    # 🚀 CRITICAL FIX: Get chunk count IMMEDIATELY when stopped detected
+                    # The main thread's stop_exchange() may have already cleared the counters
+                    # so we must capture the count right now before it's too late
+                    final_chunks = self.bt_manager.get_memory_chunk_count()
+                    logger.info(f"[BT] Client {self.ID}: BitTorrent exchange stopped, captured final_chunks={final_chunks}")
                     break
 
                 if not self.bt_manager:
+                    final_chunks = 0
                     logger.info(f"[BT] Client {self.ID}: BitTorrent manager gone, exiting")
                     break
 
@@ -2240,7 +2249,9 @@ class Client(BaseClient):
                 
             # 🚀 CRITICAL FIX: Record chunk count IMMEDIATELY before any other operation
             # This prevents race condition where main thread calls stop_exchange() and clears counters
-            final_chunks = self.bt_manager.get_memory_chunk_count()
+            # Note: final_chunks may have been set in the loop when is_stopped was detected
+            if final_chunks is None:
+                final_chunks = self.bt_manager.get_memory_chunk_count()
             final_downloaded = getattr(self.bt_manager, 'total_downloaded', 0)
             final_uploaded = getattr(self.bt_manager, 'total_uploaded', 0)
             logger.info(f"[BT] Client {self.ID}: Exchange loop completed. Final chunks: {final_chunks}/{expected_chunks}")
