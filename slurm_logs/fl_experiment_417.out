@@ -1,0 +1,50 @@
+============================================
+Job ID: 417
+Job Name: fl_experiment
+Hetjob Size: 2 partitions
+Start Time: Sun Dec 21 03:50:05 AM CET 2025
+============================================
+Head Node: srv-it-node02 (10.0.0.2)
+Total clients: 50
+Starting Ray head on srv-it-node02...
+Waiting for Ray head to be ready at 10.0.0.2:6379...
+Ray head is ready after 1 seconds!
+Starting Ray worker on hetjob group 1...
+  Worker 1 connection attempt 1...
+Waiting for Ray cluster to have 2 nodes...
+2025-12-21 03:50:06,474	INFO usage_lib.py:473 -- Usage stats collection is enabled by default without user confirmation because this terminal is detected to be non-interactive. To disable this, add `--disable-usage-stats` to the command that starts the cluster, or run the following command: `ray disable-usage-stats` before starting the cluster. See https://docs.ray.io/en/master/cluster/usage-stats.html for more details.
+2025-12-21 03:50:06,475	INFO scripts.py:917 -- [37mLocal node IP[39m: [1m10.0.0.2[22m
+2025-12-21 03:50:08,794	SUCC scripts.py:956 -- [32m--------------------[39m
+2025-12-21 03:50:08,794	SUCC scripts.py:957 -- [32mRay runtime started.[39m
+2025-12-21 03:50:08,794	SUCC scripts.py:958 -- [32m--------------------[39m
+2025-12-21 03:50:08,794	INFO scripts.py:960 -- [36mNext steps[39m
+2025-12-21 03:50:08,794	INFO scripts.py:963 -- To add another node to this Ray cluster, run
+2025-12-21 03:50:08,794	INFO scripts.py:966 -- [1m  ray start --address='10.0.0.2:6379'[22m
+2025-12-21 03:50:08,794	INFO scripts.py:975 -- To connect to this Ray cluster:
+2025-12-21 03:50:08,794	INFO scripts.py:977 -- [35mimport[39m[26m ray
+2025-12-21 03:50:08,794	INFO scripts.py:978 -- ray[35m.[39m[26minit(_node_ip_address[35m=[39m[26m[33m'10.0.0.2'[39m[26m)
+2025-12-21 03:50:08,794	INFO scripts.py:990 -- To submit a Ray job using the Ray Jobs CLI:
+2025-12-21 03:50:08,794	INFO scripts.py:991 -- [1m  RAY_API_SERVER_ADDRESS='http://10.0.0.2:8265' ray job submit --working-dir . -- python my_script.py[22m
+2025-12-21 03:50:08,794	INFO scripts.py:1000 -- See https://docs.ray.io/en/latest/cluster/running-applications/job-submission/index.html 
+2025-12-21 03:50:08,794	INFO scripts.py:1004 -- for more information on submitting Ray jobs to the Ray cluster.
+2025-12-21 03:50:08,794	INFO scripts.py:1009 -- To terminate the Ray runtime, run
+2025-12-21 03:50:08,794	INFO scripts.py:1010 -- [1m  ray stop[22m
+2025-12-21 03:50:08,794	INFO scripts.py:1013 -- To view the status of the cluster, use
+2025-12-21 03:50:08,794	INFO scripts.py:1014 --   [1mray status[22m[26m
+2025-12-21 03:50:08,794	INFO scripts.py:1018 -- To monitor and debug Ray, view the dashboard at 
+2025-12-21 03:50:08,794	INFO scripts.py:1019 --   [1m10.0.0.2:8265[22m[26m
+2025-12-21 03:50:08,794	INFO scripts.py:1026 -- [4mIf connection to the dashboard fails, check your firewall settings and network configuration.[24m
+  Current nodes: 0, waiting... (10 seconds)
+  Current nodes: 0, waiting... (20 seconds)
+2025-12-21 03:50:08,443	INFO scripts.py:1101 -- [37mLocal node IP[39m: [1m10.0.0.1[22m
+  Current nodes: 0, waiting... (30 seconds)
+  Worker 1 connection attempt 2...
+  Current nodes: 0, waiting... (40 seconds)
+  Current nodes: 0, waiting... (50 seconds)
+  Current nodes: 0, waiting... (60 seconds)
+  Current nodes: 0, waiting... (70 seconds)
+  Current nodes: 0, waiting... (80 seconds)
+  Current nodes: 0, waiting... (90 seconds)
+WARNING: Ray cluster has 0 nodes, expected 2
+Ray cluster status:
+Starting FL experiment with hetjob distribution...

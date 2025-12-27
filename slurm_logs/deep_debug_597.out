@@ -1,0 +1,104 @@
+=== 1. Check cgroup version ===
+cgroup2 on /sys/fs/cgroup type cgroup2 (rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot)
+
+=== 2. Current process cgroup ===
+0::/system.slice/srv-it-node03_slurmstepd.scope/job_597/step_batch/user/task_special
+
+=== 3. Check cgroup device controller ===
+Cgroup path: /system.slice/srv-it-node03_slurmstepd.scope/job_597/step_batch/user/task_special
+total 0
+drwxr-xr-x 2 root root 0 Dec 26 23:50 .
+drwxr-xr-x 3 root root 0 Dec 26 23:50 ..
+-r--r--r-- 1 root root 0 Dec 26 23:50 cgroup.controllers
+-r--r--r-- 1 root root 0 Dec 26 23:50 cgroup.events
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cgroup.freeze
+--w------- 1 root root 0 Dec 26 23:50 cgroup.kill
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cgroup.max.depth
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cgroup.max.descendants
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cgroup.procs
+-r--r--r-- 1 root root 0 Dec 26 23:50 cgroup.stat
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cgroup.subtree_control
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cgroup.threads
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cgroup.type
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cpu.idle
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cpu.max
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cpu.max.burst
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cpuset.cpus
+-r--r--r-- 1 root root 0 Dec 26 23:50 cpuset.cpus.effective
+-rw-r--r-- 1 root root 0 Dec 26 23:50 cpuset.cpus.exclusive
+
+=== 4. Check device access in cgroup v2 ===
+cpuset cpu memory
+No devices.allow (cgroup v2?)
+
+=== 5. Direct device file check with ls ===
+crw-rw-rw- 1 root root 195,   0 Dec 11 19:27 /dev/nvidia0
+crw-rw-rw- 1 root root 195,   1 Dec 11 19:27 /dev/nvidia1
+crw-rw-rw- 1 root root 195,   2 Dec 11 19:27 /dev/nvidia2
+crw-rw-rw- 1 root root 195, 255 Dec 11 19:27 /dev/nvidiactl
+crw-rw-rw- 1 root root 511,   0 Dec 12 11:08 /dev/nvidia-uvm
+crw-rw-rw- 1 root root 511,   1 Dec 12 11:08 /dev/nvidia-uvm-tools
+
+/dev/nvidia-caps:
+total 0
+drwxr-xr-x  2 root root     80 Dec 12 11:08 .
+drwxr-xr-x 15 root root   3340 Dec 12 11:08 ..
+cr--------  1 root root 236, 1 Dec 12 11:08 nvidia-cap1
+cr--r--r--  1 root root 236, 2 Dec 12 11:08 nvidia-cap2
+
+=== 6. Try opening device file directly ===
+/dev/nvidia0: mode=crw-rw-rw-, is_char_device=True, major=195, minor=0
+  -> Successfully opened!
+/dev/nvidia1: mode=crw-rw-rw-, is_char_device=True, major=195, minor=1
+  -> Successfully opened!
+/dev/nvidia2: mode=crw-rw-rw-, is_char_device=True, major=195, minor=2
+  -> Successfully opened!
+/dev/nvidiactl: mode=crw-rw-rw-, is_char_device=True, major=195, minor=255
+  -> Successfully opened!
+/dev/nvidia-uvm: mode=crw-rw-rw-, is_char_device=True, major=511, minor=0
+  -> Successfully opened!
+
+=== 7. Check SLURM GPU environment ===
+SLURM_JOB_GPUS: 0,1,2
+SLURM_GPUS_ON_NODE: 3
+CUDA_VISIBLE_DEVICES: 0,1,2
+
+=== 8. Check gres.conf ===
+GresTypes               = gpu
+
+=== 9. Check if nvidia-persistenced is running ===
+nvidia-+    3653  0.0  0.0  14428  1024 ?        Ss   Dec11   0:02 /usr/bin/nvidia-persistenced --user nvidia-persistenced
+root        3656  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/841-nvidia]
+root        3657  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/842-nvidia]
+root        3658  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/843-nvidia]
+root        3659  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/844-nvidia]
+root        3660  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/845-nvidia]
+root        3661  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/846-nvidia]
+root        3662  0.0  0.0      0     0 ?        S    Dec11   0:00 [nvidia]
+root        3690  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/847-nvidia]
+root        3691  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/848-nvidia]
+root        3692  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/849-nvidia]
+root        3693  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/850-nvidia]
+root        3694  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/851-nvidia]
+root        3695  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/852-nvidia]
+root        3696  0.0  0.0      0     0 ?        S    Dec11   0:00 [nvidia]
+root        3741  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/853-nvidia]
+root        3742  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/854-nvidia]
+root        3743  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/855-nvidia]
+root        3744  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/856-nvidia]
+root        3745  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/857-nvidia]
+root        3746  0.0  0.0      0     0 ?        S    Dec11   0:00 [irq/858-nvidia]
+root        3747  0.0  0.0      0     0 ?        S    Dec11   0:00 [nvidia]
+1796601+  727711  0.0  0.0   6404  2048 ?        S    23:50   0:00 grep nvidia
+
+=== 10. Check dmesg for nvidia errors ===
+[   59.658912] nvidia_modeset: Unknown symbol acpi_video_register_backlight (err -2)
+[   59.659006] nvidia_modeset: Unknown symbol __acpi_video_get_backlight_type (err -2)
+[   66.150554] nvidia_modeset: Unknown symbol acpi_video_register_backlight (err -2)
+[   66.150661] nvidia_modeset: Unknown symbol __acpi_video_get_backlight_type (err -2)
+[   67.136581] nvidia_modeset: Unknown symbol acpi_video_register_backlight (err -2)
+[   67.136681] nvidia_modeset: Unknown symbol __acpi_video_get_backlight_type (err -2)
+[   68.113831] nvidia_modeset: Unknown symbol acpi_video_register_backlight (err -2)
+[   68.113896] nvidia_modeset: Unknown symbol __acpi_video_get_backlight_type (err -2)
+[956954.781483] nvidia 0000:81:00.0: Using 47-bit DMA addresses
+[956957.817764] nvidia 0000:25:00.0: Using 47-bit DMA addresses

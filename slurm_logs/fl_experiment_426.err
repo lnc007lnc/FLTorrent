@@ -1,0 +1,115 @@
+2025-12-21 04:02:36,874 - __main__ - INFO - 🚀 Start Ray V2 federated learning
+2025-12-21 04:02:36,874 - __main__ - INFO - 📊 Configuration: 50 clients, 100 rounds training, total nodes: 51
+2025-12-21 04:02:36,874 - __main__ - INFO - 🧹 Clean environment...
+2025-12-21 04:02:37,989 - __main__ - INFO - ✅ Environment cleanup completed
+2025-12-21 04:02:37,993 - __main__ - WARNING - ⚠️  Docker unavailable, switch to non-container mode
+2025-12-21 04:02:38,014	INFO worker.py:1821 -- Connecting to existing Ray cluster at address: 10.0.0.2:6379...
+2025-12-21 04:02:38,026	INFO worker.py:1998 -- Connected to Ray cluster. View the dashboard at [1m[32m10.0.0.2:8265 [39m[22m
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/_private/worker.py:2046: FutureWarning: Tip: In future versions of Ray, Ray will no longer override accelerator visible devices env var if num_gpus=0 or num_gpus=None (default). To enable this behavior and turn off this error message, set RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+  warnings.warn(
+2025-12-21 04:02:39,153 - __main__ - INFO - 🚀 Connected to external Ray cluster: 10.0.0.2:6379
+2025-12-21 04:02:39,153 - __main__ - INFO -    📊 Resources: {'memory': 549393599284.0, 'node:__internal_head__': 1.0, 'CPU': 128.0, 'GPU': 6.0, 'node:10.0.0.2': 1.0, 'accelerator_type:A100': 1.0, 'object_store_memory': 235454399692.0, 'node:10.0.0.1': 1.0, 'accelerator_type:L4': 1.0}
+2025-12-21 04:02:39,153 - __main__ - INFO - 🌐 Ray Cluster Topology:
+2025-12-21 04:02:39,153 - __main__ - INFO -    📍 Head node: 32841b4efbb9... (Server will run here)
+2025-12-21 04:02:39,153 - __main__ - INFO -    📍 Worker nodes: 1 available
+2025-12-21 04:02:39,153 - __main__ - INFO -       Worker 1: 828cfd5a65aa...
+2025-12-21 04:02:39,154 - __main__ - INFO - 📍 Head node (32841b4efbb9...): 4.0 GPUs
+2025-12-21 04:02:39,154 - __main__ - INFO - 📍 Worker node (828cfd5a65aa...): 2.0 GPUs
+2025-12-21 04:02:39,154 - __main__ - INFO - 📊 Total GPUs across all nodes: 6.0
+2025-12-21 04:02:39,155 - __main__ - INFO -    Node 32841b4efbb9...: 33 clients (based on 4.0 GPUs)
+2025-12-21 04:02:39,155 - __main__ - INFO -    Node 828cfd5a65aa...: 17 clients (based on 2.0 GPUs)
+2025-12-21 04:02:39,155 - __main__ - INFO -    Node 32841b4efbb9...: 4.0 GPU, 33 clients -> max 0.1152 GPU/client
+2025-12-21 04:02:39,155 - __main__ - INFO -    Node 828cfd5a65aa...: 2.0 GPU, 17 clients -> max 0.1118 GPU/client
+2025-12-21 04:02:39,156 - __main__ - INFO - 🎯 GPU allocation summary: {'total_available_gpus': 6.0, 'total_allocated_gpus': 5.7022, 'utilization_rate': '95.04%', 'server': 'CPU only', 'per_node_allocation': {'32841b4efbb9': {'count': 33, 'total_gpu': 3.8016000000000028}, '828cfd5a65aa': {'count': 17, 'total_gpu': 1.9005999999999992}}, 'gpu_clients': 50, 'cpu_clients': 0}
+2025-12-21 04:02:39,156 - __main__ - INFO - 📋 Client distribution: 50 GPU clients, 0 CPU clients
+2025-12-21 04:02:41,265 - __main__ - INFO - 📍 Server scheduled to head node: 32841b4efbb9...
+2025-12-21 04:02:41,397 - __main__ - INFO - ✅ Server started: 10.0.0.2:48787
+2025-12-21 04:02:56,411 - __main__ - INFO - 📱 Edge device distribution: {'smartphone': 50}
+2025-12-21 04:02:56,411 - __main__ - INFO - 📊 Client distribution plan:
+2025-12-21 04:02:56,412 - __main__ - INFO -    Client 1 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,413 - __main__ - INFO -    Client 2 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,413 - __main__ - INFO -    Client 3 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,414 - __main__ - INFO -    Client 4 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,415 - __main__ - INFO -    Client 5 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,415 - __main__ - INFO -    Client 6 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,416 - __main__ - INFO -    Client 7 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,416 - __main__ - INFO -    Client 8 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,417 - __main__ - INFO -    Client 9 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,417 - __main__ - INFO -    Client 10 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,417 - __main__ - INFO -    Client 11 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,418 - __main__ - INFO -    Client 12 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,418 - __main__ - INFO -    Client 13 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,419 - __main__ - INFO -    Client 14 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,419 - __main__ - INFO -    Client 15 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,419 - __main__ - INFO -    Client 16 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,420 - __main__ - INFO -    Client 17 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,420 - __main__ - INFO -    Client 18 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,421 - __main__ - INFO -    Client 19 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,421 - __main__ - INFO -    Client 20 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,422 - __main__ - INFO -    Client 21 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,422 - __main__ - INFO -    Client 22 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,423 - __main__ - INFO -    Client 23 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,423 - __main__ - INFO -    Client 24 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,423 - __main__ - INFO -    Client 25 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,424 - __main__ - INFO -    Client 26 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,424 - __main__ - INFO -    Client 27 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,425 - __main__ - INFO -    Client 28 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,425 - __main__ - INFO -    Client 29 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,426 - __main__ - INFO -    Client 30 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,426 - __main__ - INFO -    Client 31 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,426 - __main__ - INFO -    Client 32 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,427 - __main__ - INFO -    Client 33 -> head (32841b4efbb9...), Node CPUs: 64.0, Clients on node: 33
+2025-12-21 04:02:56,427 - __main__ - INFO -    Client 34 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,428 - __main__ - INFO -    Client 35 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,428 - __main__ - INFO -    Client 36 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,429 - __main__ - INFO -    Client 37 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,429 - __main__ - INFO -    Client 38 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,429 - __main__ - INFO -    Client 39 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,430 - __main__ - INFO -    Client 40 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,430 - __main__ - INFO -    Client 41 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,431 - __main__ - INFO -    Client 42 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,431 - __main__ - INFO -    Client 43 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,432 - __main__ - INFO -    Client 44 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,432 - __main__ - INFO -    Client 45 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,432 - __main__ - INFO -    Client 46 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,433 - __main__ - INFO -    Client 47 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,433 - __main__ - INFO -    Client 48 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,434 - __main__ - INFO -    Client 49 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,434 - __main__ - INFO -    Client 50 -> worker (828cfd5a65aa...), Node CPUs: 64.0, Clients on node: 17
+2025-12-21 04:02:56,531 - __main__ - INFO - ✅ Client 1 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:02:59,605 - __main__ - INFO - ✅ Client 2 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:02,679 - __main__ - INFO - ✅ Client 3 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:05,764 - __main__ - INFO - ✅ Client 4 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:08,847 - __main__ - INFO - ✅ Client 5 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:11,922 - __main__ - INFO - ✅ Client 6 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:15,011 - __main__ - INFO - ✅ Client 7 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:18,083 - __main__ - INFO - ✅ Client 8 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:21,160 - __main__ - INFO - ✅ Client 9 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:24,232 - __main__ - INFO - ✅ Client 10 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:27,304 - __main__ - INFO - ✅ Client 11 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:30,387 - __main__ - INFO - ✅ Client 12 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:33,465 - __main__ - INFO - ✅ Client 13 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:36,543 - __main__ - INFO - ✅ Client 14 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:39,623 - __main__ - INFO - ✅ Client 15 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:42,696 - __main__ - INFO - ✅ Client 16 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:45,776 - __main__ - INFO - ✅ Client 17 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:48,851 - __main__ - INFO - ✅ Client 18 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:51,940 - __main__ - INFO - ✅ Client 19 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:55,017 - __main__ - INFO - ✅ Client 20 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:03:58,100 - __main__ - INFO - ✅ Client 21 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:01,181 - __main__ - INFO - ✅ Client 22 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:04,266 - __main__ - INFO - ✅ Client 23 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:07,339 - __main__ - INFO - ✅ Client 24 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:10,416 - __main__ - INFO - ✅ Client 25 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:13,495 - __main__ - INFO - ✅ Client 26 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:16,580 - __main__ - INFO - ✅ Client 27 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:19,662 - __main__ - INFO - ✅ Client 28 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:22,743 - __main__ - INFO - ✅ Client 29 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:25,814 - __main__ - INFO - ✅ Client 30 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:28,887 - __main__ - INFO - ✅ Client 31 (smartphone) started on head node (32841b4efbb9...)
+2025-12-21 04:04:31,972 - __main__ - INFO - ✅ Client 32 (smartphone) started on head node (32841b4efbb9...)
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd-srv-it-node02: error: *** STEP 426.0 ON srv-it-node02 CANCELLED AT 2025-12-21T04:07:45 ***
+slurmstepd-srv-it-node01: error: *** STEP 427.1 ON srv-it-node01 CANCELLED AT 2025-12-21T04:07:45 ***
+slurmstepd-srv-it-node02: error: *** JOB 426 ON srv-it-node02 CANCELLED AT 2025-12-21T04:07:45 ***

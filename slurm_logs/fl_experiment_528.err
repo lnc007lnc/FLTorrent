@@ -1,0 +1,340 @@
+2025-12-25 01:47:01,595 - __main__ - INFO - 🚀 Start Ray V2 federated learning
+2025-12-25 01:47:01,595 - __main__ - INFO - 📊 Configuration: 50 clients, 100 rounds training, total nodes: 51
+2025-12-25 01:47:01,595 - __main__ - INFO - 🧹 Clean environment...
+2025-12-25 01:47:02,899 - __main__ - INFO - ✅ Environment cleanup completed
+2025-12-25 01:47:02,899 - __main__ - INFO - 🚀 Applying host network optimizations for ultra-high concurrency...
+2025-12-25 01:47:03,014 - __main__ - WARNING - ⚠️  22 network optimizations could not be applied (may need sudo access)
+2025-12-25 01:47:03,014 - __main__ - WARNING - ⚠️  No host network optimizations applied! High-concurrency FL may experience issues.
+2025-12-25 01:47:03,014 - __main__ - WARNING -    Consider running with sudo or contacting HPC admin to apply these settings.
+2025-12-25 01:47:03,014 - __main__ - INFO - 🦭 Initializing Podman rootless environment...
+2025-12-25 01:47:03,019 - __main__ - WARNING - ⚠️  Podman unavailable, trying Docker...
+2025-12-25 01:47:03,019 - __main__ - INFO - 📦 Using non-container mode (Fallback)
+2025-12-25 01:47:05,057 - __main__ - INFO - 🔍 Found available port for Ray dashboard: 8265
+2025-12-25 01:47:07,609	INFO worker.py:1998 -- Started a local Ray instance. View the dashboard at [1m[32m10.0.0.2:8265 [39m[22m
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/_private/worker.py:2046: FutureWarning: Tip: In future versions of Ray, Ray will no longer override accelerator visible devices env var if num_gpus=0 or num_gpus=None (default). To enable this behavior and turn off this error message, set RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+  warnings.warn(
+2025-12-25 01:47:08,608 - __main__ - INFO - 🚀 Ray cluster initialization completed:
+2025-12-25 01:47:08,608 - __main__ - INFO -    📊 Resources: {'accelerator_type:A100': 1.0, 'CPU': 64.0, 'GPU': 4.0, 'memory': 376590210048.0, 'object_store_memory': 145967201280.0, 'node:10.0.0.2': 1.0, 'node:__internal_head__': 1.0}
+2025-12-25 01:47:08,609 - __main__ - INFO -    🌐 Dashboard: http://127.0.0.1:8265
+2025-12-25 01:47:08,609 - __main__ - INFO - 🌐 Ray Cluster Topology:
+2025-12-25 01:47:08,609 - __main__ - INFO -    📍 Head node: bf68d3ad5f2c... (Server will run here)
+2025-12-25 01:47:08,609 - __main__ - WARNING -    ⚠️ No worker nodes found! Clients will run on head node (not recommended)
+2025-12-25 01:47:08,610 - __main__ - INFO - 🎮 Detected GPU type on node bf68d3ad5f2c...: A100 -> 40.0GB per GPU
+2025-12-25 01:47:08,610 - __main__ - INFO - 📍 Head node (bf68d3ad5f2c...): 4.0 GPUs, 160.0GB total memory
+2025-12-25 01:47:08,610 - __main__ - INFO - 📊 Total GPU memory across all nodes: 160.0GB
+2025-12-25 01:47:08,610 - __main__ - INFO - 📊 Memory per client: 3.0GB → Max capacity: 53 clients
+2025-12-25 01:47:08,610 - __main__ - INFO -    Node bf68d3ad5f2c...: 50 clients (160.0GB / 50 = 3.2GB/client)
+2025-12-25 01:47:08,611 - __main__ - INFO -    Node bf68d3ad5f2c...: 4.0 GPU, 50 clients, max 13 clients/GPU -> 0.0731 GPU/client
+2025-12-25 01:47:08,611 - __main__ - INFO - 🎯 GPU allocation summary: {'total_available_gpus': 4.0, 'total_allocated_gpus': 3.655, 'utilization_rate': '91.38%', 'server': 'CPU only', 'per_node_allocation': {'bf68d3ad5f2c': {'count': 50, 'total_gpu': 3.6550000000000025}}, 'gpu_clients': 50, 'cpu_clients': 0}
+2025-12-25 01:47:08,611 - __main__ - INFO - 📋 Client distribution: 50 GPU clients, 0 CPU clients
+2025-12-25 01:47:08,611 - __main__ - INFO - 📍 Server scheduled to head node: bf68d3ad5f2c...
+2025-12-25 01:47:08,706 - __main__ - INFO - 📦 Using Fallback (no container) for Server
+2025-12-25 01:47:08,779 - __main__ - INFO - ✅ Server started: 10.0.0.2:55225
+2025-12-25 01:47:23,795 - __main__ - INFO - 📱 Edge device distribution: {'smartphone': 50}
+2025-12-25 01:47:23,795 - __main__ - INFO - 📊 Client distribution plan:
+2025-12-25 01:47:23,796 - __main__ - INFO -    Client 1 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,796 - __main__ - INFO -    Client 2 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,797 - __main__ - INFO -    Client 3 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,797 - __main__ - INFO -    Client 4 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,798 - __main__ - INFO -    Client 5 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,798 - __main__ - INFO -    Client 6 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,799 - __main__ - INFO -    Client 7 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,799 - __main__ - INFO -    Client 8 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,799 - __main__ - INFO -    Client 9 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,800 - __main__ - INFO -    Client 10 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,800 - __main__ - INFO -    Client 11 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,801 - __main__ - INFO -    Client 12 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,801 - __main__ - INFO -    Client 13 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,801 - __main__ - INFO -    Client 14 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,802 - __main__ - INFO -    Client 15 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,802 - __main__ - INFO -    Client 16 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,802 - __main__ - INFO -    Client 17 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,803 - __main__ - INFO -    Client 18 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,803 - __main__ - INFO -    Client 19 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,803 - __main__ - INFO -    Client 20 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,804 - __main__ - INFO -    Client 21 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,804 - __main__ - INFO -    Client 22 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,805 - __main__ - INFO -    Client 23 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,805 - __main__ - INFO -    Client 24 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,805 - __main__ - INFO -    Client 25 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,806 - __main__ - INFO -    Client 26 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,806 - __main__ - INFO -    Client 27 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,806 - __main__ - INFO -    Client 28 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,807 - __main__ - INFO -    Client 29 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,807 - __main__ - INFO -    Client 30 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,807 - __main__ - INFO -    Client 31 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,807 - __main__ - INFO -    Client 32 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,808 - __main__ - INFO -    Client 33 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,808 - __main__ - INFO -    Client 34 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,808 - __main__ - INFO -    Client 35 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,809 - __main__ - INFO -    Client 36 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,809 - __main__ - INFO -    Client 37 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,809 - __main__ - INFO -    Client 38 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,810 - __main__ - INFO -    Client 39 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,810 - __main__ - INFO -    Client 40 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,810 - __main__ - INFO -    Client 41 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,811 - __main__ - INFO -    Client 42 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,811 - __main__ - INFO -    Client 43 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,811 - __main__ - INFO -    Client 44 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,812 - __main__ - INFO -    Client 45 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,812 - __main__ - INFO -    Client 46 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,812 - __main__ - INFO -    Client 47 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,813 - __main__ - INFO -    Client 48 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,813 - __main__ - INFO -    Client 49 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,813 - __main__ - INFO -    Client 50 -> head (bf68d3ad5f2c...), Node CPUs: 64.0, Clients on node: 50
+2025-12-25 01:47:23,814 - __main__ - INFO - 🔧 Client 1 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:23,905 - __main__ - INFO - ✅ Client 1 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:26,909 - __main__ - INFO - 🔧 Client 2 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:26,997 - __main__ - INFO - ✅ Client 2 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:30,000 - __main__ - INFO - 🔧 Client 3 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:30,079 - __main__ - INFO - ✅ Client 3 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:33,082 - __main__ - INFO - 🔧 Client 4 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:33,159 - __main__ - INFO - ✅ Client 4 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:36,160 - __main__ - INFO - 🔧 Client 5 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:36,241 - __main__ - INFO - ✅ Client 5 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:39,244 - __main__ - INFO - 🔧 Client 6 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:39,317 - __main__ - INFO - ✅ Client 6 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:42,321 - __main__ - INFO - 🔧 Client 7 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:42,407 - __main__ - INFO - ✅ Client 7 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:45,408 - __main__ - INFO - 🔧 Client 8 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:45,490 - __main__ - INFO - ✅ Client 8 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:48,493 - __main__ - INFO - 🔧 Client 9 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:48,572 - __main__ - INFO - ✅ Client 9 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:51,575 - __main__ - INFO - 🔧 Client 10 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:51,645 - __main__ - INFO - ✅ Client 10 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:54,649 - __main__ - INFO - 🔧 Client 11 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:54,736 - __main__ - INFO - ✅ Client 11 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:47:57,739 - __main__ - INFO - 🔧 Client 12 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:47:57,820 - __main__ - INFO - ✅ Client 12 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:00,824 - __main__ - INFO - 🔧 Client 13 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:00,933 - __main__ - INFO - ✅ Client 13 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:03,937 - __main__ - INFO - 🔧 Client 14 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:04,006 - __main__ - INFO - ✅ Client 14 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:07,010 - __main__ - INFO - 🔧 Client 15 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:07,094 - __main__ - INFO - ✅ Client 15 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:10,098 - __main__ - INFO - 🔧 Client 16 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:10,180 - __main__ - INFO - ✅ Client 16 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:13,183 - __main__ - INFO - 🔧 Client 17 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:13,260 - __main__ - INFO - ✅ Client 17 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:16,264 - __main__ - INFO - 🔧 Client 18 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:16,343 - __main__ - INFO - ✅ Client 18 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:19,346 - __main__ - INFO - 🔧 Client 19 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:19,429 - __main__ - INFO - ✅ Client 19 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:22,433 - __main__ - INFO - 🔧 Client 20 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:22,505 - __main__ - INFO - ✅ Client 20 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:25,508 - __main__ - INFO - 🔧 Client 21 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:25,582 - __main__ - INFO - ✅ Client 21 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:28,584 - __main__ - INFO - 🔧 Client 22 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:28,665 - __main__ - INFO - ✅ Client 22 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:31,668 - __main__ - INFO - 🔧 Client 23 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:31,742 - __main__ - INFO - ✅ Client 23 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:34,746 - __main__ - INFO - 🔧 Client 24 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:34,824 - __main__ - INFO - ✅ Client 24 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:37,826 - __main__ - INFO - 🔧 Client 25 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:37,908 - __main__ - INFO - ✅ Client 25 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:40,911 - __main__ - INFO - 🔧 Client 26 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:40,993 - __main__ - INFO - ✅ Client 26 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:43,996 - __main__ - INFO - 🔧 Client 27 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:44,076 - __main__ - INFO - ✅ Client 27 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:47,079 - __main__ - INFO - 🔧 Client 28 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:47,160 - __main__ - INFO - ✅ Client 28 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:50,162 - __main__ - INFO - 🔧 Client 29 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:50,245 - __main__ - INFO - ✅ Client 29 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:53,248 - __main__ - INFO - 🔧 Client 30 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:53,325 - __main__ - INFO - ✅ Client 30 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:56,329 - __main__ - INFO - 🔧 Client 31 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:56,411 - __main__ - INFO - ✅ Client 31 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:48:59,412 - __main__ - INFO - 🔧 Client 32 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:48:59,492 - __main__ - INFO - ✅ Client 32 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:02,495 - __main__ - INFO - 🔧 Client 33 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:02,566 - __main__ - INFO - ✅ Client 33 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:05,570 - __main__ - INFO - 🔧 Client 34 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:05,648 - __main__ - INFO - ✅ Client 34 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:08,651 - __main__ - INFO - 🔧 Client 35 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:08,736 - __main__ - INFO - ✅ Client 35 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:11,740 - __main__ - INFO - 🔧 Client 36 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:11,823 - __main__ - INFO - ✅ Client 36 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:14,827 - __main__ - INFO - 🔧 Client 37 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:14,904 - __main__ - INFO - ✅ Client 37 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:17,908 - __main__ - INFO - 🔧 Client 38 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:17,987 - __main__ - INFO - ✅ Client 38 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:20,989 - __main__ - INFO - 🔧 Client 39 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:21,075 - __main__ - INFO - ✅ Client 39 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:24,079 - __main__ - INFO - 🔧 Client 40 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:24,159 - __main__ - INFO - ✅ Client 40 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:27,163 - __main__ - INFO - 🔧 Client 41 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:27,250 - __main__ - INFO - ✅ Client 41 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:30,254 - __main__ - INFO - 🔧 Client 42 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:30,339 - __main__ - INFO - ✅ Client 42 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:33,342 - __main__ - INFO - 🔧 Client 43 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:33,415 - __main__ - INFO - ✅ Client 43 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:36,419 - __main__ - INFO - 🔧 Client 44 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:36,497 - __main__ - INFO - ✅ Client 44 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:39,501 - __main__ - INFO - 🔧 Client 45 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:39,592 - __main__ - INFO - ✅ Client 45 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:42,596 - __main__ - INFO - 🔧 Client 46 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:42,699 - __main__ - INFO - ✅ Client 46 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:45,703 - __main__ - INFO - 🔧 Client 47 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:45,791 - __main__ - INFO - ✅ Client 47 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:48,795 - __main__ - INFO - 🔧 Client 48 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:48,885 - __main__ - INFO - ✅ Client 48 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:51,889 - __main__ - INFO - 🔧 Client 49 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:51,973 - __main__ - INFO - ✅ Client 49 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:54,977 - __main__ - INFO - 🔧 Client 50 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-25 01:49:55,064 - __main__ - INFO - ✅ Client 50 (smartphone) started on head node (bf68d3ad5f2c...)
+2025-12-25 01:49:58,067 - __main__ - INFO - ✅ 50/50 Docker clients started successfully
+2025-12-25 01:49:58,067 - __main__ - INFO - ✅ All 50 clients have completed startup
+2025-12-25 01:49:58,067 - __main__ - INFO - 📊 Starting training monitoring (999999999 seconds)...
+2025-12-25 01:49:58,081 - __main__ - INFO - ⏰ 0s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:03,095 - __main__ - INFO - ⏰ 5s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:08,112 - __main__ - INFO - ⏰ 10s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:13,130 - __main__ - INFO - ⏰ 15s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:18,145 - __main__ - INFO - ⏰ 20s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:23,160 - __main__ - INFO - ⏰ 25s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:28,175 - __main__ - INFO - ⏰ 30s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:33,195 - __main__ - INFO - ⏰ 35s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:38,210 - __main__ - INFO - ⏰ 40s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:43,226 - __main__ - INFO - ⏰ 45s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:48,243 - __main__ - INFO - ⏰ 50s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:53,260 - __main__ - INFO - ⏰ 55s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:50:58,278 - __main__ - INFO - ⏰ 60s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:03,292 - __main__ - INFO - ⏰ 65s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:08,311 - __main__ - INFO - ⏰ 70s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:13,330 - __main__ - INFO - ⏰ 75s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:18,348 - __main__ - INFO - ⏰ 80s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:23,365 - __main__ - INFO - ⏰ 85s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:28,382 - __main__ - INFO - ⏰ 90s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:33,399 - __main__ - INFO - ⏰ 95s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:38,415 - __main__ - INFO - ⏰ 100s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:43,432 - __main__ - INFO - ⏰ 105s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:48,449 - __main__ - INFO - ⏰ 110s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:53,465 - __main__ - INFO - ⏰ 115s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:51:58,482 - __main__ - INFO - ⏰ 120s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:03,500 - __main__ - INFO - ⏰ 125s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:08,513 - __main__ - INFO - ⏰ 130s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:13,530 - __main__ - INFO - ⏰ 135s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:18,547 - __main__ - INFO - ⏰ 140s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:23,564 - __main__ - INFO - ⏰ 145s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:28,582 - __main__ - INFO - ⏰ 150s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:33,601 - __main__ - INFO - ⏰ 155s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:38,615 - __main__ - INFO - ⏰ 160s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:43,629 - __main__ - INFO - ⏰ 165s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:48,641 - __main__ - INFO - ⏰ 170s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:53,655 - __main__ - INFO - ⏰ 175s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:52:58,669 - __main__ - INFO - ⏰ 180s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:03,686 - __main__ - INFO - ⏰ 185s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:08,703 - __main__ - INFO - ⏰ 190s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:13,720 - __main__ - INFO - ⏰ 195s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:18,740 - __main__ - INFO - ⏰ 200s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:23,754 - __main__ - INFO - ⏰ 205s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:28,769 - __main__ - INFO - ⏰ 210s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:33,784 - __main__ - INFO - ⏰ 215s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:38,801 - __main__ - INFO - ⏰ 220s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:43,817 - __main__ - INFO - ⏰ 225s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:48,832 - __main__ - INFO - ⏰ 230s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:53,845 - __main__ - INFO - ⏰ 235s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:53:58,860 - __main__ - INFO - ⏰ 240s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:03,873 - __main__ - INFO - ⏰ 245s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:08,888 - __main__ - INFO - ⏰ 250s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:13,902 - __main__ - INFO - ⏰ 255s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:18,917 - __main__ - INFO - ⏰ 260s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:23,931 - __main__ - INFO - ⏰ 265s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:28,946 - __main__ - INFO - ⏰ 270s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:33,962 - __main__ - INFO - ⏰ 275s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:38,978 - __main__ - INFO - ⏰ 280s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:43,994 - __main__ - INFO - ⏰ 285s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:49,009 - __main__ - INFO - ⏰ 290s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:54,023 - __main__ - INFO - ⏰ 295s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:54:59,039 - __main__ - INFO - ⏰ 300s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:04,056 - __main__ - INFO - ⏰ 305s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:09,071 - __main__ - INFO - ⏰ 310s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:14,087 - __main__ - INFO - ⏰ 316s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:19,100 - __main__ - INFO - ⏰ 321s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:24,113 - __main__ - INFO - ⏰ 326s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:29,125 - __main__ - INFO - ⏰ 331s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:34,140 - __main__ - INFO - ⏰ 336s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:39,156 - __main__ - INFO - ⏰ 341s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:44,171 - __main__ - INFO - ⏰ 346s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:49,187 - __main__ - INFO - ⏰ 351s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:54,200 - __main__ - INFO - ⏰ 356s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:55:59,215 - __main__ - INFO - ⏰ 361s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:04,230 - __main__ - INFO - ⏰ 366s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:09,246 - __main__ - INFO - ⏰ 371s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:14,262 - __main__ - INFO - ⏰ 376s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:19,278 - __main__ - INFO - ⏰ 381s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:24,294 - __main__ - INFO - ⏰ 386s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:29,312 - __main__ - INFO - ⏰ 391s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:34,331 - __main__ - INFO - ⏰ 396s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:39,348 - __main__ - INFO - ⏰ 401s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:44,365 - __main__ - INFO - ⏰ 406s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:49,381 - __main__ - INFO - ⏰ 411s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:54,396 - __main__ - INFO - ⏰ 416s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:56:59,412 - __main__ - INFO - ⏰ 421s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:04,426 - __main__ - INFO - ⏰ 426s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:09,441 - __main__ - INFO - ⏰ 431s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:14,456 - __main__ - INFO - ⏰ 436s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:19,470 - __main__ - INFO - ⏰ 441s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:24,483 - __main__ - INFO - ⏰ 446s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:29,498 - __main__ - INFO - ⏰ 451s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:34,513 - __main__ - INFO - ⏰ 456s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:39,528 - __main__ - INFO - ⏰ 461s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:44,543 - __main__ - INFO - ⏰ 466s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:49,558 - __main__ - INFO - ⏰ 471s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:54,570 - __main__ - INFO - ⏰ 476s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:57:59,585 - __main__ - INFO - ⏰ 481s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:04,601 - __main__ - INFO - ⏰ 486s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:09,616 - __main__ - INFO - ⏰ 491s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:14,631 - __main__ - INFO - ⏰ 496s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:19,646 - __main__ - INFO - ⏰ 501s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:24,660 - __main__ - INFO - ⏰ 506s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:29,678 - __main__ - INFO - ⏰ 511s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:34,695 - __main__ - INFO - ⏰ 516s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:39,709 - __main__ - INFO - ⏰ 521s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:44,725 - __main__ - INFO - ⏰ 526s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:49,740 - __main__ - INFO - ⏰ 531s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:54,753 - __main__ - INFO - ⏰ 536s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:58:59,768 - __main__ - INFO - ⏰ 541s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:04,782 - __main__ - INFO - ⏰ 546s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:09,797 - __main__ - INFO - ⏰ 551s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:14,811 - __main__ - INFO - ⏰ 556s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:19,826 - __main__ - INFO - ⏰ 561s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:24,840 - __main__ - INFO - ⏰ 566s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:29,856 - __main__ - INFO - ⏰ 571s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:34,871 - __main__ - INFO - ⏰ 576s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:39,886 - __main__ - INFO - ⏰ 581s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:44,900 - __main__ - INFO - ⏰ 586s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:49,915 - __main__ - INFO - ⏰ 591s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:54,928 - __main__ - INFO - ⏰ 596s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 01:59:59,943 - __main__ - INFO - ⏰ 601s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:04,959 - __main__ - INFO - ⏰ 606s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:09,972 - __main__ - INFO - ⏰ 611s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:14,987 - __main__ - INFO - ⏰ 616s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:20,001 - __main__ - INFO - ⏰ 621s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:25,014 - __main__ - INFO - ⏰ 626s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:30,029 - __main__ - INFO - ⏰ 631s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:35,043 - __main__ - INFO - ⏰ 636s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:40,058 - __main__ - INFO - ⏰ 641s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:45,073 - __main__ - INFO - ⏰ 646s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:50,089 - __main__ - INFO - ⏰ 652s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:00:55,101 - __main__ - INFO - ⏰ 657s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:00,116 - __main__ - INFO - ⏰ 662s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:05,132 - __main__ - INFO - ⏰ 667s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:10,147 - __main__ - INFO - ⏰ 672s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:15,162 - __main__ - INFO - ⏰ 677s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:20,177 - __main__ - INFO - ⏰ 682s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:25,191 - __main__ - INFO - ⏰ 687s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:30,205 - __main__ - INFO - ⏰ 692s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:35,220 - __main__ - INFO - ⏰ 697s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:40,235 - __main__ - INFO - ⏰ 702s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:45,251 - __main__ - INFO - ⏰ 707s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:50,267 - __main__ - INFO - ⏰ 712s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:01:55,280 - __main__ - INFO - ⏰ 717s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:02:00,295 - __main__ - INFO - ⏰ 722s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:02:05,309 - __main__ - INFO - ⏰ 727s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:02:10,324 - __main__ - INFO - ⏰ 732s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:02:15,339 - __main__ - INFO - ⏰ 737s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:02:20,352 - __main__ - INFO - ⏰ 742s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:02:25,367 - __main__ - INFO - ⏰ 747s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:02:30,382 - __main__ - INFO - ⏰ 752s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+2025-12-25 02:02:35,400 - __main__ - INFO - ⏰ 757s | Server: running (CPU) | Clients: 50 nodes (fractional GPU) | Ray GPU usage: 3.7/4.0 (91.4%)
+slurmstepd-srv-it-node02: error: *** JOB 528 ON srv-it-node02 CANCELLED AT 2025-12-25T02:02:38 ***

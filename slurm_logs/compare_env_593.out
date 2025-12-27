@@ -1,0 +1,71 @@
+=== sbatch Environment ===
+=== After conda activate ===
+=== Key env vars ===
+HOME: /home/naicheng_li
+USER: naicheng_li
+PATH: /home/naicheng_li/.conda/envs/flv2/bin:/home/naicheng_li/.antigravity-server/bin/94f91bc110994badc7c086033db813077a5226af/bin/remote-cli:/home/naicheng_li/.conda/envs/flv2/bin:/opt/ohpc/pub/apps/Anaconda3/2024.06-1/condabin:/home/naicheng_li/.local/bin:/home/naicheng_li/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin
+CUDA_VISIBLE_DEVICES: 0,1,2
+SLURM variables:
+SLURM_JOB_USER=naicheng_li
+SLURM_TASKS_PER_NODE=128
+SLURM_JOB_UID=1796601748
+SLURM_TASK_PID=717421
+SLURM_JOB_GPUS=0,1,2
+SLURM_LOCALID=0
+SLURM_SUBMIT_DIR=/home/naicheng_li/FLTorrent
+SLURMD_NODENAME=srv-it-node03
+SLURM_JOB_START_TIME=1766789062
+SLURM_CLUSTER_NAME=srv-hpc-andromeda
+SLURM_JOB_END_TIME=1766789362
+SLURM_CPUS_ON_NODE=128
+SLURM_JOB_CPUS_PER_NODE=128
+SLURM_GPUS_ON_NODE=3
+SLURM_GTIDS=0
+SLURM_JOB_PARTITION=gpu3
+SLURM_OOM_KILL_STEP=0
+SLURM_JOB_NUM_NODES=1
+SLURM_JOBID=593
+SLURM_JOB_QOS=normal
+SLURM_PROCID=0
+SLURM_TOPOLOGY_ADDR=srv-it-node03
+SLURM_TOPOLOGY_ADDR_PATTERN=node
+SLURM_NODELIST=srv-it-node03
+SLURM_PRIO_PROCESS=0
+SLURM_NNODES=1
+SLURM_SUBMIT_HOST=srv-hpc-andromeda
+SLURM_JOB_ID=593
+SLURM_NODEID=0
+SLURM_CONF=/etc/slurm/slurm.conf
+SLURM_JOB_NAME=compare_env.sh
+SLURM_JOB_GID=1796600513
+SLURM_JOB_NODELIST=srv-it-node03
+
+=== Check nvidia device files ===
+crw-rw-rw- 1 root root 195,   0 Dec 11 19:27 /dev/nvidia0
+crw-rw-rw- 1 root root 195,   1 Dec 11 19:27 /dev/nvidia1
+crw-rw-rw- 1 root root 195,   2 Dec 11 19:27 /dev/nvidia2
+crw-rw-rw- 1 root root 195, 255 Dec 11 19:27 /dev/nvidiactl
+crw-rw-rw- 1 root root 511,   0 Dec 12 11:08 /dev/nvidia-uvm
+crw-rw-rw- 1 root root 511,   1 Dec 12 11:08 /dev/nvidia-uvm-tools
+
+/dev/nvidia-caps:
+total 0
+drwxr-xr-x  2 root root     80 Dec 12 11:08 .
+drwxr-xr-x 15 root root   3340 Dec 12 11:08 ..
+cr--------  1 root root 236, 1 Dec 12 11:08 nvidia-cap1
+cr--r--r--  1 root root 236, 2 Dec 12 11:08 nvidia-cap2
+
+=== Check proc sys ===
+Cannot read userns
+
+=== More detailed PyTorch check ===
+Environment check:
+  CUDA_VISIBLE_DEVICES: 0,1,2
+
+Step by step CUDA check:
+  torch.cuda.is_available(): False
+  torch.version.cuda: 11.8
+  torch.backends.cudnn.enabled: True
+
+Checking CUDA driver...
+  cuInit result: 3 (0=success)

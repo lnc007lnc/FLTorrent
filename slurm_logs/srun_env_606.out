@@ -1,0 +1,14 @@
+=== sbatch environment ===
+SLURM_STEP_GPUS: 
+CUDA_VISIBLE_DEVICES: 0,1,2
+
+=== srun environment (inherit) ===
+SLURM_STEP_GPUS: 0,1,2
+CUDA_VISIBLE_DEVICES: 0,1,2
+
+=== srun libcuda cuInit test ===
+cuInit result: 3
+
+=== Try unset problematic env vars before srun ===
+CUDA_VISIBLE_DEVICES: 0,1,2
+CUDA available: False

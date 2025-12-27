@@ -1,0 +1,3 @@
+=== gpu2 sbatch CUDA test ===
+cuInit: 0
+CUDA available: True

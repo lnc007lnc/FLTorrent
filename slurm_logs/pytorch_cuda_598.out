@@ -1,0 +1,31 @@
+=== Direct libcuda test ===
+Loading libcuda.so.1...
+  Loaded successfully
+  cuInit(0) = 3
+  Error: b'CUDA_ERROR_NOT_INITIALIZED'
+
+=== PyTorch CUDA test ===
+CUDA_VISIBLE_DEVICES: 0,1,2
+PyTorch version: 2.7.1+cu118
+PyTorch CUDA version: 11.8
+
+Checking CUDA...
+torch.cuda.is_available(): False
+
+Trying torch.cuda.init()...
+  init() failed: CUDA driver initialization failed, you might not have a CUDA gpu.
+
+=== Check LD_LIBRARY_PATH ===
+LD_LIBRARY_PATH: 
+
+=== Check CUDA runtime library ===
+	libc10_cuda.so => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/libc10_cuda.so (0x00007f6ea0b65000)
+	libcudart.so.11.0 => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/../../nvidia/cuda_runtime/lib/libcudart.so.11.0 (0x00007f6ea08be000)
+	libcusparse.so.11 => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/../../nvidia/cusparse/lib/libcusparse.so.11 (0x00007f6e8fbc4000)
+	libcufft.so.10 => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/../../nvidia/cufft/lib/libcufft.so.10 (0x00007f6e7ece9000)
+	libcurand.so.10 => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/../../nvidia/curand/lib/libcurand.so.10 (0x00007f6e760d1000)
+	libcublas.so.11 => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/../../nvidia/cublas/lib/libcublas.so.11 (0x00007f6e70473000)
+	libcublasLt.so.11 => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/../../nvidia/cublas/lib/libcublasLt.so.11 (0x00007f6e4beeb000)
+	libcudnn.so.9 => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/../../nvidia/cudnn/lib/libcudnn.so.9 (0x00007f6e4bcd1000)
+	libnccl.so.2 => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/../../nvidia/nccl/lib/libnccl.so.2 (0x00007f6e40cec000)
+	libcupti.so.11.8 => /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/../../nvidia/cuda_cupti/lib/libcupti.so.11.8 (0x00007f6e2bd0d000)

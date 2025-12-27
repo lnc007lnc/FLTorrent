@@ -1,10 +1,10 @@
 configuration:
-  chunk_num: 1
-  client_num: 20
-  dataset: CIFAR10@torchvision
+  chunk_num: 16
+  client_num: 50
+  dataset: celeba
   importance_method: fisher
   model: resnet18
-  total_rounds: 50
+  total_rounds: 100
 log_files:
   clients:
   - logs/client_1.log
@@ -27,6 +27,36 @@ log_files:
   - logs/client_18.log
   - logs/client_19.log
   - logs/client_20.log
+  - logs/client_21.log
+  - logs/client_22.log
+  - logs/client_23.log
+  - logs/client_24.log
+  - logs/client_25.log
+  - logs/client_26.log
+  - logs/client_27.log
+  - logs/client_28.log
+  - logs/client_29.log
+  - logs/client_30.log
+  - logs/client_31.log
+  - logs/client_32.log
+  - logs/client_33.log
+  - logs/client_34.log
+  - logs/client_35.log
+  - logs/client_36.log
+  - logs/client_37.log
+  - logs/client_38.log
+  - logs/client_39.log
+  - logs/client_40.log
+  - logs/client_41.log
+  - logs/client_42.log
+  - logs/client_43.log
+  - logs/client_44.log
+  - logs/client_45.log
+  - logs/client_46.log
+  - logs/client_47.log
+  - logs/client_48.log
+  - logs/client_49.log
+  - logs/client_50.log
   server: logs/server.log
 output_directories:
   clients:
@@ -50,4 +80,34 @@ output_directories:
   - ray_v2_output/client_18_output
   - ray_v2_output/client_19_output
   - ray_v2_output/client_20_output
+  - ray_v2_output/client_21_output
+  - ray_v2_output/client_22_output
+  - ray_v2_output/client_23_output
+  - ray_v2_output/client_24_output
+  - ray_v2_output/client_25_output
+  - ray_v2_output/client_26_output
+  - ray_v2_output/client_27_output
+  - ray_v2_output/client_28_output
+  - ray_v2_output/client_29_output
+  - ray_v2_output/client_30_output
+  - ray_v2_output/client_31_output
+  - ray_v2_output/client_32_output
+  - ray_v2_output/client_33_output
+  - ray_v2_output/client_34_output
+  - ray_v2_output/client_35_output
+  - ray_v2_output/client_36_output
+  - ray_v2_output/client_37_output
+  - ray_v2_output/client_38_output
+  - ray_v2_output/client_39_output
+  - ray_v2_output/client_40_output
+  - ray_v2_output/client_41_output
+  - ray_v2_output/client_42_output
+  - ray_v2_output/client_43_output
+  - ray_v2_output/client_44_output
+  - ray_v2_output/client_45_output
+  - ray_v2_output/client_46_output
+  - ray_v2_output/client_47_output
+  - ray_v2_output/client_48_output
+  - ray_v2_output/client_49_output
+  - ray_v2_output/client_50_output
   server: ray_v2_output/server_output

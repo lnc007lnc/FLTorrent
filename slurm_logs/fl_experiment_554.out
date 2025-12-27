@@ -1,0 +1,97 @@
+============================================
+Job ID: 554
+Job Name: fl_experiment
+Nodes: srv-it-node02
+Node Count: 1
+Tasks per Node: 1
+CPUs per Task: 64
+Start Time: Fri Dec 26 01:02:07 AM CET 2025
+============================================
+Python: /home/naicheng_li/.conda/envs/flv2/bin/python
+PyTorch version: 2.7.1+cu118
+CUDA available: True
+GPU count: 4
+============================================
+Single-node mode: Ray will init locally
+============================================
+Starting FL experiment...
+🖥️  Running inside SLURM job: 554
+
+================================================================================
+🚀 Ray-Powered FederatedScope V2 Script (Ultra-High Concurrency Edition)
+================================================================================
+📊 Configuration information:
+   • Number of clients: 50
+   • Training rounds: 100
+   • Dataset: celeba
+   • Model: resnet18
+   • Number of chunks: 16
+   • Importance method: fisher
+   • Monitoring duration: 999999999s
+
+🐳 Docker mode: ❌ Disabled
+📂 Local code mount: ✅ Enabled (no rebuild needed)
+🌐 Network simulation: ✅ Enabled
+🚀 Host network optimizations: ✅ Applied (for all modes)
+📱 Device distribution: {'smartphone_high': 1, 'smartphone_low': 0, 'raspberry_pi': 0, 'iot_device': 0, 'edge_server': 0}
+
+🔧 High-concurrency features:
+   • TCP buffer sizes: 128MB max
+   • Connection tracking: 1M connections
+   • File descriptors: 1M per container
+   • Optimized Docker network bridge
+
+🔗 gRPC Keep-Alive settings:
+   • Keep-alive time: 180s (ping interval)
+   • Keep-alive timeout: 60s (ACK timeout)
+   • Min ping interval: 60s
+   • Connection idle timeout: 5min
+   • Connection max age: 20min
+   • System-level network tuning
+
+💡 Output directory: ray_v2_output
+📝 Log directory: logs
+================================================================================
+
+⚠️  Podman command not found
+[36m(FallbackFederatedScopeServer pid=2109489)[0m 🔌 Server UDS mode: /tmp/federatedscope_uds/server_48765.sock
+[36m(FallbackFederatedScopeClient pid=2109491)[0m 🔌 Client 1 UDS mode: /tmp/federatedscope_uds/client_1_41503.sock
+[36m(FallbackFederatedScopeClient pid=2109495)[0m 🔌 Client 3 UDS mode: /tmp/federatedscope_uds/client_3_50551.sock[32m [repeated 2x across cluster] (Ray deduplicates logs by default. Set RAY_DEDUP_LOGS=0 to disable log deduplication, or see https://docs.ray.io/en/master/ray-observability/user-guides/configure-logging.html#log-deduplication for more options.)[0m
+[36m(FallbackFederatedScopeClient pid=2109497)[0m 🔌 Client 5 UDS mode: /tmp/federatedscope_uds/client_5_44093.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109490)[0m 🔌 Client 7 UDS mode: /tmp/federatedscope_uds/client_7_45611.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109493)[0m 🔌 Client 9 UDS mode: /tmp/federatedscope_uds/client_9_59871.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109501)[0m 🔌 Client 11 UDS mode: /tmp/federatedscope_uds/client_11_50635.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109504)[0m 🔌 Client 13 UDS mode: /tmp/federatedscope_uds/client_13_44495.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109505)[0m 🔌 Client 15 UDS mode: /tmp/federatedscope_uds/client_15_47851.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109507)[0m 🔌 Client 17 UDS mode: /tmp/federatedscope_uds/client_17_44875.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109509)[0m 🔌 Client 19 UDS mode: /tmp/federatedscope_uds/client_19_49503.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109541)[0m 🔌 Client 21 UDS mode: /tmp/federatedscope_uds/client_21_46705.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109519)[0m 🔌 Client 23 UDS mode: /tmp/federatedscope_uds/client_23_43319.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109545)[0m 🔌 Client 25 UDS mode: /tmp/federatedscope_uds/client_25_36125.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109548)[0m 🔌 Client 27 UDS mode: /tmp/federatedscope_uds/client_27_44739.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109549)[0m 🔌 Client 29 UDS mode: /tmp/federatedscope_uds/client_29_51037.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109554)[0m 🔌 Client 31 UDS mode: /tmp/federatedscope_uds/client_31_42005.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109555)[0m 🔌 Client 33 UDS mode: /tmp/federatedscope_uds/client_33_55147.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109556)[0m 🔌 Client 35 UDS mode: /tmp/federatedscope_uds/client_35_46071.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109561)[0m 🔌 Client 37 UDS mode: /tmp/federatedscope_uds/client_37_57107.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109591)[0m 🔌 Client 39 UDS mode: /tmp/federatedscope_uds/client_39_51637.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109552)[0m 🔌 Client 41 UDS mode: /tmp/federatedscope_uds/client_41_43167.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109594)[0m 🔌 Client 43 UDS mode: /tmp/federatedscope_uds/client_43_40453.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109595)[0m 🔌 Client 45 UDS mode: /tmp/federatedscope_uds/client_45_41731.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109597)[0m 🔌 Client 47 UDS mode: /tmp/federatedscope_uds/client_47_43989.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=2109598)[0m 🔌 Client 49 UDS mode: /tmp/federatedscope_uds/client_49_38733.sock[32m [repeated 2x across cluster][0m
+[33m(raylet)[0m A worker died or was killed while executing a task by an unexpected system error. To troubleshoot the problem, check the logs for the dead worker. Lease ID: 070000002ca482aa99aaf8688b3d2f7f3133c422f6e6e9a6ec43893e0d24b999 Worker ID: 291535d55c533dc5bbd3313b02b8f8171e12d15462bc6fea61e34e05 Node ID: 14f1bc48060237c21386fe93629ab22b9621187927d7eb55855db86b Worker IP address: 10.0.0.2 Worker port: 34875 Worker PID: 2109490 Worker exit type: SYSTEM_ERROR Worker exit detail: Worker unexpectedly exits with a connection error code 2. End of file. Some common causes include: (1) the process was killed by the OOM killer due to high memory usage, (2) ray stop --force was called, or (3) the worker crashed unexpectedly due to SIGSEGV or another unexpected error.
+[36m(FallbackFederatedScopeClient pid=2109611)[0m 🔌 Client 50 UDS mode: /tmp/federatedscope_uds/client_50_50655.sock
+
+❌ Error occurred: The actor died unexpectedly before finishing this task.
+	class_name: FallbackFederatedScopeClient
+	actor_id: 26dc7ec9f4dbc631dced74e501000000
+	pid: 2109490
+	namespace: f5005742-d42c-4f49-a928-9002f6840229
+	ip: 10.0.0.2
+The actor is dead because its worker process has died. Worker exit type: SYSTEM_ERROR Worker exit detail: Worker unexpectedly exits with a connection error code 2. End of file. Some common causes include: (1) the process was killed by the OOM killer due to high memory usage, (2) ray stop --force was called, or (3) the worker crashed unexpectedly due to SIGSEGV or another unexpected error.
+🧹 Resource cleanup completed
+============================================
+Job finished at Fri Dec 26 01:23:37 AM CET 2025
+============================================
+2025-12-26 01:23:38,961	INFO scripts.py:1364 -- Did not find any active Ray processes.

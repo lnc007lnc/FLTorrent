@@ -1630,24 +1630,39 @@ class ChunkManager:
         Fix: Compatible with old code, support optional round_num parameter
         Get global chunk ownership bitfield for specified round
         """
+        import time as _time
+        func_start = _time.time()
+
         # If round_num not provided, use current round
         if round_num is None:
             round_num = getattr(self, 'current_round', 0)
-            
+
         bitfield = {}
-        
+
         try:
             # Query locally saved chunks from metadata database (if exists)
             if os.path.exists(self._get_round_db_path(round_num, 'metadata')):
+                # 🔍 DEBUG: Timing for metadata DB connection
+                conn_start = _time.time()
                 metadata_conn = self._get_optimized_connection(round_num, 'metadata')
+                conn_time = _time.time() - conn_start
+                if conn_time > 1.0:
+                    logger.warning(f"[🐌 DB-SLOW] Client {self.client_id}: metadata connection took {conn_time:.2f}s")
+
                 try:
                     metadata_cursor = metadata_conn.cursor()
+                    # 🔍 DEBUG: Timing for metadata query
+                    query_start = _time.time()
                     metadata_cursor.execute('''
                         SELECT chunk_id FROM chunk_metadata
                     ''')
                     local_chunks = metadata_cursor.fetchall()
+                    query_time = _time.time() - query_start
+                    if query_time > 1.0:
+                        logger.warning(f"[🐌 DB-SLOW] Client {self.client_id}: metadata query took {query_time:.2f}s")
+
                     logger.debug(f"[ChunkManager] Client {self.client_id}: Found {len(local_chunks)} local chunks for round {round_num}")
-                    
+
                     for (chunk_id,) in local_chunks:
                         # Local chunks
                         bitfield[(round_num, self.client_id, chunk_id)] = True
@@ -1655,28 +1670,44 @@ class ChunkManager:
                     metadata_conn.close()
             else:
                 logger.debug(f"No metadata database found for round {round_num}")
-            
+
             # Query BitTorrent exchanged chunks from bt database
+            # 🔍 DEBUG: Timing for bt DB connection
+            bt_conn_start = _time.time()
             bt_conn = self._get_optimized_connection(round_num, 'bt')
+            bt_conn_time = _time.time() - bt_conn_start
+            if bt_conn_time > 1.0:
+                logger.warning(f"[🐌 DB-SLOW] Client {self.client_id}: bt connection took {bt_conn_time:.2f}s")
+
             bt_cursor = bt_conn.cursor()
             try:
+                # 🔍 DEBUG: Timing for bt query
+                bt_query_start = _time.time()
                 bt_cursor.execute('''
                     SELECT source_client_id, chunk_id FROM bt_chunks
                     WHERE holder_client_id = ?
                 ''', (self.client_id,))
-                
+
                 for source_id, chunk_id in bt_cursor.fetchall():
                     bitfield[(round_num, source_id, chunk_id)] = True
+                bt_query_time = _time.time() - bt_query_start
+                if bt_query_time > 1.0:
+                    logger.warning(f"[🐌 DB-SLOW] Client {self.client_id}: bt query took {bt_query_time:.2f}s")
             finally:
                 bt_conn.close()
-                
+
         except sqlite3.OperationalError:
             # If table-specific databases don't exist, create them
             logger.warning(f"[ChunkManager] Table-specific databases not found for round {round_num}, creating...")
             self._ensure_table_database_exists(round_num, 'metadata')
             self._ensure_table_database_exists(round_num, 'bt')
             return self.get_global_bitfield(round_num)
-        
+
+        # Log total function time
+        func_time = _time.time() - func_start
+        if func_time > 2.0:
+            logger.warning(f"[🐌 DB-SLOW] Client {self.client_id}: get_global_bitfield TOTAL took {func_time:.2f}s")
+
         return bitfield
     
     @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)

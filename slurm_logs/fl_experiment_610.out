@@ -1,0 +1,22 @@
+============================================
+Job ID: 610
+Job Name: fl_experiment
+Nodes: srv-it-node02
+Node Count: 1
+Tasks per Node: 1
+CPUs per Task: 64
+Start Time: Sat Dec 27 12:06:47 AM CET 2025
+============================================
+Python: /home/naicheng_li/.conda/envs/flv2/bin/python
+CUDA_VISIBLE_DEVICES: 0,1,2,3
+GPU 0: NVIDIA A100-SXM4-40GB (UUID: GPU-08832fa6-bb75-b7d8-8bce-11df76828032)
+GPU 1: NVIDIA A100-SXM4-40GB (UUID: GPU-473d08f4-dbd6-80bf-930d-5301c1a06b42)
+GPU 2: NVIDIA A100-SXM4-40GB (UUID: GPU-29c48360-76ef-efc9-af2a-db6856611f0c)
+GPU 3: NVIDIA A100-SXM4-40GB (UUID: GPU-e6b80993-94f2-87d0-1e07-dc27ad79673c)
+PyTorch version: 2.7.1+cu118
+CUDA available: True
+GPU count: 4
+============================================
+Single-node mode: Ray will init locally
+============================================
+Starting FL experiment...

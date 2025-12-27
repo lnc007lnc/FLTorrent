@@ -1,0 +1,76 @@
+=== Environment Debug ===
+SLURM_JOB_ID: 591
+SLURM_NODELIST: srv-it-node03
+CUDA_VISIBLE_DEVICES: 0,1,2
+LD_LIBRARY_PATH: 
+
+=== nvidia-smi ===
+Fri Dec 26 23:42:43 2025       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 575.57.08              Driver Version: 575.57.08      CUDA Version: 12.9     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100 80GB PCIe          On  |   00000000:25:00.0 Off |                    0 |
+| N/A   38C    P0             48W /  300W |       0MiB /  81920MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   1  NVIDIA A100 80GB PCIe          On  |   00000000:81:00.0 Off |                    0 |
+| N/A   33C    P0             44W /  300W |       0MiB /  81920MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   2  NVIDIA A100 80GB PCIe          On  |   00000000:E2:00.0 Off |                    0 |
+| N/A   36C    P0             46W /  300W |       0MiB /  81920MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+
+=== CUDA Driver Version ===
+NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  575.57.08  Release Build  (dvs-builder@U22-I3-H04-01-5)  Sat May 24 07:03:13 UTC 2025
+GCC version:  gcc version 11.5.0 20240719 (Red Hat 11.5.0-5) (GCC) 
+
+=== Conda Environment ===
+/home/naicheng_li/.conda/envs/flv2/bin/python
+Python 3.10.19
+
+=== PyTorch CUDA Check ===
+PyTorch version: 2.7.1+cu118
+CUDA available: False
+CUDA version (compiled): 11.8
+Trying to init CUDA to get error message...
+CUDA init error: CUDA driver initialization failed, you might not have a CUDA gpu.
+
+=== Check CUDA libraries ===
+	libvdpau_nvidia.so (libc6,x86-64, OS ABI: Linux 2.3.99) => /lib64/libvdpau_nvidia.so
+	libvdpau_nvidia.so (libc6, OS ABI: Linux 2.3.99) => /lib/libvdpau_nvidia.so
+	libnvidia-wayland-client.so.575.57.08 (libc6,x86-64) => /lib64/libnvidia-wayland-client.so.575.57.08
+	libnvidia-vksc-core.so.1 (libc6,x86-64) => /lib64/libnvidia-vksc-core.so.1
+	libnvidia-tls.so.575.57.08 (libc6,x86-64, OS ABI: Linux 2.3.99) => /lib64/libnvidia-tls.so.575.57.08
+	libnvidia-tls.so.575.57.08 (libc6, OS ABI: Linux 2.3.99) => /lib/libnvidia-tls.so.575.57.08
+	libnvidia-sandboxutils.so.1 (libc6,x86-64) => /lib64/libnvidia-sandboxutils.so.1
+	libnvidia-sandboxutils.so (libc6,x86-64) => /lib64/libnvidia-sandboxutils.so
+	libnvidia-rtcore.so.575.57.08 (libc6,x86-64) => /lib64/libnvidia-rtcore.so.575.57.08
+	libnvidia-ptxjitcompiler.so.1 (libc6,x86-64) => /lib64/libnvidia-ptxjitcompiler.so.1
+	libnvidia-ptxjitcompiler.so.1 (libc6) => /lib/libnvidia-ptxjitcompiler.so.1
+	libnvidia-ptxjitcompiler.so (libc6,x86-64) => /lib64/libnvidia-ptxjitcompiler.so
+	libnvidia-ptxjitcompiler.so (libc6) => /lib/libnvidia-ptxjitcompiler.so
+	libnvidia-present.so.575.57.08 (libc6,x86-64) => /lib64/libnvidia-present.so.575.57.08
+	libnvidia-pkcs11.so.575.57.08 (libc6,x86-64) => /lib64/libnvidia-pkcs11.so.575.57.08
+	libnvidia-pkcs11-openssl3.so.575.57.08 (libc6,x86-64) => /lib64/libnvidia-pkcs11-openssl3.so.575.57.08
+	libnvidia-opticalflow.so.1 (libc6,x86-64) => /lib64/libnvidia-opticalflow.so.1
+	libnvidia-opticalflow.so.1 (libc6) => /lib/libnvidia-opticalflow.so.1
+	libnvidia-opticalflow.so (libc6,x86-64) => /lib64/libnvidia-opticalflow.so
+	libnvidia-opticalflow.so (libc6) => /lib/libnvidia-opticalflow.so
+
+=== Check CUDA_HOME ===
+CUDA_HOME: 
+No CUDA runtime found in /usr/local/cuda*

@@ -1,0 +1,10 @@
+============================================
+Job ID: 407
+Job Name: fl_experiment
+Hetjob Size: 2 partitions
+Start Time: Sun Dec 21 03:41:01 AM CET 2025
+============================================
+Head Node: srv-it-node02 (fe80::8e84:74ff:fe25:9cb1)
+Total clients: 50
+Starting Ray head on srv-it-node02...
+Starting Ray worker on hetjob group 1...

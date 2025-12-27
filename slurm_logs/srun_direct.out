@@ -1,0 +1,3 @@
+/usr/bin/bash: command substitution: line 4: syntax error near unexpected token `torch.cuda.is_available'
+/usr/bin/bash: command substitution: line 4: `python -c \"import torch; print(torch.cuda.is_available())\")"'
+srun: error: srv-it-node03: task 0: Exited with exit code 1

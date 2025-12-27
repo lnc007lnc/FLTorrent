@@ -1,0 +1,32 @@
+=== sbatch cgroup ===
+cgroup: 0::/system.slice/srv-it-node03_slurmstepd.scope/job_600/step_batch/user/task_special
+Full path: /sys/fs/cgroup/system.slice/srv-it-node03_slurmstepd.scope/job_600/step_batch/user/task_special
+
+cgroup.type: domain
+
+=== srun cgroup ===
+cgroup: 0::/system.slice/srv-it-node03_slurmstepd.scope/job_600/step_0/user/task_special
+Full path: /sys/fs/cgroup/system.slice/srv-it-node03_slurmstepd.scope/job_600/step_0/user/task_special
+
+cgroup.type: domain
+
+=== Check SLURM job cgroups structure ===
+total 0
+drwxr-xr-x 4 root root 0 Dec 26 23:53 .
+drwxr-xr-x 6 root root 0 Dec 26 23:53 ..
+-r--r--r-- 1 root root 0 Dec 26 23:53 cgroup.controllers
+-r--r--r-- 1 root root 0 Dec 26 23:53 cgroup.events
+
+=== sbatch is in step_batch, srun creates step_0 ===
+step_batch contents:
+cgroup.controllers
+cgroup.events
+cgroup.freeze
+cgroup.kill
+cgroup.max.depth
+
+=== Check for devices.nvidia (SLURM GPU) ===
+
+=== Check misc controller for devices ===
+cpuset cpu memory
+cpuset cpu memory

@@ -1,0 +1,10 @@
+2025-12-21 02:55:07,522 - __main__ - INFO - 🚀 Start Ray V2 federated learning
+2025-12-21 02:55:07,522 - __main__ - INFO - 📊 Configuration: 50 clients, 100 rounds training, total nodes: 51
+2025-12-21 02:55:07,522 - __main__ - INFO - 🧹 Clean environment...
+2025-12-21 02:55:08,670 - __main__ - INFO - ✅ Environment cleanup completed
+2025-12-21 02:55:08,679 - __main__ - WARNING - ⚠️  Docker unavailable, switch to non-container mode
+2025-12-21 02:55:08,745	INFO worker.py:1821 -- Connecting to existing Ray cluster at address: 10.0.0.1:6379...
+[2025-12-21 02:55:13,766 W 113709 113709] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.1:6379 within 5 seconds.
+[2025-12-21 02:55:43,777 W 113709 113709] gcs_client.cc:205: Failed to get cluster ID from GCS server: TimedOut: Timed out while waiting for GCS to become available.
+[2025-12-21 02:55:49,788 W 113709 113709] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.1:6379 within 5 seconds.
+slurmstepd-srv-it-node01: error: *** JOB 397 ON srv-it-node01 CANCELLED AT 2025-12-21T02:56:10 ***

@@ -1,0 +1,18 @@
+============================================
+Job ID: 399
+Job Name: fl_experiment
+Nodes: srv-it-node02
+Node Count: 1
+Tasks per Node: 1
+CPUs per Task: 64
+Start Time: Sun Dec 21 03:04:54 AM CET 2025
+============================================
+Python: /home/naicheng_li/.conda/envs/flv2/bin/python
+PyTorch version: 2.7.1+cu118
+CUDA available: True
+GPU count: 4
+Head Node: srv-it-node02 (10.0.0.2)
+============================================
+Single-node mode: Ray will init locally
+============================================
+Starting FL experiment...

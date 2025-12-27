@@ -1,0 +1,434 @@
+=== step_batch/slurm directory ===
+total 0
+drwxr-xr-x 2 root root 0 Dec 26 23:55 .
+drwxr-xr-x 4 root root 0 Dec 26 23:55 ..
+-r--r--r-- 1 root root 0 Dec 26 23:55 cgroup.controllers
+-r--r--r-- 1 root root 0 Dec 26 23:55 cgroup.events
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.freeze
+--w------- 1 root root 0 Dec 26 23:55 cgroup.kill
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.max.depth
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.max.descendants
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.procs
+-r--r--r-- 1 root root 0 Dec 26 23:55 cgroup.stat
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.subtree_control
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.threads
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.type
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.idle
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.max
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.max.burst
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus.effective
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus.exclusive
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus.exclusive.effective
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus.partition
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpuset.mems
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpuset.mems.effective
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpu.stat
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpu.stat.local
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.weight
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.weight.nice
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.current
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.events
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.events.local
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.high
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.low
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.max
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.min
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.numa_stat
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.oom.group
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.peak
+--w------- 1 root root 0 Dec 26 23:55 memory.reclaim
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.stat
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.swap.current
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.swap.events
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.swap.high
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.swap.max
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.swap.peak
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.zswap.current
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.zswap.max
+cpuset cpu memory
+populated 1
+frozen 0
+0
+max
+max
+728265
+nr_descendants 0
+nr_dying_descendants 0
+728265
+728266
+728267
+728268
+728269
+728270
+728271
+728272
+728273
+728274
+728275
+728276
+728277
+728278
+728279
+domain
+0
+max 100000
+0
+
+0-127
+
+
+member
+
+0-2,4-6
+usage_usec 94655
+user_usec 23466
+system_usec 71188
+core_sched.force_idle_usec 0
+nr_periods 0
+nr_throttled 0
+throttled_usec 0
+nr_bursts 0
+burst_usec 0
+throttled_usec 0
+100
+0
+6246400
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+max
+0
+max
+0
+anon N0=0 N1=0 N2=12288 N4=0 N5=2031616 N6=49152
+file N0=0 N1=0 N2=0 N4=0 N5=151552 N6=0
+kernel_stack N0=0 N1=0 N2=0 N4=0 N5=0 N6=16384
+pagetables N0=0 N1=0 N2=0 N4=0 N5=4096 N6=20480
+sec_pagetables N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+shmem N0=0 N1=0 N2=0 N4=0 N5=151552 N6=0
+file_mapped N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+file_dirty N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+file_writeback N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+swapcached N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+anon_thp N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+file_thp N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+shmem_thp N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+inactive_anon N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+active_anon N0=0 N1=0 N2=0 N4=0 N5=2121728 N6=8192
+inactive_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+active_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+unevictable N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+slab_reclaimable N0=2088 N1=0 N2=0 N4=0 N5=10328 N6=2088
+slab_unreclaimable N0=2832 N1=0 N2=3992 N4=72 N5=18272 N6=18336
+workingset_refault_anon N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_refault_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_activate_anon N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_activate_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_restore_anon N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_restore_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_nodereclaim N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+0
+7020544
+anon 2093056
+file 151552
+kernel 94208
+kernel_stack 16384
+pagetables 24576
+sec_pagetables 0
+percpu 0
+sock 0
+vmalloc 0
+shmem 151552
+zswap 0
+zswapped 0
+file_mapped 0
+file_dirty 0
+file_writeback 0
+swapcached 0
+anon_thp 0
+file_thp 0
+shmem_thp 0
+inactive_anon 0
+active_anon 2129920
+inactive_file 0
+active_file 0
+unevictable 0
+slab_reclaimable 14504
+slab_unreclaimable 43504
+slab 58008
+workingset_refault_anon 0
+workingset_refault_file 0
+workingset_activate_anon 0
+workingset_activate_file 0
+workingset_restore_anon 0
+workingset_restore_file 0
+workingset_nodereclaim 0
+pgscan 0
+pgsteal 0
+pgscan_kswapd 0
+pgscan_direct 0
+pgscan_khugepaged 0
+pgsteal_kswapd 0
+pgsteal_direct 0
+pgsteal_khugepaged 0
+pgfault 616
+pgmajfault 0
+pgrefill 0
+pgactivate 0
+pgdeactivate 0
+pglazyfree 0
+pglazyfreed 0
+zswpin 0
+zswpout 0
+zswpwb 0
+thp_fault_alloc 0
+thp_collapse_alloc 0
+0
+high 0
+max 0
+fail 0
+max
+max
+0
+0
+max
+
+=== srun: step_0/slurm directory ===
+total 0
+drwxr-xr-x 2 root root 0 Dec 26 23:55 .
+drwxr-xr-x 4 root root 0 Dec 26 23:55 ..
+-r--r--r-- 1 root root 0 Dec 26 23:55 cgroup.controllers
+-r--r--r-- 1 root root 0 Dec 26 23:55 cgroup.events
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.freeze
+--w------- 1 root root 0 Dec 26 23:55 cgroup.kill
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.max.depth
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.max.descendants
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.procs
+-r--r--r-- 1 root root 0 Dec 26 23:55 cgroup.stat
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.subtree_control
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.threads
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cgroup.type
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.idle
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.max
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.max.burst
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus.effective
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus.exclusive
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus.exclusive.effective
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpuset.cpus.partition
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpuset.mems
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpuset.mems.effective
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpu.stat
+-r--r--r-- 1 root root 0 Dec 26 23:55 cpu.stat.local
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.weight
+-rw-r--r-- 1 root root 0 Dec 26 23:55 cpu.weight.nice
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.current
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.events
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.events.local
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.high
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.low
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.max
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.min
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.numa_stat
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.oom.group
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.peak
+--w------- 1 root root 0 Dec 26 23:55 memory.reclaim
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.stat
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.swap.current
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.swap.events
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.swap.high
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.swap.max
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.swap.peak
+-r--r--r-- 1 root root 0 Dec 26 23:55 memory.zswap.current
+-rw-r--r-- 1 root root 0 Dec 26 23:55 memory.zswap.max
+cpuset cpu memory
+populated 1
+frozen 0
+0
+max
+max
+728292
+nr_descendants 0
+nr_dying_descendants 0
+728292
+728293
+728294
+728295
+728296
+728297
+728298
+728299
+728300
+728301
+728302
+728303
+728304
+728305
+728306
+728307
+domain
+0
+max 100000
+0
+
+0-127
+
+
+member
+
+0-2,4-6
+usage_usec 96667
+user_usec 17588
+system_usec 79079
+core_sched.force_idle_usec 0
+nr_periods 0
+nr_throttled 0
+throttled_usec 0
+nr_bursts 0
+burst_usec 0
+throttled_usec 0
+100
+0
+5574656
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+max
+0
+max
+0
+anon N0=0 N1=0 N2=4096 N4=0 N5=2134016 N6=81920
+file N0=0 N1=0 N2=0 N4=0 N5=151552 N6=0
+kernel_stack N0=0 N1=0 N2=0 N4=0 N5=16384 N6=16384
+pagetables N0=0 N1=0 N2=0 N4=0 N5=12288 N6=24576
+sec_pagetables N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+shmem N0=0 N1=0 N2=0 N4=0 N5=151552 N6=0
+file_mapped N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+file_dirty N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+file_writeback N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+swapcached N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+anon_thp N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+file_thp N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+shmem_thp N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+inactive_anon N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+active_anon N0=0 N1=0 N2=0 N4=0 N5=2256896 N6=4096
+inactive_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+active_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+unevictable N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+slab_reclaimable N0=600 N1=0 N2=0 N4=0 N5=16680 N6=1344
+slab_unreclaimable N0=3096 N1=0 N2=4120 N4=72 N5=30160 N6=24520
+workingset_refault_anon N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_refault_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_activate_anon N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_activate_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_restore_anon N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_restore_file N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+workingset_nodereclaim N0=0 N1=0 N2=0 N4=0 N5=0 N6=0
+0
+6840320
+anon 2224128
+file 151552
+kernel 143360
+kernel_stack 32768
+pagetables 36864
+sec_pagetables 0
+percpu 0
+sock 4096
+vmalloc 0
+shmem 151552
+zswap 0
+zswapped 0
+file_mapped 0
+file_dirty 0
+file_writeback 0
+swapcached 0
+anon_thp 0
+file_thp 0
+shmem_thp 0
+inactive_anon 0
+active_anon 2260992
+inactive_file 0
+active_file 0
+unevictable 0
+slab_reclaimable 18624
+slab_unreclaimable 61968
+slab 80592
+workingset_refault_anon 0
+workingset_refault_file 0
+workingset_activate_anon 0
+workingset_activate_file 0
+workingset_restore_anon 0
+workingset_restore_file 0
+workingset_nodereclaim 0
+pgscan 0
+pgsteal 0
+pgscan_kswapd 0
+pgscan_direct 0
+pgscan_khugepaged 0
+pgsteal_kswapd 0
+pgsteal_direct 0
+pgsteal_khugepaged 0
+pgfault 666
+pgmajfault 0
+pgrefill 0
+pgactivate 0
+pgdeactivate 0
+pglazyfree 0
+pglazyfreed 0
+zswpin 0
+zswpout 0
+zswpwb 0
+thp_fault_alloc 0
+thp_collapse_alloc 0
+0
+high 0
+max 0
+fail 0
+max
+max
+0
+0
+max
+
+=== Check SLURM GPU environment in sbatch vs srun ===
+sbatch SLURM_STEP_GPUS: 
+sbatch SLURM_JOB_GPUS: 0,1,2
+srun SLURM_STEP_GPUS: 0
+srun SLURM_JOB_GPUS: 0,1,2
+
+=== Check nvidia-smi in sbatch vs srun ===
+sbatch nvidia-smi:
+GPU 0: NVIDIA A100 80GB PCIe (UUID: GPU-a17df1a3-e29d-ebcf-2dc0-1fac40c70867)
+GPU 1: NVIDIA A100 80GB PCIe (UUID: GPU-4a4869a9-f339-c8f8-cae7-0b19f8d59614)
+GPU 2: NVIDIA A100 80GB PCIe (UUID: GPU-d4a5a337-a886-6bbf-4940-03ff9f9250a7)
+
+srun nvidia-smi:
+GPU 0: NVIDIA A100 80GB PCIe (UUID: GPU-a17df1a3-e29d-ebcf-2dc0-1fac40c70867)
+GPU 1: NVIDIA A100 80GB PCIe (UUID: GPU-4a4869a9-f339-c8f8-cae7-0b19f8d59614)
+GPU 2: NVIDIA A100 80GB PCIe (UUID: GPU-d4a5a337-a886-6bbf-4940-03ff9f9250a7)
+
+=== Check /dev/nvidia in sbatch vs srun with strace ===
+sbatch - strace open /dev/nvidia0:
+openat(AT_FDCWD, "/dev/nvidia0", O_RDWR|O_CLOEXEC) = 3
+
+srun - strace open /dev/nvidia0:
+openat(AT_FDCWD, "/dev/nvidia0", O_RDWR|O_CLOEXEC) = 3

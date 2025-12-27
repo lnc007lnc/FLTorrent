@@ -1,0 +1,168 @@
+=== SLURM step structure ===
+total 0
+drwxr-xr-x 3 root root 0 Dec 26 23:54 .
+drwxr-xr-x 6 root root 0 Dec 26 23:54 ..
+-r--r--r-- 1 root root 0 Dec 26 23:54 cgroup.controllers
+-r--r--r-- 1 root root 0 Dec 26 23:54 cgroup.events
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cgroup.freeze
+--w------- 1 root root 0 Dec 26 23:54 cgroup.kill
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cgroup.max.depth
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cgroup.max.descendants
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cgroup.procs
+-r--r--r-- 1 root root 0 Dec 26 23:54 cgroup.stat
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cgroup.subtree_control
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cgroup.threads
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cgroup.type
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cpu.idle
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cpu.max
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cpu.max.burst
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cpuset.cpus
+-r--r--r-- 1 root root 0 Dec 26 23:54 cpuset.cpus.effective
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cpuset.cpus.exclusive
+-r--r--r-- 1 root root 0 Dec 26 23:54 cpuset.cpus.exclusive.effective
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cpuset.cpus.partition
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cpuset.mems
+-r--r--r-- 1 root root 0 Dec 26 23:54 cpuset.mems.effective
+-r--r--r-- 1 root root 0 Dec 26 23:54 cpu.stat
+-r--r--r-- 1 root root 0 Dec 26 23:54 cpu.stat.local
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cpu.weight
+-rw-r--r-- 1 root root 0 Dec 26 23:54 cpu.weight.nice
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.current
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.events
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.events.local
+-rw-r--r-- 1 root root 0 Dec 26 23:54 memory.high
+-rw-r--r-- 1 root root 0 Dec 26 23:54 memory.low
+-rw-r--r-- 1 root root 0 Dec 26 23:54 memory.max
+-rw-r--r-- 1 root root 0 Dec 26 23:54 memory.min
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.numa_stat
+-rw-r--r-- 1 root root 0 Dec 26 23:54 memory.oom.group
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.peak
+--w------- 1 root root 0 Dec 26 23:54 memory.reclaim
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.stat
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.swap.current
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.swap.events
+-rw-r--r-- 1 root root 0 Dec 26 23:54 memory.swap.high
+-rw-r--r-- 1 root root 0 Dec 26 23:54 memory.swap.max
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.swap.peak
+-r--r--r-- 1 root root 0 Dec 26 23:54 memory.zswap.current
+-rw-r--r-- 1 root root 0 Dec 26 23:54 memory.zswap.max
+drwxr-xr-x 4 root root 0 Dec 26 23:54 step_batch
+
+=== step_batch vs step_0 comparison ===
+step_batch files:
+cgroup.controllers
+cgroup.events
+cgroup.freeze
+cgroup.kill
+cgroup.max.depth
+cgroup.max.descendants
+cgroup.procs
+cgroup.stat
+cgroup.subtree_control
+cgroup.threads
+cgroup.type
+cpu.idle
+cpu.max
+cpu.max.burst
+cpuset.cpus
+cpuset.cpus.effective
+cpuset.cpus.exclusive
+cpuset.cpus.exclusive.effective
+cpuset.cpus.partition
+cpuset.mems
+cpuset.mems.effective
+cpu.stat
+cpu.stat.local
+cpu.weight
+cpu.weight.nice
+memory.current
+memory.events
+memory.events.local
+memory.high
+memory.low
+memory.max
+memory.min
+memory.numa_stat
+memory.oom.group
+memory.peak
+memory.reclaim
+memory.stat
+memory.swap.current
+memory.swap.events
+memory.swap.high
+memory.swap.max
+memory.swap.peak
+memory.zswap.current
+memory.zswap.max
+slurm
+user
+
+=== Check if there's any GPU-related setting ===
+Looking for any difference...
+
+step_batch misc.current (if exists):
+no misc.current
+
+=== srun test - check step_0 ===
+step_0 files:
+cgroup.controllers
+cgroup.events
+cgroup.freeze
+cgroup.kill
+cgroup.max.depth
+cgroup.max.descendants
+cgroup.procs
+cgroup.stat
+cgroup.subtree_control
+cgroup.threads
+cgroup.type
+cpu.idle
+cpu.max
+cpu.max.burst
+cpuset.cpus
+cpuset.cpus.effective
+cpuset.cpus.exclusive
+cpuset.cpus.exclusive.effective
+cpuset.cpus.partition
+cpuset.mems
+cpuset.mems.effective
+cpu.stat
+cpu.stat.local
+cpu.weight
+cpu.weight.nice
+memory.current
+memory.events
+memory.events.local
+memory.high
+memory.low
+memory.max
+memory.min
+memory.numa_stat
+memory.oom.group
+memory.peak
+memory.reclaim
+memory.stat
+memory.swap.current
+memory.swap.events
+memory.swap.high
+memory.swap.max
+memory.swap.peak
+memory.zswap.current
+memory.zswap.max
+slurm
+user
+
+step_0 misc.current (if exists):
+no misc.current
+
+=== Check SLURM gres configuration ===
+   TresPerNode=gres/gpu:1
+
+=== Check if SLURM uses cgroup device controller ===
+ProctrackType           = proctrack/cgroup
+Cgroup Support Configuration:
+CgroupMountpoint        = /sys/fs/cgroup
+CgroupPlugin            = autodetect
+
+=== Check slurm cgroup.conf ===
+Cannot read cgroup.conf

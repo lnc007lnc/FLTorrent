@@ -24,11 +24,31 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
         self.chunk_stream_queues = {}  # {client_id: deque()}
         # 🚀 CRITICAL FIX: Add chunk_manager reference for data access (will be set by client)
         self.chunk_manager = chunk_manager
-        
+
         # 🔧 FIX: Singleton thread management - standby mode normally, start when needed
         self._background_processor = None
         self._processor_lock = threading.Lock()
         self._active_uploads = 0  # active upload connection counter
+
+        # 🚀 FIX: Separate semaphores for CONTROL vs DATA streams
+        #
+        # CRITICAL ARCHITECTURE FIX:
+        # Previously, control messages (streamChunks: REQUEST/HAVE/BITFIELD) and
+        # data messages (uploadChunks/downloadChunks: PIECE) shared ONE semaphore.
+        # This caused DEADLOCK: when persistent data connections filled the semaphore,
+        # control messages couldn't get through, and downloads stalled.
+        #
+        # NEW DESIGN:
+        # 1. Control stream (streamChunks): NO semaphore - lightweight, must always work
+        # 2. Data streams (uploadChunks/downloadChunks): Separate data semaphore
+        #
+        # Calculation for data semaphore:
+        # - 50 clients × 8 neighbors × 2 (Upload+Download) = 800 persistent connections
+        # - Set to 1000 with buffer for safety
+        self._data_semaphore = threading.Semaphore(1000)
+
+        # 🔧 DEPRECATED: Keep for backward compatibility, but control streams no longer use it
+        self._streaming_semaphore = self._data_semaphore  # Alias for any old references
     
     def _ensure_background_processor(self):
         """🔧 Lazy loading: only start background processing thread when needed"""
@@ -66,12 +86,29 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
         return gRPC_comm_manager_pb2.MessageResponse(msg='ACK')
         
     def streamChunks(self, request_iterator, context):
-        """🚀 Bidirectional streaming RPC for chunk control messages"""
+        """🚀 Bidirectional streaming RPC for chunk control messages (REQUEST/HAVE/BITFIELD)
+
+        🔧 ARCHITECTURE: Control streams do NOT use semaphore!
+        - Control messages are lightweight (no large data transfer)
+        - Control messages MUST always get through to prevent deadlock
+        - Data streams (uploadChunks/downloadChunks) use separate _data_semaphore
+        """
         logger.debug("[gRPCServer] streamChunks method called")
         logger.debug(f"[🔍 gRPCServer] streamChunks called from peer: {context.peer()}")
-        
+
+        # 🚀 NO SEMAPHORE for control streams - they must always work!
+
+        # 🔧 FIX: Simple yield points - less aggressive, minimal overhead
+        message_count = 0
+        YIELD_INTERVAL = 50  # Yield every 50 messages - balance between fairness and throughput
+
         try:
             for request in request_iterator:
+                message_count += 1
+
+                # 🔧 Periodic yield: Give sendMessage RPCs a chance (only every 50 messages)
+                if message_count % YIELD_INTERVAL == 0:
+                    time.sleep(0)  # Just yield to scheduler, no actual sleep
                 logger.debug(f"[🔍 gRPCServer] Received request: sender_id={request.sender_id}, receiver_id={request.receiver_id}, chunk_type={request.chunk_type}, from peer: {context.peer()}")
                 # Process control messages (HAVE, BITFIELD, REQUEST, CANCEL)
                 if request.chunk_type in [gRPC_comm_manager_pb2.ChunkType.CHUNK_HAVE,
@@ -104,37 +141,61 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 success=False,
                 error_message=str(e)
             )
-            
+        finally:
+            # 🚀 Control streams don't use semaphore, nothing to release
+            logger.debug(f"[🎯 gRPCServer] streamChunks ended from {context.peer()}")
+
     def uploadChunks(self, request_iterator, context):
-        """🚀 Optimization 2: Enhanced underground pipeline mode - Never-stopping high-performance chunk upload processing"""
+        """🚀 Optimization 2: Enhanced underground pipeline mode - Never-stopping high-performance chunk upload processing
+
+        🔧 ARCHITECTURE: Data streams use _data_semaphore (separate from control)
+        - Data transfers are heavy (large PIECE messages)
+        - Limit concurrent data streams to prevent resource exhaustion
+        - Control streams (streamChunks) are NOT limited, ensuring REQUEST/HAVE always work
+        """
         logger.debug("[🎯 gRPCServer] 📤 Enhanced upload pipeline started - UNDERGROUND MODE")
-        
+
+        # 🚀 CRITICAL: Acquire DATA semaphore (separate from control streams)
+        self._data_semaphore.acquire()
+        logger.debug(f"[🎯 gRPCServer] uploadChunks acquired DATA semaphore from {context.peer()}")
+
         # 🚀 Underground pipeline performance parameters
         successful_chunks = 0
         failed_chunks = 0
         error_messages = []
         processing_start_time = time.time()
         client_id = 0  # Will be obtained from the first request
-        
+
         # 🚀 Performance monitoring
         chunk_sizes = []
         processing_times = []
         last_performance_report = time.time()
-        
+
+        # 🔧 FIX: Fixed yield interval - less aggressive
+        YIELD_INTERVAL = 50  # Yield every 50 chunks
+
         def enhanced_underground_processor():
             """🚀 Enhanced underground pipeline processor - High performance, never-stopping, intelligent error handling"""
             nonlocal successful_chunks, failed_chunks, error_messages, chunk_sizes, processing_times, client_id, last_performance_report
-            
+
             logger.debug("[🎯 gRPCServer] 🚇 Enhanced underground pipeline started - PERFORMANCE MODE")
-            
+
             # 🚀 Underground pipeline batch processing optimization
             chunk_batch = []
             batch_size = 10  # Batch processing size
             batch_timeout = 0.1  # 100ms batch processing timeout
             last_batch_time = time.time()
-            
+
+            # 🔧 FIX: Simple yield points - less aggressive
+            request_count = 0
+
             try:
                 for request in request_iterator:
+                    request_count += 1
+
+                    # 🔧 Periodic yield: Give sendMessage RPCs a chance (only every 50 chunks)
+                    if request_count % YIELD_INTERVAL == 0:
+                        time.sleep(0)  # Just yield to scheduler
                     request_start_time = time.time()
                     
                     # 🚀 Get client_id (from first request)
@@ -250,21 +311,18 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 if successful_chunks > 0:
                     logger.debug(f"[🎯 gRPCServer] 📊   Throughput: {successful_chunks/total_time:.1f} chunks/sec")
         
-        # 🔧 FIX: Use shared background thread, avoid creating new thread for each request
-        with self._processor_lock:
-            self._active_uploads += 1
-        
         # 🔧 Ensure background processing thread exists (lazy loading)
         self._ensure_background_processor()
-        
-        # 🚀 Process directly in current thread, or pass data to background thread
+
+        # 🚀 Process directly in current thread
         logger.debug(f"[🎯 gRPCServer] Processing upload request for client {client_id}")
-        enhanced_underground_processor()
-        
-        # 🔧 Decrease active connection count after processing
-        with self._processor_lock:
-            self._active_uploads = max(0, self._active_uploads - 1)
-        
+        try:
+            enhanced_underground_processor()
+        finally:
+            # 🚀 CRITICAL: Always release DATA semaphore when streaming ends
+            self._data_semaphore.release()
+            logger.debug(f"[🎯 gRPCServer] uploadChunks released DATA semaphore from {context.peer()}")
+
         # 🚀 Return processing result
         logger.debug("[🎯 gRPCServer] Upload processing completed")
         return gRPC_comm_manager_pb2.ChunkBatchResponse(
@@ -273,14 +331,30 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
             failed_chunks=failed_chunks,
             error_messages=error_messages
         )
-        
+
     def downloadChunks(self, request, context):
-        """🚀 Server streaming RPC for batch chunk download"""
+        """🚀 Server streaming RPC for batch chunk download
+
+        🔧 ARCHITECTURE: Data streams use _data_semaphore (separate from control)
+        """
         logger.debug(f"[gRPCServer] downloadChunks method called for client {request.client_id}")
-        
+
+        # 🚀 CRITICAL: Acquire DATA semaphore (separate from control streams)
+        self._data_semaphore.acquire()
+        logger.debug(f"[🎯 gRPCServer] downloadChunks acquired DATA semaphore from {context.peer()}")
+
+        # 🔧 FIX: Simple yield points - less aggressive
+        chunk_count = 0
+        YIELD_INTERVAL = 50  # Yield every 50 chunks
+
         try:
             # Convert batch request to individual message requests
             for chunk_req in request.chunk_requests:
+                chunk_count += 1
+
+                # 🔧 Periodic yield: Give sendMessage RPCs a chance (only every 50 chunks)
+                if chunk_count % YIELD_INTERVAL == 0:
+                    time.sleep(0)  # Just yield to scheduler
                 # Create chunk request message for compatibility
                 chunk_request = gRPC_comm_manager_pb2.ChunkStreamRequest(
                     sender_id=request.sender_id,   
@@ -357,7 +431,11 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
                 success=False,
                 error_message=str(e)
             )
-            
+        finally:
+            # 🚀 CRITICAL: Always release DATA semaphore when streaming ends
+            self._data_semaphore.release()
+            logger.debug(f"[🎯 gRPCServer] downloadChunks released DATA semaphore from {context.peer()}")
+
     def _convert_chunk_to_message(self, chunk_request):
         """🔧 Convert chunk stream request to traditional message format for compatibility"""
         # This is a compatibility bridge - convert streaming chunk requests 
@@ -528,7 +606,13 @@ class gRPCComServeFunc(gRPC_comm_manager_pb2_grpc.gRPCComServeFuncServicer):
     def receive(self):
         # 🔧 FIX: Replace busy-wait with sleep to avoid CPU spin
         # With 50+ clients, busy-wait caused 100% CPU usage and resource exhaustion
+        wait_start = time.time()
+        last_heartbeat = time.time()
         while len(self.msg_queue) == 0:
             time.sleep(0.001)  # 1ms sleep prevents CPU burning
+            # 🔍 DEBUG: Heartbeat every 10 seconds while waiting
+            if time.time() - last_heartbeat >= 10.0:
+                logger.warning(f"[💓 RECV-HEARTBEAT] gRPC receive() waiting for messages, queue_size=0, wait_time={time.time()-wait_start:.1f}s")
+                last_heartbeat = time.time()
         msg = self.msg_queue.popleft()
         return msg

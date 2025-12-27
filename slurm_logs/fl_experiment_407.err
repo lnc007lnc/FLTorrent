@@ -1,0 +1,27 @@
+[2025-12-21 03:41:07,560 W 422403 422403] rpc_client.h:153: Failed to connect to GCS at address [fe80::8e84:74ff:fe25:9cb1]:6379 within 5 seconds.
+Traceback (most recent call last):
+  File "/home/naicheng_li/.conda/envs/flv2/bin/ray", line 7, in <module>
+    sys.exit(main())
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/scripts/scripts.py", line 2758, in main
+    return cli()
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 1485, in __call__
+    return self.main(*args, **kwargs)
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 1406, in main
+    rv = self.invoke(ctx)
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 1873, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 1269, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 824, in invoke
+    return callback(*args, **kwargs)
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/autoscaler/_private/cli_logger.py", line 823, in wrapper
+    return f(*args, **kwargs)
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/scripts/scripts.py", line 1082, in start
+    bootstrap_address = services.canonicalize_bootstrap_address(
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/_private/services.py", line 538, in canonicalize_bootstrap_address
+    raise ValueError(f"Invalid address format: {addr}")
+ValueError: Invalid address format: fe80::8e84:74ff:fe25:9cb1:6379
+srun: error: srv-it-node01: task 0: Exited with exit code 1
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd-srv-it-node02: error: *** STEP 407.0 ON srv-it-node02 CANCELLED AT 2025-12-21T03:41:21 ***
+slurmstepd-srv-it-node02: error: *** JOB 407 ON srv-it-node02 CANCELLED AT 2025-12-21T03:41:21 ***

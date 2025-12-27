@@ -1,0 +1,25 @@
+=== Check conda cudatoolkit ===
+nvidia-cuda-cupti-cu11    11.8.87                  pypi_0    pypi
+nvidia-cuda-nvrtc-cu11    11.8.89                  pypi_0    pypi
+nvidia-cuda-runtime-cu11  11.8.89                  pypi_0    pypi
+
+=== Check libcudart in conda env ===
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/nvidia/cuda_runtime/lib/libcudart.so.11.0
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torchvision.libs/libcudart.60cfec8e.so.11.0
+
+=== Check nvidia libs in conda ===
+
+=== Try setting LD_LIBRARY_PATH ===
+Found CUDA libs at: /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/nvidia/cuda_runtime/lib
+LD_LIBRARY_PATH: /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/nvidia/cuda_runtime/lib:
+
+=== Retry PyTorch CUDA check ===
+CUDA available: False
+
+=== Check if nvidia-cuda-toolkit installed ===
+
+=== PyTorch bundled CUDA check ===
+PyTorch location: /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch
+  /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/libc10_cuda.so
+  /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so
+  /home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/lib/libtorch_cuda_linalg.so

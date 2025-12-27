@@ -2,6 +2,8 @@ from federatedscope.nlp.dataset.leaf_nlp import LEAF_NLP
 from federatedscope.nlp.dataset.leaf_twitter import LEAF_TWITTER
 from federatedscope.nlp.dataset.leaf_synthetic import LEAF_SYNTHETIC
 from federatedscope.core.auxiliaries.transform_builder import get_transform
+from federatedscope.core.data.utils import (get_num_users_to_load,
+                                            should_load_all_leaf_users)
 
 
 def load_nlp_dataset(config=None):
@@ -48,13 +50,16 @@ def load_nlp_dataset(config=None):
     else:
         raise ValueError(f'No dataset named: {name}!')
 
-    client_num = min(len(dataset), config.federate.client_num
-                     ) if config.federate.client_num > 0 else len(dataset)
-    config.merge_from_list(['federate.client_num', client_num])
+    # Determine how many users to load (use utility function)
+    num_users_to_load = get_num_users_to_load(dataset, config)
+
+    # Update client_num for original mode only
+    if not should_load_all_leaf_users(config):
+        config.merge_from_list(['federate.client_num', num_users_to_load])
 
     # get local dataset
     data_dict = dict()
-    for client_idx in range(1, client_num + 1):
-        data_dict[client_idx] = dataset[client_idx - 1]
+    for user_idx in range(1, num_users_to_load + 1):
+        data_dict[user_idx] = dataset[user_idx - 1]
 
     return data_dict, config

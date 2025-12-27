@@ -1,0 +1,47 @@
+[2025-12-21 03:42:18,686 W 114737 114737] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+[2025-12-21 03:42:32,283 W 423441 423441] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+[2025-12-21 03:42:48,691 W 114737 114737] gcs_client.cc:205: Failed to get cluster ID from GCS server: TimedOut: Timed out while waiting for GCS to become available.
+[2025-12-21 03:42:54,701 W 114737 114737] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+[2025-12-21 03:43:02,284 W 423441 423441] gcs_client.cc:205: Failed to get cluster ID from GCS server: TimedOut: Timed out while waiting for GCS to become available.
+Traceback (most recent call last):
+  File "/home/naicheng_li/.conda/envs/flv2/bin/ray", line 7, in <module>
+    sys.exit(main())
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/scripts/scripts.py", line 2758, in main
+    return cli()
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 1485, in __call__
+    return self.main(*args, **kwargs)
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 1406, in main
+    rv = self.invoke(ctx)
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 1873, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 1269, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/click/core.py", line 824, in invoke
+    return callback(*args, **kwargs)
+  File "/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/scripts/scripts.py", line 2158, in status
+    gcs_client = ray._raylet.GcsClient(address=address)
+  File "python/ray/_raylet.pyx", line 2625, in ray._raylet.GcsClient.__cinit__
+  File "python/ray/includes/gcs_client.pxi", line 67, in ray._raylet.InnerGcsClient.standalone
+  File "python/ray/includes/common.pxi", line 136, in ray._raylet.check_status_timeout_as_rpc_error
+ray.exceptions.RpcError: Timed out while waiting for GCS to become available.
+2025-12-21 03:43:02,716 - __main__ - INFO - 🚀 Start Ray V2 federated learning
+2025-12-21 03:43:02,716 - __main__ - INFO - 📊 Configuration: 50 clients, 100 rounds training, total nodes: 51
+2025-12-21 03:43:02,716 - __main__ - INFO - 🧹 Clean environment...
+2025-12-21 03:43:03,840 - __main__ - INFO - ✅ Environment cleanup completed
+2025-12-21 03:43:03,844 - __main__ - WARNING - ⚠️  Docker unavailable, switch to non-container mode
+2025-12-21 03:43:03,864	INFO worker.py:1821 -- Connecting to existing Ray cluster at address: 10.0.0.2:6379...
+[2025-12-21 03:43:08,873 W 423473 423473] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+[2025-12-21 03:43:24,705 W 114737 114737] gcs_client.cc:205: Failed to get cluster ID from GCS server: TimedOut: Timed out while waiting for GCS to become available.
+[2025-12-21 03:43:30,714 W 114737 114737] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+[2025-12-21 03:43:38,875 W 423473 423473] gcs_client.cc:205: Failed to get cluster ID from GCS server: TimedOut: Timed out while waiting for GCS to become available.
+[2025-12-21 03:43:44,882 W 423473 423473] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+[2025-12-21 03:44:00,718 W 114737 114737] gcs_client.cc:205: Failed to get cluster ID from GCS server: TimedOut: Timed out while waiting for GCS to become available.
+[2025-12-21 03:44:06,728 W 114737 114737] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+[2025-12-21 03:44:14,883 W 423473 423473] gcs_client.cc:205: Failed to get cluster ID from GCS server: TimedOut: Timed out while waiting for GCS to become available.
+[2025-12-21 03:44:20,888 W 423473 423473] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+[2025-12-21 03:44:36,732 W 114737 114737] gcs_client.cc:205: Failed to get cluster ID from GCS server: TimedOut: Timed out while waiting for GCS to become available.
+[2025-12-21 03:44:42,742 W 114737 114737] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+[2025-12-21 03:44:50,890 W 423473 423473] gcs_client.cc:205: Failed to get cluster ID from GCS server: TimedOut: Timed out while waiting for GCS to become available.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd-srv-it-node02: error: *** JOB 409 ON srv-it-node02 CANCELLED AT 2025-12-21T03:44:56 ***
+slurmstepd-srv-it-node01: error: *** STEP 410.1 ON srv-it-node01 CANCELLED AT 2025-12-21T03:44:56 ***

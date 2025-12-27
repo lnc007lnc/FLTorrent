@@ -1,0 +1,13 @@
+/var/spool/slurmd/job00415/slurm_script: line 87: [: 0
+0: integer expression expected
+/var/spool/slurmd/job00415/slurm_script: line 87: [: 0
+0: integer expression expected
+[2025-12-21 03:49:40,015 W 115042 115046] retryable_grpc_client.cc:85: GCS has been unavailable for more than 60 seconds
+[2025-12-21 03:49:40,015 E 115042 115046] rpc_client.h:203: Failed to connect to GCS within 60 seconds. GCS may have been killed. It's either GCS is terminated by `ray stop` or is killed unexpectedly. If it is killed unexpectedly, see the log file gcs_server.out. https://docs.ray.io/en/master/ray-observability/user-guides/configure-logging.html#logging-directory-structure. The program will terminate.
+srun: error: srv-it-node01: task 0: Exited with exit code 1
+/var/spool/slurmd/job00415/slurm_script: line 87: [: 0
+0: integer expression expected
+[2025-12-21 03:49:52,220 W 115092 115092] rpc_client.h:153: Failed to connect to GCS at address 10.0.0.2:6379 within 5 seconds.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd-srv-it-node02: error: *** JOB 415 ON srv-it-node02 CANCELLED AT 2025-12-21T03:49:56 ***
+slurmstepd-srv-it-node01: error: *** STEP 416.2 ON srv-it-node01 CANCELLED AT 2025-12-21T03:49:56 ***

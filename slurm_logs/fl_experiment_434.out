@@ -1,0 +1,81 @@
+============================================
+Job ID: 434
+Job Name: fl_experiment
+Hetjob Size: 2 partitions
+Start Time: Sun Dec 21 04:35:17 AM CET 2025
+============================================
+Head Node: srv-it-node02 (10.0.0.2)
+Total clients: 50
+Worker Node: srv-it-node01
+Starting Ray head on srv-it-node02...
+Ray head started with PID 469509
+Waiting for Ray head to be ready at 10.0.0.2:6379...
+2025-12-21 04:35:19,492	INFO scripts.py:1364 -- Did not find any active Ray processes.
+Ray head is ready after 3 seconds!
+Starting Ray worker on hetjob group 1...
+Ray worker 1 started with PID 469698
+Waiting 20 seconds for Ray workers to connect...
+2025-12-21 04:35:20,137	INFO usage_lib.py:473 -- Usage stats collection is enabled by default without user confirmation because this terminal is detected to be non-interactive. To disable this, add `--disable-usage-stats` to the command that starts the cluster, or run the following command: `ray disable-usage-stats` before starting the cluster. See https://docs.ray.io/en/master/cluster/usage-stats.html for more details.
+2025-12-21 04:35:20,137	INFO scripts.py:917 -- [37mLocal node IP[39m: [1m10.0.0.2[22m
+2025-12-21 04:35:22,390	SUCC scripts.py:956 -- [32m--------------------[39m
+2025-12-21 04:35:22,391	SUCC scripts.py:957 -- [32mRay runtime started.[39m
+2025-12-21 04:35:22,391	SUCC scripts.py:958 -- [32m--------------------[39m
+2025-12-21 04:35:22,391	INFO scripts.py:960 -- [36mNext steps[39m
+2025-12-21 04:35:22,391	INFO scripts.py:963 -- To add another node to this Ray cluster, run
+2025-12-21 04:35:22,391	INFO scripts.py:966 -- [1m  ray start --address='10.0.0.2:6379'[22m
+2025-12-21 04:35:22,391	INFO scripts.py:975 -- To connect to this Ray cluster:
+2025-12-21 04:35:22,391	INFO scripts.py:977 -- [35mimport[39m[26m ray
+2025-12-21 04:35:22,391	INFO scripts.py:978 -- ray[35m.[39m[26minit(_node_ip_address[35m=[39m[26m[33m'10.0.0.2'[39m[26m)
+2025-12-21 04:35:22,391	INFO scripts.py:990 -- To submit a Ray job using the Ray Jobs CLI:
+2025-12-21 04:35:22,391	INFO scripts.py:991 -- [1m  RAY_API_SERVER_ADDRESS='http://10.0.0.2:8265' ray job submit --working-dir . -- python my_script.py[22m
+2025-12-21 04:35:22,391	INFO scripts.py:1000 -- See https://docs.ray.io/en/latest/cluster/running-applications/job-submission/index.html 
+2025-12-21 04:35:22,391	INFO scripts.py:1004 -- for more information on submitting Ray jobs to the Ray cluster.
+2025-12-21 04:35:22,391	INFO scripts.py:1009 -- To terminate the Ray runtime, run
+2025-12-21 04:35:22,391	INFO scripts.py:1010 -- [1m  ray stop[22m
+2025-12-21 04:35:22,391	INFO scripts.py:1013 -- To view the status of the cluster, use
+2025-12-21 04:35:22,391	INFO scripts.py:1014 --   [1mray status[22m[26m
+2025-12-21 04:35:22,391	INFO scripts.py:1018 -- To monitor and debug Ray, view the dashboard at 
+2025-12-21 04:35:22,391	INFO scripts.py:1019 --   [1m10.0.0.2:8265[22m[26m
+2025-12-21 04:35:22,391	INFO scripts.py:1026 -- [4mIf connection to the dashboard fails, check your firewall settings and network configuration.[24m
+2025-12-21 04:35:22,391	INFO scripts.py:1132 -- [36m[1m--block[22m[39m
+2025-12-21 04:35:22,391	INFO scripts.py:1133 -- This command will now block forever until terminated by a signal.
+2025-12-21 04:35:22,391	INFO scripts.py:1136 -- Running subprocesses are monitored and a message will be printed if any of them terminate unexpectedly. Subprocesses exit with SIGTERM will be treated as graceful, thus NOT reported.
+2025-12-21 04:35:22,391	INFO scripts.py:1141 -- Process exit logs will be saved to: [1m/tmp/ray/session_2025-12-21_04-35-20_138171_469550/logs/ray_process_exit.log[22m[26m
+2025-12-21 04:35:24,783	INFO scripts.py:1364 -- Did not find any active Ray processes.
+  Worker 1 connection attempt 1...
+2025-12-21 04:35:26,153	INFO scripts.py:1101 -- [37mLocal node IP[39m: [1m10.0.0.1[22m
+2025-12-21 04:35:27,573	SUCC scripts.py:1117 -- [32m--------------------[39m
+2025-12-21 04:35:27,574	SUCC scripts.py:1118 -- [32mRay runtime started.[39m
+2025-12-21 04:35:27,574	SUCC scripts.py:1119 -- [32m--------------------[39m
+2025-12-21 04:35:27,574	INFO scripts.py:1121 -- To terminate the Ray runtime, run
+2025-12-21 04:35:27,574	INFO scripts.py:1122 -- [1m  ray stop[22m
+2025-12-21 04:35:27,574	INFO scripts.py:1132 -- [36m[1m--block[22m[39m
+2025-12-21 04:35:27,575	INFO scripts.py:1133 -- This command will now block forever until terminated by a signal.
+2025-12-21 04:35:27,575	INFO scripts.py:1136 -- Running subprocesses are monitored and a message will be printed if any of them terminate unexpectedly. Subprocesses exit with SIGTERM will be treated as graceful, thus NOT reported.
+2025-12-21 04:35:27,575	INFO scripts.py:1141 -- Process exit logs will be saved to: [1m/tmp/ray/session_2025-12-21_04-35-20_138171_469550/logs/ray_process_exit.log[22m[26m
+Proceeding with FL experiment...
+Ray cluster status:
+======== Autoscaler status: 2025-12-21 04:35:41.019696 ========
+Node status
+---------------------------------------------------------------
+Active:
+ 1 node_55f59fae43e13905dbfb57888b8257861c552853b21db51035e4fa10
+ 1 node_ba0c71c03c7927227140c99ef7506ac077b590d4287ea92bf04ad8c8
+Pending:
+ (no pending nodes)
+Recent failures:
+ (no failures)
+
+Resources
+---------------------------------------------------------------
+Total Usage:
+ 0.0/128.0 CPU
+ 0.0/6.0 GPU
+ 0B/511.64GiB memory
+ 0B/219.27GiB object_store_memory
+
+From request_resources:
+ (none)
+Pending Demands:
+ (no resource demands)
+Starting FL experiment with hetjob distribution...

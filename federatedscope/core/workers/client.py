@@ -2238,17 +2238,20 @@ class Client(BaseClient):
                 else:
                     time.sleep(0.01)
                 
-            # Record completion reason (use memory bitfield for consistency)
+            # 🚀 CRITICAL FIX: Record chunk count IMMEDIATELY before any other operation
+            # This prevents race condition where main thread calls stop_exchange() and clears counters
             final_chunks = self.bt_manager.get_memory_chunk_count()
+            final_downloaded = getattr(self.bt_manager, 'total_downloaded', 0)
+            final_uploaded = getattr(self.bt_manager, 'total_uploaded', 0)
             logger.info(f"[BT] Client {self.ID}: Exchange loop completed. Final chunks: {final_chunks}/{expected_chunks}")
-            
+
             #Clear old file files
             keep_rounds = getattr(self._cfg, 'chunk_keep_rounds', 2) if hasattr(self, '_cfg') else 2
-        
+
             self.chunk_manager.cleanup_old_rounds(keep_rounds=keep_rounds, current_round=self.bt_manager.round_num)
-            
-            # 4. Report to Server after completion
-            self._report_bittorrent_completion()
+
+            # 4. Report to Server after completion (pass saved values to avoid race condition)
+            self._report_bittorrent_completion(chunks_collected=final_chunks)
             
             # ✅ KEEP ALIVE: Keep bt_manager for serving other peers (round-level lifecycle management)
             logger.info(f"[BT] Client {self.ID}: BitTorrent download completed, but keeping manager alive for serving other peers")
@@ -2392,14 +2395,20 @@ class Client(BaseClient):
         current_chunks = self.bt_manager.get_memory_chunk_count()
         return current_chunks >= expected_chunks
 
-    def _report_bittorrent_completion(self):
+    def _report_bittorrent_completion(self, chunks_collected: int = None):
         """
         Report BitTorrent exchange completion to Server
+
+        🚀 CRITICAL FIX: Accept chunks_collected as parameter to avoid race condition.
+        The main thread may call stop_exchange() which clears the counter before
+        this function reads it. By passing the value from the caller (who saved it
+        before stop_exchange could be called), we ensure correct reporting.
         """
         # 🐛 Bug Fix 31: Safely get statistics information
-        # 🚀 CRITICAL FIX: Use memory counter (NO DB QUERY!)
-        chunks_collected = self.bt_manager.get_memory_chunk_count() if hasattr(self, 'bt_manager') else 0
-        
+        # 🚀 CRITICAL FIX: Use passed parameter if available, otherwise fallback to counter
+        if chunks_collected is None:
+            chunks_collected = self.bt_manager.get_memory_chunk_count() if hasattr(self, 'bt_manager') else 0
+
         # 🐛 Bug Fix 32: Safely get transfer statistics
         bytes_downloaded = getattr(self.bt_manager, 'total_downloaded', 0) if hasattr(self, 'bt_manager') else 0
         bytes_uploaded = getattr(self.bt_manager, 'total_uploaded', 0) if hasattr(self, 'bt_manager') else 0

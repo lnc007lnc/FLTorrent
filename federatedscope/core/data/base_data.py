@@ -66,16 +66,23 @@ class StandaloneDataDict(dict):
         Args:
             datadict: dict with `client_id` as key,  `ClientData` as value.
         """
+        # 获取当前进程负责的 client ID
+        my_data_idx = getattr(self.global_cfg.distribute, 'data_idx', None)
+
+        # === 关键优化：只在 server / standalone 进程做全局 merge ===
+        # Client 进程不需要 merge，避免在只有 {0, my_data_idx} 的 datadict 上做无意义的 merge
         if self.global_cfg.federate.merge_test_data:
-            merge_split = ['test']
-            if self.global_cfg.federate.merge_val_data:
-                merge_split += ['val']
-            server_data = merge_data(
-                all_data=datadict,
-                merged_max_data_id=self.global_cfg.federate.client_num,
-                specified_dataset_name=merge_split)
-            # `0` indicate Server
-            datadict[0] = ClientData(self.global_cfg, **server_data)
+            # 只在 server (data_idx=0) 或 standalone (data_idx=None) 模式下做 merge
+            if my_data_idx is None or my_data_idx == 0:
+                merge_split = ['test']
+                if self.global_cfg.federate.merge_val_data:
+                    merge_split += ['val']
+                server_data = merge_data(
+                    all_data=datadict,
+                    merged_max_data_id=self.global_cfg.federate.client_num,
+                    specified_dataset_name=merge_split)
+                # `0` indicate Server
+                datadict[0] = ClientData(self.global_cfg, **server_data)
 
         if self.global_cfg.federate.method == "global":
             if self.global_cfg.federate.client_num != 1:

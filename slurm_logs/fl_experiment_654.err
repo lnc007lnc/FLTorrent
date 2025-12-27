@@ -1,0 +1,206 @@
+2025-12-27 07:35:45,998 - __main__ - INFO - 🚀 Start Ray V2 federated learning
+2025-12-27 07:35:45,999 - __main__ - INFO - 📊 Configuration: 50 clients, 100 rounds training, total nodes: 51
+2025-12-27 07:35:45,999 - __main__ - INFO - 🧹 Clean environment...
+2025-12-27 07:36:06,030 - __main__ - INFO - 🗑️  Cleaned tmpfs chunk directory: /tmp/fl_chunks
+2025-12-27 07:36:06,977 - __main__ - DEBUG - 🗑️  Cleaned mount directory (simple): /home/naicheng_li/FLTorrent/docker_data/tmp
+2025-12-27 07:36:06,981 - __main__ - DEBUG - 🗑️  Cleaned mount directory (simple): /home/naicheng_li/FLTorrent/docker_data/app_tmp
+2025-12-27 07:36:07,989 - __main__ - INFO - ✅ Environment cleanup completed
+2025-12-27 07:36:07,990 - __main__ - INFO - 🚀 Applying host network optimizations for ultra-high concurrency...
+2025-12-27 07:36:08,098 - __main__ - WARNING - ⚠️  22 network optimizations could not be applied (may need sudo access)
+2025-12-27 07:36:08,098 - __main__ - DEBUG -    Failed: net.core.somaxconn - sudo: you do not exist in the passwd database
+2025-12-27 07:36:08,098 - __main__ - DEBUG -    Failed: net.core.netdev_max_backlog - sudo: you do not exist in the passwd database
+2025-12-27 07:36:08,098 - __main__ - DEBUG -    Failed: net.core.rmem_default - sudo: you do not exist in the passwd database
+2025-12-27 07:36:08,098 - __main__ - WARNING - ⚠️  No host network optimizations applied! High-concurrency FL may experience issues.
+2025-12-27 07:36:08,098 - __main__ - WARNING -    Consider running with sudo or contacting HPC admin to apply these settings.
+2025-12-27 07:36:08,098 - __main__ - INFO - 🦭 Initializing Podman rootless environment...
+2025-12-27 07:36:08,100 - __main__ - WARNING - ⚠️  Podman unavailable, trying Docker...
+2025-12-27 07:36:08,100 - __main__ - INFO - 📦 Using non-container mode (Fallback)
+2025-12-27 07:36:09,979 - __main__ - INFO - 🔍 Found available port for Ray dashboard: 8265
+2025-12-27 07:36:10,057 - filelock - DEBUG - Attempting to acquire lock 140373387220528 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/node_ip_address.json.lock
+2025-12-27 07:36:10,060 - filelock - DEBUG - Lock 140373387220528 acquired on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/node_ip_address.json.lock
+2025-12-27 07:36:10,062 - filelock - DEBUG - Attempting to release lock 140373387220528 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/node_ip_address.json.lock
+2025-12-27 07:36:10,063 - filelock - DEBUG - Lock 140373387220528 released on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/node_ip_address.json.lock
+2025-12-27 07:36:10,064 - filelock - DEBUG - Attempting to acquire lock 140373387224512 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,065 - filelock - DEBUG - Lock 140373387224512 acquired on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,067 - filelock - DEBUG - Attempting to release lock 140373387224512 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,067 - filelock - DEBUG - Lock 140373387224512 released on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,067 - filelock - DEBUG - Attempting to acquire lock 140373387224464 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,068 - filelock - DEBUG - Lock 140373387224464 acquired on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,069 - filelock - DEBUG - Attempting to release lock 140373387224464 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,069 - filelock - DEBUG - Lock 140373387224464 released on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,069 - filelock - DEBUG - Attempting to acquire lock 140373387220672 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,070 - filelock - DEBUG - Lock 140373387220672 acquired on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,071 - filelock - DEBUG - Attempting to release lock 140373387220672 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,071 - filelock - DEBUG - Lock 140373387220672 released on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,072 - filelock - DEBUG - Attempting to acquire lock 140373387217168 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,072 - filelock - DEBUG - Lock 140373387217168 acquired on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,073 - filelock - DEBUG - Attempting to release lock 140373387217168 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,074 - filelock - DEBUG - Lock 140373387217168 released on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,074 - filelock - DEBUG - Attempting to acquire lock 140373387218224 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,074 - filelock - DEBUG - Lock 140373387218224 acquired on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,075 - filelock - DEBUG - Attempting to release lock 140373387218224 on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:10,076 - filelock - DEBUG - Lock 140373387218224 released on /home/naicheng_li/ray/session_2025-12-27_07-36-10_052202_3095676/ports_by_node.json.lock
+2025-12-27 07:36:12,489	INFO worker.py:1998 -- Started a local Ray instance. View the dashboard at [1m[32m10.0.0.2:8265 [39m[22m
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/_private/worker.py:2046: FutureWarning: Tip: In future versions of Ray, Ray will no longer override accelerator visible devices env var if num_gpus=0 or num_gpus=None (default). To enable this behavior and turn off this error message, set RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+  warnings.warn(
+2025-12-27 07:36:13,492 - __main__ - INFO - 🚀 Ray cluster initialization completed:
+2025-12-27 07:36:13,492 - __main__ - INFO -    📊 Resources: {'CPU': 64.0, 'node:10.0.0.2': 1.0, 'object_store_memory': 145967201280.0, 'node:__internal_head__': 1.0, 'memory': 375941313536.0, 'accelerator_type:A100': 1.0, 'GPU': 4.0}
+2025-12-27 07:36:13,492 - __main__ - INFO -    🌐 Dashboard: http://127.0.0.1:8265
+2025-12-27 07:36:13,493 - __main__ - DEBUG - Found node: 6c47dcea65a5... IP: 10.0.0.2, Resources: {'CPU': 64.0, 'node:10.0.0.2': 1.0, 'accelerator_type:A100': 1.0, 'node:__internal_head__': 1.0, 'object_store_memory': 145967201280.0, 'memory': 375941313536.0, 'GPU': 4.0}
+2025-12-27 07:36:13,493 - __main__ - INFO - 🌐 Ray Cluster Topology:
+2025-12-27 07:36:13,493 - __main__ - INFO -    📍 Head node: 6c47dcea65a5... (Server will run here)
+2025-12-27 07:36:13,493 - __main__ - WARNING -    ⚠️ No worker nodes found! Clients will run on head node (not recommended)
+2025-12-27 07:36:13,495 - __main__ - INFO - 🎮 Detected GPU type on node 6c47dcea65a5...: A100 -> 40.0GB per GPU
+2025-12-27 07:36:13,495 - __main__ - INFO - 📍 Head node (6c47dcea65a5...): 4.0 GPUs, 160.0GB total memory
+2025-12-27 07:36:13,495 - __main__ - INFO - 📊 Total GPU memory across all nodes: 160.0GB
+2025-12-27 07:36:13,495 - __main__ - INFO - 📊 Memory per client: 3.0GB → Max capacity: 53 clients
+2025-12-27 07:36:13,495 - __main__ - INFO -    Node 6c47dcea65a5...: 50 clients (160.0GB / 50 = 3.2GB/client)
+2025-12-27 07:36:13,496 - __main__ - INFO -    Node 6c47dcea65a5...: 4.0 GPU, 50 clients, max 13 clients/GPU -> 0.0731 GPU/client
+2025-12-27 07:36:13,496 - __main__ - INFO - 🎯 GPU allocation summary: {'total_available_gpus': 4.0, 'total_allocated_gpus': 3.655, 'utilization_rate': '91.38%', 'server': 'CPU only', 'per_node_allocation': {'6c47dcea65a5': {'count': 50, 'total_gpu': 3.6550000000000025}}, 'gpu_clients': 50, 'cpu_clients': 0}
+2025-12-27 07:36:13,496 - __main__ - INFO - 📋 Client distribution: 50 GPU clients, 0 CPU clients
+2025-12-27 07:36:13,497 - __main__ - INFO - 🔌 Single-node mode detected - UDS can be enabled
+2025-12-27 07:36:13,497 - __main__ - INFO - 📍 Server scheduled to head node: 6c47dcea65a5...
+2025-12-27 07:36:13,612 - __main__ - INFO - 📦 Using Fallback (no container) for Server
+2025-12-27 07:36:13,677 - __main__ - INFO - ✅ Server started: unix:///tmp/federatedscope_uds/server_38829.sock:38829
+2025-12-27 07:36:28,693 - __main__ - INFO - 📱 Edge device distribution: {'smartphone': 50}
+2025-12-27 07:36:28,693 - __main__ - INFO - 📊 Client distribution plan:
+2025-12-27 07:36:28,694 - __main__ - INFO -    Client 1 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,694 - __main__ - INFO -    Client 2 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,694 - __main__ - INFO -    Client 3 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,695 - __main__ - INFO -    Client 4 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,695 - __main__ - INFO -    Client 5 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,696 - __main__ - INFO -    Client 6 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,696 - __main__ - INFO -    Client 7 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,696 - __main__ - INFO -    Client 8 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,697 - __main__ - INFO -    Client 9 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,697 - __main__ - INFO -    Client 10 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,698 - __main__ - INFO -    Client 11 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,698 - __main__ - INFO -    Client 12 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,698 - __main__ - INFO -    Client 13 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,699 - __main__ - INFO -    Client 14 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,699 - __main__ - INFO -    Client 15 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,699 - __main__ - INFO -    Client 16 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,700 - __main__ - INFO -    Client 17 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,700 - __main__ - INFO -    Client 18 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,700 - __main__ - INFO -    Client 19 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,701 - __main__ - INFO -    Client 20 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,701 - __main__ - INFO -    Client 21 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,701 - __main__ - INFO -    Client 22 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,702 - __main__ - INFO -    Client 23 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,702 - __main__ - INFO -    Client 24 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,702 - __main__ - INFO -    Client 25 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,703 - __main__ - INFO -    Client 26 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,703 - __main__ - INFO -    Client 27 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,703 - __main__ - INFO -    Client 28 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,704 - __main__ - INFO -    Client 29 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,704 - __main__ - INFO -    Client 30 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,704 - __main__ - INFO -    Client 31 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,705 - __main__ - INFO -    Client 32 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,705 - __main__ - INFO -    Client 33 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,705 - __main__ - INFO -    Client 34 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,706 - __main__ - INFO -    Client 35 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,706 - __main__ - INFO -    Client 36 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,706 - __main__ - INFO -    Client 37 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,707 - __main__ - INFO -    Client 38 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,707 - __main__ - INFO -    Client 39 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,707 - __main__ - INFO -    Client 40 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,708 - __main__ - INFO -    Client 41 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,708 - __main__ - INFO -    Client 42 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,708 - __main__ - INFO -    Client 43 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,709 - __main__ - INFO -    Client 44 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,709 - __main__ - INFO -    Client 45 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,709 - __main__ - INFO -    Client 46 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,710 - __main__ - INFO -    Client 47 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,710 - __main__ - INFO -    Client 48 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,710 - __main__ - INFO -    Client 49 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,711 - __main__ - INFO -    Client 50 -> head (6c47dcea65a5...), Node CPUs: 64.0, Clients on node: 50
+2025-12-27 07:36:28,711 - __main__ - INFO - 🔧 Client 1 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:28,811 - __main__ - INFO - ✅ Client 1 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:31,815 - __main__ - INFO - 🔧 Client 2 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:31,896 - __main__ - INFO - ✅ Client 2 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:34,899 - __main__ - INFO - 🔧 Client 3 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:34,991 - __main__ - INFO - ✅ Client 3 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:37,995 - __main__ - INFO - 🔧 Client 4 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:38,079 - __main__ - INFO - ✅ Client 4 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:41,081 - __main__ - INFO - 🔧 Client 5 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:41,160 - __main__ - INFO - ✅ Client 5 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:44,163 - __main__ - INFO - 🔧 Client 6 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:44,247 - __main__ - INFO - ✅ Client 6 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:47,248 - __main__ - INFO - 🔧 Client 7 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:47,324 - __main__ - INFO - ✅ Client 7 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:50,325 - __main__ - INFO - 🔧 Client 8 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:50,408 - __main__ - INFO - ✅ Client 8 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:53,410 - __main__ - INFO - 🔧 Client 9 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:53,502 - __main__ - INFO - ✅ Client 9 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:56,506 - __main__ - INFO - 🔧 Client 10 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:56,584 - __main__ - INFO - ✅ Client 10 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:36:59,587 - __main__ - INFO - 🔧 Client 11 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:36:59,675 - __main__ - INFO - ✅ Client 11 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:02,679 - __main__ - INFO - 🔧 Client 12 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:02,768 - __main__ - INFO - ✅ Client 12 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:05,772 - __main__ - INFO - 🔧 Client 13 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:05,861 - __main__ - INFO - ✅ Client 13 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:08,865 - __main__ - INFO - 🔧 Client 14 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:08,946 - __main__ - INFO - ✅ Client 14 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:11,949 - __main__ - INFO - 🔧 Client 15 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:12,041 - __main__ - INFO - ✅ Client 15 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:15,043 - __main__ - INFO - 🔧 Client 16 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:15,127 - __main__ - INFO - ✅ Client 16 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:18,131 - __main__ - INFO - 🔧 Client 17 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:18,210 - __main__ - INFO - ✅ Client 17 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:21,214 - __main__ - INFO - 🔧 Client 18 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:21,291 - __main__ - INFO - ✅ Client 18 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:24,294 - __main__ - INFO - 🔧 Client 19 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:24,377 - __main__ - INFO - ✅ Client 19 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:27,381 - __main__ - INFO - 🔧 Client 20 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:27,461 - __main__ - INFO - ✅ Client 20 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:30,465 - __main__ - INFO - 🔧 Client 21 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:30,549 - __main__ - INFO - ✅ Client 21 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:33,552 - __main__ - INFO - 🔧 Client 22 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:33,632 - __main__ - INFO - ✅ Client 22 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:36,635 - __main__ - INFO - 🔧 Client 23 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:36,713 - __main__ - INFO - ✅ Client 23 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:39,715 - __main__ - INFO - 🔧 Client 24 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:39,792 - __main__ - INFO - ✅ Client 24 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:42,793 - __main__ - INFO - 🔧 Client 25 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:42,886 - __main__ - INFO - ✅ Client 25 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:45,889 - __main__ - INFO - 🔧 Client 26 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:46,330 - __main__ - INFO - ✅ Client 26 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:49,332 - __main__ - INFO - 🔧 Client 27 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:49,416 - __main__ - INFO - ✅ Client 27 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:52,417 - __main__ - INFO - 🔧 Client 28 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:52,496 - __main__ - INFO - ✅ Client 28 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:55,499 - __main__ - INFO - 🔧 Client 29 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:55,592 - __main__ - INFO - ✅ Client 29 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:37:58,593 - __main__ - INFO - 🔧 Client 30 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:37:58,680 - __main__ - INFO - ✅ Client 30 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:01,684 - __main__ - INFO - 🔧 Client 31 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:01,766 - __main__ - INFO - ✅ Client 31 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:04,767 - __main__ - INFO - 🔧 Client 32 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:04,851 - __main__ - INFO - ✅ Client 32 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:07,854 - __main__ - INFO - 🔧 Client 33 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:07,948 - __main__ - INFO - ✅ Client 33 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:10,951 - __main__ - INFO - 🔧 Client 34 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:11,044 - __main__ - INFO - ✅ Client 34 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:14,044 - __main__ - INFO - 🔧 Client 35 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:14,121 - __main__ - INFO - ✅ Client 35 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:17,125 - __main__ - INFO - 🔧 Client 36 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:17,207 - __main__ - INFO - ✅ Client 36 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:20,210 - __main__ - INFO - 🔧 Client 37 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:20,293 - __main__ - INFO - ✅ Client 37 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:23,296 - __main__ - INFO - 🔧 Client 38 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:23,375 - __main__ - INFO - ✅ Client 38 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:26,377 - __main__ - INFO - 🔧 Client 39 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:26,466 - __main__ - INFO - ✅ Client 39 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:29,468 - __main__ - INFO - 🔧 Client 40 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:29,556 - __main__ - INFO - ✅ Client 40 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:32,557 - __main__ - INFO - 🔧 Client 41 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:33,149 - __main__ - INFO - ✅ Client 41 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:36,153 - __main__ - INFO - 🔧 Client 42 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:36,245 - __main__ - INFO - ✅ Client 42 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:39,247 - __main__ - INFO - 🔧 Client 43 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:39,338 - __main__ - INFO - ✅ Client 43 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:42,340 - __main__ - INFO - 🔧 Client 44 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:42,436 - __main__ - INFO - ✅ Client 44 (smartphone) started on head node (6c47dcea65a5...)
+2025-12-27 07:38:45,440 - __main__ - INFO - 🔧 Client 45 resources: num_cpus=1.1120, num_gpus=0.0731, memory=2.00GB
+2025-12-27 07:38:45,526 - __main__ - INFO - ✅ Client 45 (smartphone) started on head node (6c47dcea65a5...)

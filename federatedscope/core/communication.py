@@ -192,12 +192,13 @@ class gRPCCommManager(object):
             ("grpc.tcp_socket_recv_buffer_size", 8 * 1024 * 1024),   # 8MB receive buffer
             ("grpc.tcp_socket_send_buffer_size", 8 * 1024 * 1024),   # 8MB send buffer
 
-            # Keepalive settings
-            ("grpc.keepalive_time_ms", 120000),                      # 120s
-            ("grpc.keepalive_timeout_ms", 20000),                    # 20s
+            # Keepalive settings - More robust for high-concurrency FL
+            ("grpc.keepalive_time_ms", 300000),                      # 300s (5min) - reduce ping frequency
+            ("grpc.keepalive_timeout_ms", 60000),                    # 60s timeout (was 20s)
             ("grpc.keepalive_permit_without_calls", 1),              # Server relaxed
-            ("grpc.http2.min_ping_interval_without_data_ms", 60000), # 60s
-            ("grpc.http2.max_pings_without_data", 10),
+            ("grpc.http2.min_ping_interval_without_data_ms", 60000), # 60s min ping interval
+            ("grpc.http2.max_pings_without_data", 0),                # Unlimited pings without data
+            ("grpc.http2.min_recv_ping_interval_without_data_ms", 30000),  # 30s - allow client pings
 
             # 🔧 HTTP/2 Flow Control - Larger windows to prevent blocking
             ("grpc.http2.initial_window_size", 64 * 1024 * 1024),           # 64MB (was 16MB)
@@ -225,20 +226,49 @@ class gRPCCommManager(object):
         self.monitor = None  # used to track the communication related metrics
         self.connection_monitor = None  # Will be set by the client
 
-        # 🚀 Connection pool for reusing gRPC connections (avoid somaxconn limit issues)
-        self._connection_pool = {}  # {receiver_address: (stub, channel)}
+        # 🚀 DUAL CHANNEL ARCHITECTURE: Prevent HOL blocking
+        # Problem: When data channel (large chunks) is congested, control messages
+        # (heartbeat, status, bitfield) get blocked too → DEADLINE_EXCEEDED
+        # Solution: Separate control and data into independent gRPC channels
+        self._control_connection_pool = {}  # {receiver_address: (stub, channel)} - lightweight messages
+        self._data_connection_pool = {}     # {receiver_address: (stub, channel)} - bulk data
+
+        # Message types that should use control channel (lightweight, latency-sensitive)
+        self._control_msg_types = {
+            'join_in', 'address', 'model_para', 'evaluate', 'finish',
+            'bitfield', 'have', 'interested', 'choke', 'unchoke', 'cancel',
+            'request', 'topology_instruction', 'connect_msg',
+            'start_bittorrent', 'bt_complete', 'training_completion'
+        }
+        # Data message types (bulk data, can tolerate congestion)
+        self._data_msg_types = {'piece', 'chunk', 'chunk_piece'}
+
+        # 🚀 DISCONNECT TOLERANCE: Prevent false disconnects due to temporary thread pool congestion
+        # Only report disconnect after multiple consecutive failures
+        self._failure_counts = {}  # {receiver_address: consecutive_failure_count}
+        self._disconnect_threshold = 5  # Need 5 consecutive failures to trigger disconnect
 
     def serve(self, max_workers, host, port, options):
         """
         This function is referred to
         https://grpc.io/docs/languages/python/basics/#starting-the-server
         """
-        # 🔧 Increase max_workers for streaming connections
-        # Each client needs threads for: streaming uploads, downloads, control channels, and unary RPCs
+        # 🚀 CRITICAL: Reserve threads for control messages (sendMessage)
+        # Problem: Streaming RPCs (uploadChunks, streamChunks) block threads until completion
+        # This starves sendMessage RPCs, causing server control messages to timeout
+        #
+        # Solution: Use maximum_concurrent_rpcs to limit streaming, ensuring threads for control
+        # With mesh=4, each client has ~8 inbound streaming connections (4 neighbors × 2 streams)
+        # Reserve at least 50% of threads for control messages
+        thread_pool_size = max_workers * 50
+        max_concurrent_streaming = min(thread_pool_size // 2, 100)  # Cap at 100 streaming RPCs
+
         server = grpc.server(
-            futures.ThreadPoolExecutor(max_workers=max_workers * 50),
+            futures.ThreadPoolExecutor(max_workers=thread_pool_size),
             compression=self.comp_method,
-            options=options)
+            options=options,
+            maximum_concurrent_rpcs=thread_pool_size  # Allow all threads to be used
+        )
         gRPC_comm_manager_pb2_grpc.add_gRPCComServeFuncServicer_to_server(
             self.server_funcs, server)
 
@@ -309,12 +339,12 @@ class gRPCCommManager(object):
             ('grpc.tcp_socket_recv_buffer_size', 8 * 1024 * 1024),   # 8MB
             ('grpc.tcp_socket_send_buffer_size', 8 * 1024 * 1024),   # 8MB
 
-            # Keepalive settings - must match server settings to avoid GOAWAY/too_many_pings
-            ('grpc.keepalive_time_ms', 120000),          # 120s (match server)
-            ('grpc.keepalive_timeout_ms', 20000),        # 20s (match server)
+            # Keepalive settings - More robust for high-concurrency FL
+            ('grpc.keepalive_time_ms', 300000),          # 300s (5min) - reduce ping frequency
+            ('grpc.keepalive_timeout_ms', 60000),        # 60s timeout (was 20s)
             ('grpc.keepalive_permit_without_calls', 0),  # Don't ping without active calls
-            ('grpc.http2.min_time_between_pings_ms', 60000),  # 60s (match server)
-            ('grpc.http2.max_pings_without_data', 1),    # Limit pings without data
+            ('grpc.http2.min_time_between_pings_ms', 60000),  # 60s min between pings
+            ('grpc.http2.max_pings_without_data', 0),    # Unlimited pings without data
 
             # 🔧 HTTP/2 Flow Control - Match server settings
             ('grpc.http2.initial_window_size', 64 * 1024 * 1024),           # 64MB
@@ -332,76 +362,109 @@ class gRPCCommManager(object):
         stub = gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub(channel)
         return stub, channel
 
-    def _get_or_create_connection(self, receiver_address):
+    def _get_or_create_connection(self, receiver_address, use_data_channel=False):
         """
-        🚀 Connection pool: Get existing connection or create new one.
-        Reuses connections to avoid somaxconn limit issues from frequent connect/disconnect.
+        🚀 DUAL CHANNEL: Get existing connection or create new one.
+        Separates control and data channels to prevent HOL blocking.
+
+        Args:
+            receiver_address: Target address
+            use_data_channel: If True, use data channel pool; else use control channel pool
         """
-        if receiver_address in self._connection_pool:
-            stub, channel = self._connection_pool[receiver_address]
+        pool = self._data_connection_pool if use_data_channel else self._control_connection_pool
+        pool_name = "Data" if use_data_channel else "Control"
+
+        if receiver_address in pool:
+            stub, channel = pool[receiver_address]
             # Check if channel is still usable
             try:
                 state = channel._channel.check_connectivity_state(True)
                 if state == grpc.ChannelConnectivity.SHUTDOWN:
                     # Connection closed, need to recreate
-                    logger.debug(f"[ConnPool] Connection to {receiver_address} was shutdown, recreating...")
-                    del self._connection_pool[receiver_address]
+                    logger.debug(f"[{pool_name}Pool] Connection to {receiver_address} was shutdown, recreating...")
+                    del pool[receiver_address]
                 else:
                     # Connection still valid, reuse it
                     return stub, channel
             except Exception as e:
                 # Check failed, recreate connection
-                logger.debug(f"[ConnPool] Connection check failed for {receiver_address}: {e}, recreating...")
+                logger.debug(f"[{pool_name}Pool] Connection check failed for {receiver_address}: {e}, recreating...")
                 try:
                     channel.close()
                 except:
                     pass
-                if receiver_address in self._connection_pool:
-                    del self._connection_pool[receiver_address]
+                if receiver_address in pool:
+                    del pool[receiver_address]
 
         # Create new connection and add to pool
         stub, channel = self._create_stub(receiver_address)
-        self._connection_pool[receiver_address] = (stub, channel)
-        logger.debug(f"[ConnPool] Created new connection to {receiver_address}, pool size: {len(self._connection_pool)}")
+        pool[receiver_address] = (stub, channel)
+        logger.debug(f"[{pool_name}Pool] Created new connection to {receiver_address}, pool size: {len(pool)}")
         return stub, channel
+
+    def _is_data_message(self, msg_type):
+        """Check if message type should use data channel"""
+        return msg_type in self._data_msg_types
 
     def _send(self, receiver_address, message):
         """
-        🚀 Optimized send with connection pooling.
-        Reuses existing connections instead of creating new ones each time.
+        🚀 DUAL CHANNEL: Route message to appropriate channel based on type.
+        Control messages → control channel (isolated from data congestion)
+        Data messages → data channel (can tolerate congestion)
         """
-        stub, channel = self._get_or_create_connection(receiver_address)
+        # Determine which channel to use based on message type
+        use_data_channel = self._is_data_message(message.msg_type)
+        pool_name = "Data" if use_data_channel else "Control"
+
+        stub, channel = self._get_or_create_connection(receiver_address, use_data_channel)
         request = message.transform(to_list=True)
 
         try:
             # 🔧 CRITICAL FIX: Add timeout to prevent infinite blocking on TCP deadlock
             stub.sendMessage(request, timeout=30.0)  # 30 second timeout
-            # Notify connection monitor about successful send (if available)
-            if hasattr(self, 'connection_monitor') and self.connection_monitor:
-                # This indicates connection is active
-                pass
+
+            # 🚀 SUCCESS: Reset failure count for this address
+            if receiver_address in self._failure_counts:
+                self._failure_counts[receiver_address] = 0
+
         except grpc._channel._InactiveRpcError as error:
-            logger.warning(f"[ConnPool] Connection error to {receiver_address}: {error}")
-            # Remove failed connection from pool
-            if receiver_address in self._connection_pool:
+            # 🚀 DISCONNECT TOLERANCE: Track consecutive failures
+            self._failure_counts[receiver_address] = self._failure_counts.get(receiver_address, 0) + 1
+            failure_count = self._failure_counts[receiver_address]
+
+            logger.warning(f"[{pool_name}Pool] Connection error to {receiver_address} (failure {failure_count}/{self._disconnect_threshold}): {error}")
+
+            # Remove failed connection from appropriate pool (will retry with new connection)
+            pool = self._data_connection_pool if use_data_channel else self._control_connection_pool
+            if receiver_address in pool:
                 try:
-                    self._connection_pool[receiver_address][1].close()
+                    pool[receiver_address][1].close()
                 except:
                     pass
-                del self._connection_pool[receiver_address]
+                del pool[receiver_address]
 
-            # Notify connection monitor about connection failure
-            if hasattr(self, 'connection_monitor') and self.connection_monitor:
-                from federatedscope.core.connection_monitor import ConnectionEvent
-                self.connection_monitor.report_connection_lost(
-                    peer_id=message.receiver,
-                    details={
-                        'error_type': type(error).__name__,
-                        'error_message': str(error),
-                        'receiver_address': receiver_address,
-                        'message_type': message.msg_type
-                    }
-                )
+            # 🚀 Only report disconnect after multiple consecutive failures
+            # This prevents false disconnects due to temporary thread pool congestion
+            if failure_count >= self._disconnect_threshold:
+                if hasattr(self, 'connection_monitor') and self.connection_monitor:
+                    from federatedscope.core.connection_monitor import ConnectionEvent
+                    self.connection_monitor.report_connection_lost(
+                        peer_id=message.receiver,
+                        details={
+                            'error_type': type(error).__name__,
+                            'error_message': str(error),
+                            'receiver_address': receiver_address,
+                            'message_type': message.msg_type,
+                            'channel_type': pool_name,
+                            'consecutive_failures': failure_count
+                        }
+                    )
+                    logger.error(f"[{pool_name}Pool] DISCONNECT: {receiver_address} after {failure_count} consecutive failures")
+                    # Reset counter after reporting disconnect
+                    self._failure_counts[receiver_address] = 0
+            else:
+                logger.debug(f"[{pool_name}Pool] Temporary failure to {receiver_address}, will retry ({failure_count}/{self._disconnect_threshold})")
+
         # 🚀 NOTE: Do NOT close channel here - keep it in pool for reuse
 
     def send(self, message):
@@ -425,12 +488,23 @@ class gRPCCommManager(object):
         return message
 
     def close_connection_pool(self):
-        """🚀 Close all pooled connections (call on shutdown)"""
-        for address, (stub, channel) in list(self._connection_pool.items()):
+        """🚀 DUAL CHANNEL: Close all pooled connections (call on shutdown)"""
+        # Close control channel pool
+        for address, (stub, channel) in list(self._control_connection_pool.items()):
             try:
                 channel.close()
-                logger.debug(f"[ConnPool] Closed connection to {address}")
+                logger.debug(f"[ControlPool] Closed connection to {address}")
             except Exception as e:
-                logger.warning(f"[ConnPool] Error closing connection to {address}: {e}")
-        self._connection_pool.clear()
-        logger.info(f"[ConnPool] Connection pool cleared")
+                logger.warning(f"[ControlPool] Error closing connection to {address}: {e}")
+        self._control_connection_pool.clear()
+
+        # Close data channel pool
+        for address, (stub, channel) in list(self._data_connection_pool.items()):
+            try:
+                channel.close()
+                logger.debug(f"[DataPool] Closed connection to {address}")
+            except Exception as e:
+                logger.warning(f"[DataPool] Error closing connection to {address}: {e}")
+        self._data_connection_pool.clear()
+
+        logger.info(f"[ConnPool] Both control and data connection pools cleared")

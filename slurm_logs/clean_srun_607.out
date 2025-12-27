@@ -1,0 +1,3 @@
+=== Clean srun test (no prior Python) ===
+SLURM_STEP_GPUS: 0,1,2
+cuInit: 3

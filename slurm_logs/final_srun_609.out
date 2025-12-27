@@ -1,0 +1,10 @@
+Job started at Sat Dec 27 12:05:20 AM CET 2025
+SLURM_JOB_GPUS: 0,1,2
+Inside srun: SLURM_STEP_GPUS=0,1,2
+Inside srun: SLURM_STEP_GPUS=0,1,2
+Testing CUDA...
+Testing CUDA...
+CUDA available: False
+cuInit failed: 3
+CUDA available: False
+cuInit failed: 3

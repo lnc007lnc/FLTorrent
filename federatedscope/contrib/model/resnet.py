@@ -118,22 +118,22 @@ class PreActResNet(nn.Module):
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
-        out = F.avg_pool2d(out, 4)
+        out = F.adaptive_avg_pool2d(out, (1, 1))  # Adaptive pooling for any input size
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
 
 
-def PreActResNet18():
-    return PreActResNet(PreActBlock, [2, 2, 2, 2])
+def PreActResNet18(num_classes=10):
+    return PreActResNet(PreActBlock, [2, 2, 2, 2], num_classes=num_classes)
 
 
-def PreActResNet34():
-    return PreActResNet(PreActBlock, [3, 4, 6, 3])
+def PreActResNet34(num_classes=10):
+    return PreActResNet(PreActBlock, [3, 4, 6, 3], num_classes=num_classes)
 
 
-def PreActResNet50():
-    return PreActResNet(PreActBottleneck, [3, 4, 6, 3])
+def PreActResNet50(num_classes=10):
+    return PreActResNet(PreActBottleneck, [3, 4, 6, 3], num_classes=num_classes)
 
 
 def PreActResNet101():
@@ -251,45 +251,47 @@ class ResNet(nn.Module):
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
-        out = F.avg_pool2d(out, 4)
+        out = F.adaptive_avg_pool2d(out, (1, 1))  # Adaptive pooling for any input size
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
 
 
-def ResNet18():
-    return ResNet(BasicBlock, [2, 2, 2, 2])
+def ResNet18(num_classes=10):
+    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
 
 
-def ResNet34():
-    return ResNet(BasicBlock, [3, 4, 6, 3])
+def ResNet34(num_classes=10):
+    return ResNet(BasicBlock, [3, 4, 6, 3], num_classes=num_classes)
 
 
-def ResNet50():
-    return ResNet(Bottleneck, [3, 4, 6, 3])
+def ResNet50(num_classes=10):
+    return ResNet(Bottleneck, [3, 4, 6, 3], num_classes=num_classes)
 
 
-def ResNet101():
-    return ResNet(Bottleneck, [3, 4, 23, 3])
+def ResNet101(num_classes=10):
+    return ResNet(Bottleneck, [3, 4, 23, 3], num_classes=num_classes)
 
 
-def ResNet152():
-    return ResNet(Bottleneck, [3, 8, 36, 3])
+def ResNet152(num_classes=10):
+    return ResNet(Bottleneck, [3, 8, 36, 3], num_classes=num_classes)
 
 
 def preact_resnet(model_config):
+    num_classes = model_config.out_channels if hasattr(model_config, 'out_channels') else 10
     if '18' in model_config.type:
-        net = PreActResNet18()
+        net = PreActResNet18(num_classes=num_classes)
     elif '50' in model_config.type:
-        net = PreActResNet50()
+        net = PreActResNet50(num_classes=num_classes)
     return net
 
 
 def resnet(model_config):
+    num_classes = model_config.out_channels if hasattr(model_config, 'out_channels') else 10
     if '18' in model_config.type:
-        net = ResNet18()
+        net = ResNet18(num_classes=num_classes)
     elif '50' in model_config.type:
-        net = ResNet50()
+        net = ResNet50(num_classes=num_classes)
     return net
 
 

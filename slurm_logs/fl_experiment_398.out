@@ -1,0 +1,68 @@
+============================================
+Job ID: 398
+Job Name: fl_experiment
+Nodes: srv-it-node02
+Node Count: 1
+Tasks per Node: 1
+CPUs per Task: 64
+Start Time: Sun Dec 21 02:58:19 AM CET 2025
+============================================
+Python: /home/naicheng_li/.conda/envs/flv2/bin/python
+PyTorch version: 2.7.1+cu118
+CUDA available: True
+GPU count: 4
+Head Node: srv-it-node02 (10.0.0.2)
+============================================
+Single-node mode: Ray will init locally
+============================================
+Starting FL experiment...
+🖥️  Running inside SLURM job: 398
+
+================================================================================
+🚀 Ray-Powered FederatedScope V2 Script (Ultra-High Concurrency Edition)
+================================================================================
+📊 Configuration information:
+   • Number of clients: 50
+   • Training rounds: 100
+   • Dataset: celeba
+   • Model: resnet18
+   • Number of chunks: 16
+   • Importance method: fisher
+   • Monitoring duration: 999999999s
+
+🐳 Docker mode: ✅ Enabled
+📂 Local code mount: ✅ Enabled (no rebuild needed)
+🌐 Network simulation: ✅ Enabled
+🚀 Ultra-high concurrency optimizations: ✅ Enabled
+📱 Device distribution: {'smartphone_high': 1, 'smartphone_low': 0, 'raspberry_pi': 0, 'iot_device': 0, 'edge_server': 0}
+
+🔧 High-concurrency features:
+   • TCP buffer sizes: 128MB max
+   • Connection tracking: 1M connections
+   • File descriptors: 1M per container
+   • Optimized Docker network bridge
+
+🔗 gRPC Keep-Alive settings:
+   • Keep-alive time: 180s (ping interval)
+   • Keep-alive timeout: 60s (ACK timeout)
+   • Min ping interval: 60s
+   • Connection idle timeout: 5min
+   • Connection max age: 20min
+   • System-level network tuning
+
+💡 Output directory: ray_v2_output
+📝 Log directory: logs
+================================================================================
+
+⚠️  Docker command not installed
+
+🎉 Ray V2 federated learning completed!
+📄 Results summary: ray_v2_output/results_summary.yaml
+📊 Processed 50 clients in 100 rounds
+📝 Log files: logs/
+🌐 Ray Dashboard: http://127.0.0.1:8265
+🧹 Resource cleanup completed
+============================================
+Job finished at Sun Dec 21 03:01:28 AM CET 2025
+============================================
+2025-12-21 03:01:29,401	INFO scripts.py:1364 -- Did not find any active Ray processes.

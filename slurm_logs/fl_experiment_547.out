@@ -1,0 +1,94 @@
+============================================
+Job ID: 547
+Job Name: fl_experiment
+Nodes: srv-it-node02
+Node Count: 1
+Tasks per Node: 1
+CPUs per Task: 64
+Start Time: Thu Dec 25 09:32:17 PM CET 2025
+============================================
+Python: /home/naicheng_li/.conda/envs/flv2/bin/python
+PyTorch version: 2.7.1+cu118
+CUDA available: True
+GPU count: 4
+============================================
+Single-node mode: Ray will init locally
+============================================
+Starting FL experiment...
+🖥️  Running inside SLURM job: 547
+
+================================================================================
+🚀 Ray-Powered FederatedScope V2 Script (Ultra-High Concurrency Edition)
+================================================================================
+📊 Configuration information:
+   • Number of clients: 50
+   • Training rounds: 100
+   • Dataset: celeba
+   • Model: resnet18
+   • Number of chunks: 16
+   • Importance method: fisher
+   • Monitoring duration: 999999999s
+
+🐳 Docker mode: ❌ Disabled
+📂 Local code mount: ✅ Enabled (no rebuild needed)
+🌐 Network simulation: ✅ Enabled
+🚀 Host network optimizations: ✅ Applied (for all modes)
+📱 Device distribution: {'smartphone_high': 1, 'smartphone_low': 0, 'raspberry_pi': 0, 'iot_device': 0, 'edge_server': 0}
+
+🔧 High-concurrency features:
+   • TCP buffer sizes: 128MB max
+   • Connection tracking: 1M connections
+   • File descriptors: 1M per container
+   • Optimized Docker network bridge
+
+🔗 gRPC Keep-Alive settings:
+   • Keep-alive time: 180s (ping interval)
+   • Keep-alive timeout: 60s (ACK timeout)
+   • Min ping interval: 60s
+   • Connection idle timeout: 5min
+   • Connection max age: 20min
+   • System-level network tuning
+
+💡 Output directory: ray_v2_output
+📝 Log directory: logs
+================================================================================
+
+⚠️  Podman command not found
+[36m(FallbackFederatedScopeServer pid=1970512)[0m 🔌 Server UDS mode: /tmp/federatedscope_uds/server_50651.sock
+[36m(FallbackFederatedScopeClient pid=1970514)[0m 🔌 Client 1 UDS mode: /tmp/federatedscope_uds/client_1_40059.sock
+[36m(FallbackFederatedScopeClient pid=1970515)[0m 🔌 Client 3 UDS mode: /tmp/federatedscope_uds/client_3_37487.sock[32m [repeated 2x across cluster] (Ray deduplicates logs by default. Set RAY_DEDUP_LOGS=0 to disable log deduplication, or see https://docs.ray.io/en/master/ray-observability/user-guides/configure-logging.html#log-deduplication for more options.)[0m
+[36m(FallbackFederatedScopeClient pid=1970518)[0m 🔌 Client 5 UDS mode: /tmp/federatedscope_uds/client_5_38239.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970519)[0m 🔌 Client 7 UDS mode: /tmp/federatedscope_uds/client_7_59041.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970516)[0m 🔌 Client 9 UDS mode: /tmp/federatedscope_uds/client_9_50205.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970526)[0m 🔌 Client 11 UDS mode: /tmp/federatedscope_uds/client_11_51501.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970529)[0m 🔌 Client 13 UDS mode: /tmp/federatedscope_uds/client_13_56397.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970524)[0m 🔌 Client 15 UDS mode: /tmp/federatedscope_uds/client_15_36331.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970527)[0m 🔌 Client 17 UDS mode: /tmp/federatedscope_uds/client_17_48367.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970532)[0m 🔌 Client 19 UDS mode: /tmp/federatedscope_uds/client_19_49717.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970536)[0m 🔌 Client 21 UDS mode: /tmp/federatedscope_uds/client_21_57923.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970534)[0m 🔌 Client 23 UDS mode: /tmp/federatedscope_uds/client_23_55745.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970539)[0m 🔌 Client 25 UDS mode: /tmp/federatedscope_uds/client_25_53191.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970555)[0m 🔌 Client 27 UDS mode: /tmp/federatedscope_uds/client_27_57363.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970569)[0m 🔌 Client 29 UDS mode: /tmp/federatedscope_uds/client_29_33421.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970574)[0m 🔌 Client 31 UDS mode: /tmp/federatedscope_uds/client_31_58625.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970575)[0m 🔌 Client 33 UDS mode: /tmp/federatedscope_uds/client_33_40141.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970579)[0m 🔌 Client 35 UDS mode: /tmp/federatedscope_uds/client_35_35971.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970571)[0m 🔌 Client 37 UDS mode: /tmp/federatedscope_uds/client_37_33045.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970581)[0m 🔌 Client 39 UDS mode: /tmp/federatedscope_uds/client_39_57181.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970584)[0m 🔌 Client 41 UDS mode: /tmp/federatedscope_uds/client_41_53889.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970585)[0m 🔌 Client 43 UDS mode: /tmp/federatedscope_uds/client_43_53659.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970586)[0m 🔌 Client 45 UDS mode: /tmp/federatedscope_uds/client_45_44649.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970589)[0m 🔌 Client 47 UDS mode: /tmp/federatedscope_uds/client_47_58011.sock[32m [repeated 2x across cluster][0m
+[36m(FallbackFederatedScopeClient pid=1970590)[0m 🔌 Client 49 UDS mode: /tmp/federatedscope_uds/client_49_53151.sock[32m [repeated 2x across cluster][0m
+
+🎉 Ray V2 federated learning completed!
+📄 Results summary: ray_v2_output/results_summary.yaml
+📊 Processed 50 clients in 100 rounds
+📝 Log files: logs/
+🌐 Ray Dashboard: http://127.0.0.1:8265
+[36m(FallbackFederatedScopeClient pid=1970595)[0m 🔌 Client 50 UDS mode: /tmp/federatedscope_uds/client_50_45953.sock
+🧹 Resource cleanup completed
+============================================
+Job finished at Thu Dec 25 09:35:36 PM CET 2025
+============================================
+2025-12-25 21:35:37,506	INFO scripts.py:1364 -- Did not find any active Ray processes.

@@ -1,0 +1,135 @@
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/cuda/__init__.py:174: UserWarning: CUDA initialization: CUDA driver initialization failed, you might not have a CUDA gpu. (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:109.)
+  return torch._C._cuda_getDeviceCount() > 0
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/cuda/__init__.py:174: UserWarning: CUDA initialization: CUDA driver initialization failed, you might not have a CUDA gpu. (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:109.)
+  return torch._C._cuda_getDeviceCount() > 0
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/cuda/__init__.py:174: UserWarning: CUDA initialization: CUDA driver initialization failed, you might not have a CUDA gpu. (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:109.)
+  return torch._C._cuda_getDeviceCount() > 0
+2025-12-27 01:04:04,157 - __main__ - INFO - 🚀 Start Ray V2 federated learning
+2025-12-27 01:04:04,157 - __main__ - INFO - 📊 Configuration: 50 clients, 100 rounds training, total nodes: 51
+2025-12-27 01:04:04,157 - __main__ - INFO - 🧹 Clean environment...
+2025-12-27 01:04:04,913 - __main__ - DEBUG - 🗑️  Cleaned mount directory (simple): /home/naicheng_li/FLTorrent/docker_data/tmp
+2025-12-27 01:04:04,917 - __main__ - DEBUG - 🗑️  Cleaned mount directory (simple): /home/naicheng_li/FLTorrent/docker_data/app_tmp
+2025-12-27 01:04:05,926 - __main__ - INFO - ✅ Environment cleanup completed
+2025-12-27 01:04:05,926 - __main__ - INFO - 🚀 Applying host network optimizations for ultra-high concurrency...
+2025-12-27 01:04:06,006 - __main__ - WARNING - ⚠️  22 network optimizations could not be applied (may need sudo access)
+2025-12-27 01:04:06,006 - __main__ - DEBUG -    Failed: net.core.somaxconn - sudo: you do not exist in the passwd database
+2025-12-27 01:04:06,006 - __main__ - DEBUG -    Failed: net.core.netdev_max_backlog - sudo: you do not exist in the passwd database
+2025-12-27 01:04:06,006 - __main__ - DEBUG -    Failed: net.core.rmem_default - sudo: you do not exist in the passwd database
+2025-12-27 01:04:06,006 - __main__ - WARNING - ⚠️  No host network optimizations applied! High-concurrency FL may experience issues.
+2025-12-27 01:04:06,006 - __main__ - WARNING -    Consider running with sudo or contacting HPC admin to apply these settings.
+2025-12-27 01:04:06,006 - __main__ - INFO - 🦭 Initializing Podman rootless environment...
+2025-12-27 01:04:06,009 - __main__ - WARNING - ⚠️  Podman unavailable, trying Docker...
+2025-12-27 01:04:06,009 - __main__ - INFO - 📦 Using non-container mode (Fallback)
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/torch/cuda/__init__.py:174: UserWarning: CUDA initialization: CUDA driver initialization failed, you might not have a CUDA gpu. (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:109.)
+  return torch._C._cuda_getDeviceCount() > 0
+2025-12-27 01:04:07,977 - __main__ - INFO - 🔍 Found available port for Ray dashboard: 8265
+2025-12-27 01:04:08,082 - filelock - DEBUG - Attempting to acquire lock 140703951866416 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/node_ip_address.json.lock
+2025-12-27 01:04:08,084 - filelock - DEBUG - Lock 140703951866416 acquired on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/node_ip_address.json.lock
+2025-12-27 01:04:08,086 - filelock - DEBUG - Attempting to release lock 140703951866416 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/node_ip_address.json.lock
+2025-12-27 01:04:08,086 - filelock - DEBUG - Lock 140703951866416 released on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/node_ip_address.json.lock
+2025-12-27 01:04:08,088 - filelock - DEBUG - Attempting to acquire lock 140703951878224 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,089 - filelock - DEBUG - Lock 140703951878224 acquired on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,091 - filelock - DEBUG - Attempting to release lock 140703951878224 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,091 - filelock - DEBUG - Lock 140703951878224 released on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,091 - filelock - DEBUG - Attempting to acquire lock 140703951867376 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,092 - filelock - DEBUG - Lock 140703951867376 acquired on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,093 - filelock - DEBUG - Attempting to release lock 140703951867376 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,094 - filelock - DEBUG - Lock 140703951867376 released on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,094 - filelock - DEBUG - Attempting to acquire lock 140703951874432 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,095 - filelock - DEBUG - Lock 140703951874432 acquired on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,096 - filelock - DEBUG - Attempting to release lock 140703951874432 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,096 - filelock - DEBUG - Lock 140703951874432 released on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,096 - filelock - DEBUG - Attempting to acquire lock 140703951879040 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,097 - filelock - DEBUG - Lock 140703951879040 acquired on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,098 - filelock - DEBUG - Attempting to release lock 140703951879040 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,098 - filelock - DEBUG - Lock 140703951879040 released on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,099 - filelock - DEBUG - Attempting to acquire lock 140703951876592 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,100 - filelock - DEBUG - Lock 140703951876592 acquired on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,101 - filelock - DEBUG - Attempting to release lock 140703951876592 on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:08,101 - filelock - DEBUG - Lock 140703951876592 released on /home/naicheng_li/ray/session_2025-12-27_01-04-08_075232_783276/ports_by_node.json.lock
+2025-12-27 01:04:11,752	INFO worker.py:1998 -- Started a local Ray instance. View the dashboard at [1m[32m10.0.0.3:8265 [39m[22m
+/home/naicheng_li/.conda/envs/flv2/lib/python3.10/site-packages/ray/_private/worker.py:2046: FutureWarning: Tip: In future versions of Ray, Ray will no longer override accelerator visible devices env var if num_gpus=0 or num_gpus=None (default). To enable this behavior and turn off this error message, set RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+  warnings.warn(
+2025-12-27 01:04:13,762 - __main__ - INFO - 🚀 Ray cluster initialization completed:
+2025-12-27 01:04:13,762 - __main__ - INFO -    📊 Resources: {'node:__internal_head__': 1.0, 'memory': 1160346102580.0, 'CPU': 128.0, 'node:10.0.0.3': 1.0, 'object_store_memory': 438187168972.0}
+2025-12-27 01:04:13,762 - __main__ - INFO -    🌐 Dashboard: http://127.0.0.1:8265
+2025-12-27 01:04:13,762 - __main__ - DEBUG - Found node: 78e5aa14f086... IP: 10.0.0.3, Resources: {'CPU': 128.0, 'node:10.0.0.3': 1.0, 'node:__internal_head__': 1.0, 'memory': 1160346102580.0, 'object_store_memory': 438187168972.0}
+2025-12-27 01:04:13,762 - __main__ - INFO - 🌐 Ray Cluster Topology:
+2025-12-27 01:04:13,762 - __main__ - INFO -    📍 Head node: 78e5aa14f086... (Server will run here)
+2025-12-27 01:04:13,762 - __main__ - WARNING -    ⚠️ No worker nodes found! Clients will run on head node (not recommended)
+2025-12-27 01:04:13,763 - __main__ - WARNING - No GPU nodes available, clients will run on head node
+2025-12-27 01:04:13,763 - __main__ - WARNING - ⚠️ No GPU detected, all nodes use CPU mode
+2025-12-27 01:04:13,763 - __main__ - WARNING - ⚠️ CUDA unavailable, all nodes will use CPU mode
+2025-12-27 01:04:13,764 - __main__ - INFO - 🔌 Single-node mode detected - UDS can be enabled
+2025-12-27 01:04:13,764 - __main__ - INFO - 📍 Server scheduled to head node: 78e5aa14f086...
+2025-12-27 01:04:13,871 - __main__ - INFO - 📦 Using Fallback (no container) for Server
+2025-12-27 01:04:13,942 - __main__ - INFO - ✅ Server started: unix:///tmp/federatedscope_uds/server_57061.sock:57061
+2025-12-27 01:04:28,951 - __main__ - INFO - 📱 Edge device distribution: {'smartphone': 50}
+2025-12-27 01:04:28,951 - __main__ - INFO - 📊 Client distribution plan:
+2025-12-27 01:04:28,952 - __main__ - INFO -    Client 1 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,953 - __main__ - INFO -    Client 2 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,953 - __main__ - INFO -    Client 3 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,954 - __main__ - INFO -    Client 4 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,954 - __main__ - INFO -    Client 5 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,954 - __main__ - INFO -    Client 6 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,955 - __main__ - INFO -    Client 7 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,955 - __main__ - INFO -    Client 8 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,956 - __main__ - INFO -    Client 9 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,956 - __main__ - INFO -    Client 10 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,956 - __main__ - INFO -    Client 11 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,957 - __main__ - INFO -    Client 12 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,957 - __main__ - INFO -    Client 13 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,957 - __main__ - INFO -    Client 14 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,958 - __main__ - INFO -    Client 15 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,958 - __main__ - INFO -    Client 16 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,958 - __main__ - INFO -    Client 17 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,959 - __main__ - INFO -    Client 18 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,959 - __main__ - INFO -    Client 19 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,959 - __main__ - INFO -    Client 20 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,960 - __main__ - INFO -    Client 21 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,960 - __main__ - INFO -    Client 22 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,960 - __main__ - INFO -    Client 23 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,961 - __main__ - INFO -    Client 24 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,961 - __main__ - INFO -    Client 25 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,961 - __main__ - INFO -    Client 26 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,962 - __main__ - INFO -    Client 27 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,962 - __main__ - INFO -    Client 28 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,962 - __main__ - INFO -    Client 29 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,963 - __main__ - INFO -    Client 30 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,963 - __main__ - INFO -    Client 31 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,963 - __main__ - INFO -    Client 32 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,963 - __main__ - INFO -    Client 33 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,964 - __main__ - INFO -    Client 34 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,964 - __main__ - INFO -    Client 35 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,964 - __main__ - INFO -    Client 36 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,965 - __main__ - INFO -    Client 37 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,965 - __main__ - INFO -    Client 38 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,965 - __main__ - INFO -    Client 39 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,966 - __main__ - INFO -    Client 40 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,966 - __main__ - INFO -    Client 41 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,966 - __main__ - INFO -    Client 42 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,967 - __main__ - INFO -    Client 43 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,967 - __main__ - INFO -    Client 44 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,967 - __main__ - INFO -    Client 45 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,967 - __main__ - INFO -    Client 46 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,968 - __main__ - INFO -    Client 47 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,968 - __main__ - INFO -    Client 48 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,968 - __main__ - INFO -    Client 49 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,969 - __main__ - INFO -    Client 50 -> head (78e5aa14f086...), Node CPUs: 128.0, Clients on node: 50
+2025-12-27 01:04:28,969 - __main__ - INFO - 🔧 Client 1 resources: num_cpus=2.2640, num_gpus=0.0000, memory=2.00GB
+2025-12-27 01:04:29,068 - __main__ - INFO - ✅ Client 1 (smartphone) started on head node (78e5aa14f086...)
+2025-12-27 01:04:32,073 - __main__ - INFO - 🔧 Client 2 resources: num_cpus=2.2640, num_gpus=0.0000, memory=2.00GB
+2025-12-27 01:04:32,161 - __main__ - INFO - ✅ Client 2 (smartphone) started on head node (78e5aa14f086...)
+2025-12-27 01:04:35,164 - __main__ - INFO - 🔧 Client 3 resources: num_cpus=2.2640, num_gpus=0.0000, memory=2.00GB
+2025-12-27 01:04:35,245 - __main__ - INFO - ✅ Client 3 (smartphone) started on head node (78e5aa14f086...)
+2025-12-27 01:04:38,246 - __main__ - INFO - 🔧 Client 4 resources: num_cpus=2.2640, num_gpus=0.0000, memory=2.00GB
+2025-12-27 01:04:38,332 - __main__ - INFO - ✅ Client 4 (smartphone) started on head node (78e5aa14f086...)
+2025-12-27 01:04:41,335 - __main__ - INFO - 🔧 Client 5 resources: num_cpus=2.2640, num_gpus=0.0000, memory=2.00GB
+2025-12-27 01:04:41,420 - __main__ - INFO - ✅ Client 5 (smartphone) started on head node (78e5aa14f086...)
+2025-12-27 01:04:44,424 - __main__ - INFO - 🔧 Client 6 resources: num_cpus=2.2640, num_gpus=0.0000, memory=2.00GB
+2025-12-27 01:04:44,506 - __main__ - INFO - ✅ Client 6 (smartphone) started on head node (78e5aa14f086...)
+2025-12-27 01:04:47,510 - __main__ - INFO - 🔧 Client 7 resources: num_cpus=2.2640, num_gpus=0.0000, memory=2.00GB
+2025-12-27 01:04:47,596 - __main__ - INFO - ✅ Client 7 (smartphone) started on head node (78e5aa14f086...)
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd-srv-it-node03: error: *** STEP 631.0 ON srv-it-node03 CANCELLED AT 2025-12-27T01:04:47 ***
+slurmstepd-srv-it-node03: error: *** JOB 631 ON srv-it-node03 CANCELLED AT 2025-12-27T01:04:47 ***

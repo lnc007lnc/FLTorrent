@@ -1,0 +1,5 @@
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd-srv-it-node02: error: *** STEP 422.0 ON srv-it-node02 CANCELLED AT 2025-12-21T03:56:35 ***
+slurmstepd-srv-it-node02: error: *** JOB 422 ON srv-it-node02 CANCELLED AT 2025-12-21T03:56:35 ***
+slurmstepd-srv-it-node01: error: *** STEP 423.1 ON srv-it-node01 CANCELLED AT 2025-12-21T03:56:35 ***

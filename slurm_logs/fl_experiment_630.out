@@ -1,0 +1,21 @@
+============================================
+Job ID: 630
+Job Name: fl_experiment
+Nodes: srv-it-node03
+Node Count: 1
+Tasks per Node: 1
+CPUs per Task: 64
+Start Time: Sat Dec 27 01:01:48 AM CET 2025
+============================================
+LD_LIBRARY_PATH: /usr/local/cuda/lib64:/usr/lib64:/opt/ohpc/pub/apps/nvidia/cuda/toolkit/12.9.1/lib64:/lib64
+Python: /home/naicheng_li/.conda/envs/flv2/bin/python
+CUDA_VISIBLE_DEVICES: 0,1,2
+GPU 0: NVIDIA A100 80GB PCIe (UUID: GPU-a17df1a3-e29d-ebcf-2dc0-1fac40c70867)
+GPU 1: NVIDIA A100 80GB PCIe (UUID: GPU-4a4869a9-f339-c8f8-cae7-0b19f8d59614)
+GPU 2: NVIDIA A100 80GB PCIe (UUID: GPU-d4a5a337-a886-6bbf-4940-03ff9f9250a7)
+PyTorch version: 2.7.1+cu118
+CUDA available: False
+============================================
+Single-node mode: Ray will init locally
+============================================
+Starting FL experiment...

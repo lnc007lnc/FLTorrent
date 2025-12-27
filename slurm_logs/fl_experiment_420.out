@@ -1,0 +1,15 @@
+============================================
+Job ID: 420
+Job Name: fl_experiment
+Hetjob Size: 2 partitions
+Start Time: Sun Dec 21 03:53:35 AM CET 2025
+============================================
+Head Node: srv-it-node02 (10.0.0.2)
+Total clients: 50
+Worker Node: srv-it-node01
+Starting Ray head on srv-it-node02...
+Waiting for Ray head to be ready at 10.0.0.2:6379...
+  Still waiting... (10 seconds)
+  Still waiting... (20 seconds)
+  Still waiting... (30 seconds)
+  Still waiting... (40 seconds)

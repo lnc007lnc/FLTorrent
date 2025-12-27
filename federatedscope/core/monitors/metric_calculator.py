@@ -149,8 +149,16 @@ class MetricCalculator(object):
                 if y_prob.ndim == 2:
                     y_prob = np.expand_dims(y_prob, axis=-1)
 
-                # if len(y_prob.shape) > len(y_true.shape):
-                y_pred = np.argmax(y_prob, axis=1)
+                # Handle binary classification with single output (BCEWithLogitsLoss)
+                if y_prob.ndim == 1:
+                    # Binary classification: y_prob is 1D logits, need to apply sigmoid and threshold
+                    from scipy.special import expit  # expit is sigmoid function
+                    y_prob_sigmoid = expit(y_prob)
+                    y_pred = (y_prob_sigmoid > 0.5).astype(int)
+                    y_pred = np.expand_dims(y_pred, axis=-1)  # [N] -> [N, 1] to match y_true shape
+                else:
+                    # Multi-class classification: y_prob is 2D or 3D, use argmax
+                    y_pred = np.argmax(y_prob, axis=1)
 
                 # check shape and type
                 if not isinstance(y_true, np.ndarray):
