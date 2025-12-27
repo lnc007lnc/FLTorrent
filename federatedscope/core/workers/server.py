@@ -26,6 +26,22 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def _convert_to_native_types(obj):
+    """Convert numpy types to native Python types for clean logging output."""
+    if isinstance(obj, dict):
+        return {k: _convert_to_native_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_to_native_types(v) for v in obj]
+    elif isinstance(obj, np.floating):
+        return round(float(obj), 6)
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    else:
+        return obj
+
+
 class Server(BaseServer, ConnectionHandlerMixin):
     """
     The Server class, which describes the behaviors of server in an FL \
@@ -820,7 +836,7 @@ class Server(BaseServer, ConnectionHandlerMixin):
                             # 'Results_weighted_avg_unseen'
                             formatted_logs[key + "_unseen"] = val
                             del formatted_logs[key]
-                logger.info(formatted_logs)
+                logger.info(_convert_to_native_types(formatted_logs))
                 formatted_logs_all_set.update(formatted_logs)
                 self._monitor.update_best_result(
                     self.best_results,
