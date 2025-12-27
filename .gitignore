@@ -192,3 +192,7 @@ test_*.yaml
 
 # Log files over 10MB
 *.log
+
+# Large datasets
+data/celeba/
+*.zip
