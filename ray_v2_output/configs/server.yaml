@@ -61,8 +61,8 @@ distribute:
   client_port: 50052
   data_idx: 0
   role: server
-  server_host: unix:///tmp/federatedscope_uds/server_46879.sock
-  server_port: 46879
+  server_host: unix:///tmp/federatedscope_uds/server_58039.sock
+  server_port: 58039
   uds_dir: /tmp/federatedscope_uds
   use: true
   use_uds: true

@@ -2209,11 +2209,11 @@ class Client(BaseClient):
 
                 # Check if exchange was stopped
                 if hasattr(self.bt_manager, 'is_stopped') and self.bt_manager.is_stopped:
-                    # 🚀 CRITICAL FIX: Get chunk count IMMEDIATELY when stopped detected
-                    # The main thread's stop_exchange() may have already cleared the counters
-                    # so we must capture the count right now before it's too late
-                    final_chunks = self.bt_manager.get_memory_chunk_count()
-                    logger.info(f"[BT] Client {self.ID}: BitTorrent exchange stopped, captured final_chunks={final_chunks}")
+                    # 🚀 CRITICAL FIX: Use final_chunk_count saved by stop_exchange() BEFORE clearing
+                    # stop_exchange() saves the count to final_chunk_count before setting is_stopped=True
+                    # and before clearing the counters, so this is guaranteed to be the correct value
+                    final_chunks = getattr(self.bt_manager, 'final_chunk_count', 0)
+                    logger.info(f"[BT] Client {self.ID}: BitTorrent exchange stopped, using saved final_chunks={final_chunks}")
                     break
 
                 if not self.bt_manager:

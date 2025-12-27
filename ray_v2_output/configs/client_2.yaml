@@ -57,12 +57,12 @@ dataloader:
   num_workers: 0
 device: 0
 distribute:
-  client_host: unix:///tmp/federatedscope_uds/client_2_42953.sock
-  client_port: 42953
+  client_host: unix:///tmp/federatedscope_uds/client_2_53695.sock
+  client_port: 53695
   data_idx: 2
   role: client
-  server_host: unix:///tmp/federatedscope_uds/server_46879.sock
-  server_port: 46879
+  server_host: unix:///tmp/federatedscope_uds/server_58039.sock
+  server_port: 58039
   uds_dir: /tmp/federatedscope_uds
   use: true
   use_uds: true

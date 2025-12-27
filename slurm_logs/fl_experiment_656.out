@@ -1,0 +1,10 @@
+============================================
+Job ID: 656
+Job Name: fl_experiment
+Nodes: srv-it-node02
+Node Count: 1
+Tasks per Node: 1
+CPUs per Task: 64
+Start Time: Sat Dec 27 07:56:13 AM CET 2025
+============================================
+Python: /home/naicheng_li/.conda/envs/flv2/bin/python

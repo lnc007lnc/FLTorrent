@@ -321,6 +321,7 @@ class BitTorrentManager:
         self.own_chunks_set: Set[Tuple] = set()  # {(round_num, source_id, chunk_id)} for own chunks
         self.own_chunks_count = 0  # Will be set when own chunks are registered
         self.expected_total_chunks = 0  # Total chunks expected from all clients
+        self.final_chunk_count = 0  # 🚀 Saved by stop_exchange() before clearing counters
         
         # 🚀 OPTIMIZATION: Cache importance scores to avoid repeated database queries
         self._importance_cache: Dict[int, Dict[int, float]] = {}  # {round_num: {chunk_id: importance_score}}
@@ -1696,7 +1697,13 @@ class BitTorrentManager:
         to prevent interference with next round BitTorrent operations
         """
         logger.debug(f"[BT] Client {self.client_id}: Stopping BitTorrent exchange for round {self.round_num}")
-        
+
+        # 🚀 CRITICAL FIX: Save final chunk count BEFORE setting is_stopped
+        # The BT thread will read this after detecting is_stopped=True
+        # This prevents race condition where counters are cleared before BT thread reads them
+        self.final_chunk_count = len(self.own_chunks_set) + len(self.chunks_received_set)
+        logger.debug(f"[BT] Client {self.client_id}: Saved final_chunk_count={self.final_chunk_count} before stopping")
+
         # Set stop flag
         self.is_stopped = True
         
