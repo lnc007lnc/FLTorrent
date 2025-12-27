@@ -1,0 +1,86 @@
+# ============================================================================
+# Multi-Experiment Batch Configuration
+# ============================================================================
+#
+# Usage:
+#   python run_ray_hpc.py --batch experiments.yaml
+#
+# Each experiment will:
+#   1. Create a code snapshot in CODE_SNAPSHOT_DIR
+#   2. Submit a SLURM job with experiment-specific settings
+#   3. Output results to OUTPUT_BASE_DIR/<experiment_name>/
+#
+# ============================================================================
+
+# Global settings (can be overridden per experiment)
+global:
+  # Code snapshot directory (code will be copied here before submission)
+  code_snapshot_dir: "/home/naicheng_li/FLTorrent/experiments_snapshots"
+
+  # Base output directory for all experiments
+  output_base_dir: "/home/naicheng_li/FLTorrent/experiments_output"
+
+  # SLURM settings
+  partition: "gpu3"
+  nodes: 1
+  gpus_per_node: 2
+  cpus_per_task: 64
+  mem: "400G"
+
+# List of experiments to run
+experiments:
+  # Experiment 1: Baseline FedAvg with mesh topology
+  - name: "fedavg_mesh_50clients"
+    description: "FedAvg baseline with mesh topology, 50 clients"
+    time_limit: "24:00:00"  # 24 hours
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      AGGREGATOR_TYPE: "fedavg"
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      LEARNING_RATE: 0.0001
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+
+  # Experiment 2: FedAvg with star topology
+  - name: "fedavg_star_50clients"
+    description: "FedAvg with star topology, 50 clients"
+    time_limit: "24:00:00"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      AGGREGATOR_TYPE: "fedavg"
+      TOPOLOGY_TYPE: "star"
+      LEARNING_RATE: 0.0001
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+
+  # Experiment 3: Different learning rate
+  - name: "fedavg_mesh_lr001"
+    description: "FedAvg mesh with higher learning rate"
+    time_limit: "24:00:00"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      AGGREGATOR_TYPE: "fedavg"
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      LEARNING_RATE: 0.001
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+
+  # Experiment 4: More clients
+  - name: "fedavg_mesh_100clients"
+    description: "FedAvg mesh with 100 clients"
+    time_limit: "48:00:00"  # 48 hours for more clients
+    gpus_per_node: 3  # Override global setting
+    config:
+      CLIENT_NUM: 100
+      TOTAL_ROUNDS: 100
+      AGGREGATOR_TYPE: "fedavg"
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      LEARNING_RATE: 0.0001
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
