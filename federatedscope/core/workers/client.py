@@ -1024,7 +1024,13 @@ class Client(BaseClient):
             
             if saved_hashes:
                 logger.info(f"✅ Client {self.ID}: Saved model as {len(saved_hashes)} chunks for round {self.state}")
-                
+
+                # 🚀 CRITICAL FIX: Register own chunks to memory set for fast lookup
+                # This enables memory-based bitfield without DB queries
+                if hasattr(self, 'bt_manager') and self.bt_manager is not None:
+                    own_chunk_keys = [(self.state, self.ID, i) for i in range(len(saved_hashes))]
+                    self.bt_manager.register_own_chunks(own_chunk_keys)
+
                 # Log storage statistics for current round
                 stats = self.chunk_manager.get_storage_stats(round_num=self.state)
                 logger.debug(f"📊 Client {self.ID}: Storage stats - "
@@ -2102,8 +2108,8 @@ class Client(BaseClient):
         )
 
         # 🚀 CRITICAL FIX: Initialize memory-based chunk counters to avoid DB queries in main loop
-        # Query own chunks count ONCE at start, then use memory counter for completion check
-        own_bitfield = self.chunk_manager.get_global_bitfield(round_num)
+        # Use memory bitfield (already populated by register_own_chunks when chunks were saved)
+        own_bitfield = self.bt_manager.get_memory_bitfield()
         own_chunks_count = len(own_bitfield)
         total_clients = self._cfg.federate.client_num if hasattr(self._cfg, 'federate') else 50
         chunks_per_client = self._cfg.chunk.num_chunks if hasattr(self._cfg, 'chunk') else 16
@@ -2181,13 +2187,15 @@ class Client(BaseClient):
                 current_chunks = self.bt_manager.get_memory_chunk_count()
                 has_all = current_chunks >= expected_chunks
 
-                # Periodic DB verification for process_request_triggers
+                # 🚀 CRITICAL FIX: Use memory bitfield instead of DB query to avoid SQLite lock
+                # This prevents process freeze caused by SQLite lock contention
                 if current_time - last_bitfield_refresh >= BITFIELD_REFRESH_INTERVAL:
                     try:
-                        cached_bitfield = self.chunk_manager.get_global_bitfield(self.bt_manager.round_num)
+                        # Use memory-based bitfield (instant, no DB query)
+                        cached_bitfield = self.bt_manager.get_memory_bitfield()
                         last_bitfield_refresh = time.time()
                     except Exception as e:
-                        logger.debug(f"[BT] Client {self.ID}: DB verification failed: {e}")
+                        logger.debug(f"[BT] Client {self.ID}: Memory bitfield failed: {e}")
 
                 if has_all:
                     break
@@ -2227,8 +2235,8 @@ class Client(BaseClient):
                 else:
                     time.sleep(0.01)
                 
-            # Record completion reason
-            final_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
+            # Record completion reason (use memory bitfield for consistency)
+            final_chunks = self.bt_manager.get_memory_chunk_count()
             logger.info(f"[BT] Client {self.ID}: Exchange loop completed. Final chunks: {final_chunks}/{expected_chunks}")
             
             #Clear old file files
@@ -2374,19 +2382,20 @@ class Client(BaseClient):
 
     def _has_all_chunks(self, expected_chunks):
         """Check if all chunks have been collected"""
-        if not hasattr(self, 'chunk_manager') or not hasattr(self, 'bt_manager'):
+        if not hasattr(self, 'bt_manager'):
             return False
 
-        current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
+        # 🚀 CRITICAL FIX: Use memory counter (NO DB QUERY!)
+        current_chunks = self.bt_manager.get_memory_chunk_count()
         return current_chunks >= expected_chunks
-        
+
     def _report_bittorrent_completion(self):
         """
         Report BitTorrent exchange completion to Server
         """
         # 🐛 Bug Fix 31: Safely get statistics information
-        # 🔴 Use current round to get chunk count
-        chunks_collected = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num)) if hasattr(self, 'chunk_manager') and hasattr(self, 'bt_manager') else 0
+        # 🚀 CRITICAL FIX: Use memory counter (NO DB QUERY!)
+        chunks_collected = self.bt_manager.get_memory_chunk_count() if hasattr(self, 'bt_manager') else 0
         
         # 🐛 Bug Fix 32: Safely get transfer statistics
         bytes_downloaded = getattr(self.bt_manager, 'total_downloaded', 0) if hasattr(self, 'bt_manager') else 0

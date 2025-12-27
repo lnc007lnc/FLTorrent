@@ -318,6 +318,7 @@ class BitTorrentManager:
         # 🚀 CRITICAL FIX: Memory-based chunk counter to avoid DB queries for completion check
         # This prevents process freeze caused by SQLite lock contention
         self.chunks_received_set: Set[Tuple] = set()  # {(round_num, source_id, chunk_id)}
+        self.own_chunks_set: Set[Tuple] = set()  # {(round_num, source_id, chunk_id)} for own chunks
         self.own_chunks_count = 0  # Will be set when own chunks are registered
         self.expected_total_chunks = 0  # Total chunks expected from all clients
         
@@ -618,36 +619,36 @@ class BitTorrentManager:
         if len(self.pending_queue) == 0:
             self._fill_pending_queue()
         
-        while (len(self.pending_requests) < self.MAX_ACTIVE_REQUESTS and 
+        # 🚀 CRITICAL FIX: Get memory bitfield once before loop (NO DB QUERY!)
+        my_bitfield = self.get_memory_bitfield()
+        current_chunks = len(my_bitfield)
+        expected_chunks = self.total_clients * self.chunks_per_client
+        completion_ratio = current_chunks / max(expected_chunks, 1)
+
+        while (len(self.pending_requests) < self.MAX_ACTIVE_REQUESTS and
                len(self.pending_queue) > 0):
-            
+
             # Take chunk from queue head (already sorted by importance)
             chunk_key = self.pending_queue.pop(0)
-            
-            # Check if chunk is still needed
-            my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+
+            # Check if chunk is still needed (using memory bitfield)
             if chunk_key in my_bitfield or chunk_key in self.pending_requests:
                 continue  # Skip chunks already owned or being requested
-            
+
             # Find all peers that have this chunk
             peer_ids = self._find_peer_with_chunk(chunk_key)
             if not peer_ids:
                 logger.debug(f"[BT-POOL] Client {self.client_id}: No available peer for chunk {chunk_key}")
                 continue
-            
+
             # Filter out choked peers
             available_peers = [peer_id for peer_id in peer_ids if peer_id not in self.choked_peers]
             if not available_peers:
                 logger.debug(f"[BT-POOL] Client {self.client_id}: All peers with chunk {chunk_key} are choked")
                 continue
-            
+
             # 🚀 ENDGAME MODE: Check if we should enter endgame mode
             round_num, source_id, chunk_id = chunk_key
-            current_chunks = len(self.chunk_manager.get_global_bitfield(round_num))
-            # 🔧 CRITICAL FIX: Use total_clients for expected_chunks, not just neighbors
-            # Expected = all clients' chunks (total_clients * chunks_per_client)
-            expected_chunks = self.total_clients * self.chunks_per_client
-            completion_ratio = current_chunks / max(expected_chunks, 1)
             
             
             
@@ -702,11 +703,12 @@ class BitTorrentManager:
                 if has_chunk and chunk_key[0] == self.round_num:
                     chunk_availability[chunk_key] = chunk_availability.get(chunk_key, 0) + 1
         
-        my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
-        
+        # 🚀 CRITICAL FIX: Use memory bitfield (NO DB QUERY!)
+        my_bitfield = self.get_memory_bitfield()
+
         # Select needed chunks
         for chunk_key, availability_count in chunk_availability.items():
-            if (chunk_key not in my_bitfield and 
+            if (chunk_key not in my_bitfield and
                 chunk_key not in self.pending_requests and
                 chunk_key not in self.pending_queue):
                 
@@ -910,9 +912,9 @@ class BitTorrentManager:
         """Send bitfield to specified peer (containing importance scores)"""
         # Note: Message is imported at module level to avoid import lock contention
 
-        # 🔧 Fix: convert bitfield to serializable format
-        my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
-        logger.debug(f"[BT] Client {self.client_id}: My bitfield for round {self.round_num}: {len(my_bitfield)} chunks")
+        # 🚀 CRITICAL FIX: Use memory bitfield to avoid DB query
+        my_bitfield = self.get_memory_bitfield()
+        logger.debug(f"[BT] Client {self.client_id}: My bitfield for round {self.round_num}: {len(my_bitfield)} chunks (memory-based)")
         
         # 🚀 OPTIMIZATION: Get cached importance scores for current round
         cached_importance_scores = self._get_cached_importance_scores(self.round_num)
@@ -1173,7 +1175,8 @@ class BitTorrentManager:
         if cached_bitfield is not None:
             my_bitfield = cached_bitfield
         else:
-            my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+            # 🚀 CRITICAL FIX: Use memory bitfield as fallback (NO DB QUERY!)
+            my_bitfield = self.get_memory_bitfield()
 
         while requests_sent < max_requests:
             try:
@@ -1573,8 +1576,9 @@ class BitTorrentManager:
         """Check if peer has chunks I need"""
         if peer_id not in self.peer_bitfields:
             return False
-            
-        my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+
+        # 🚀 CRITICAL FIX: Use memory bitfield (NO DB QUERY!)
+        my_bitfield = self.get_memory_bitfield()
         peer_bitfield = self.peer_bitfields[peer_id]
         
         # Check if peer has chunks I don't have
@@ -1624,7 +1628,8 @@ class BitTorrentManager:
                 
     def get_progress(self) -> Dict[str, Any]:
         """Get exchange progress information"""
-        my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+        # 🚀 CRITICAL FIX: Use memory bitfield (NO DB QUERY!)
+        my_bitfield = self.get_memory_bitfield()
         # 🔧 CRITICAL FIX: Use total_clients for expected chunks calculation
         total_expected = self.total_clients * self.chunks_per_client  # All clients' chunks
 
@@ -1662,7 +1667,28 @@ class BitTorrentManager:
             return False  # Not initialized yet
         current_count = self.get_memory_chunk_count()
         return current_count >= self.expected_total_chunks
-    
+
+    def get_memory_bitfield(self) -> Dict[Tuple, bool]:
+        """🚀 CRITICAL FIX: Get bitfield from memory (NO DB QUERY!)
+        Returns dict of {(round_num, source_id, chunk_id): True} for all owned chunks.
+        This replaces get_global_bitfield() calls in the main loop to avoid SQLite lock."""
+        bitfield = {}
+        # Add own chunks
+        for chunk_key in self.own_chunks_set:
+            bitfield[chunk_key] = True
+        # Add received chunks
+        for chunk_key in self.chunks_received_set:
+            bitfield[chunk_key] = True
+        return bitfield
+
+    def register_own_chunks(self, chunk_keys: list):
+        """🚀 Register own chunks to memory set for fast lookup.
+        Called when client's own chunks are saved at the start of exchange."""
+        for chunk_key in chunk_keys:
+            self.own_chunks_set.add(chunk_key)
+        self.own_chunks_count = len(self.own_chunks_set)
+        logger.debug(f"[BT] Client {self.client_id}: Registered {len(chunk_keys)} own chunks to memory set")
+
     def stop_exchange(self):
         """
         🔧 CRITICAL FIX: Stop BitTorrent exchange immediately
