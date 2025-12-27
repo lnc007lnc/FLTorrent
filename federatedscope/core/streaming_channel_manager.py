@@ -22,21 +22,39 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 class StreamingChannel:
-    """Single streaming channel encapsulation"""
-    
-    def __init__(self, peer_id, channel, stub, stream_type='bidirectional', client_id=-1, client_instance=None):
+    """
+    🚀 Dual-channel streaming encapsulation - Prevent HOL blocking
+
+    Key insight: gRPC uses HTTP/2 multiplexing, but flow control operates at connection level.
+    When data plane (large chunks) saturates the connection, control plane (heartbeat/monitor)
+    gets blocked too - causing DEADLINE_EXCEEDED on control RPCs.
+
+    Solution: Separate control and data into independent gRPC channels (connections).
+    """
+
+    def __init__(self, peer_id, control_channel, control_stub, data_channel=None, data_stub=None,
+                 stream_type='bidirectional', client_id=-1, client_instance=None):
         self.peer_id = peer_id
-        self.channel = channel
-        self.stub = stub
+
+        # 🚀 DUAL CHANNEL DESIGN: Isolate control plane from data plane congestion
+        self.control_channel = control_channel  # Dedicated for lightweight control messages
+        self.control_stub = control_stub
+        self.data_channel = data_channel if data_channel else control_channel  # Dedicated for bulk data
+        self.data_stub = data_stub if data_stub else control_stub
+
+        # Legacy compatibility
+        self.channel = control_channel
+        self.stub = control_stub
+
         self.stream_type = stream_type
         self.client_id = client_id  # Add client_id support
         self.client_instance = client_instance  # Add client instance reference for calling callback functions
-        
+
         # Streaming objects
         self.request_stream = None
         self.response_stream = None
         self.request_queue = queue.Queue()
-        
+
         # State management
         self.is_active = False
         self.last_activity = time.time()
@@ -44,13 +62,16 @@ class StreamingChannel:
         self.bytes_received = 0
         self.chunks_sent = 0
         self.chunks_received = 0
-        
+
         # Thread management
         self.sender_thread = None
         self.receiver_thread = None
         self.upload_sender_thread = None
-        
+
         self.send_retries = 0
+
+        # 🚀 Track channel separation status
+        self.dual_channel_enabled = (data_channel is not None and data_channel != control_channel)
         
     def start_streaming(self):
         """Start streaming (automatic fallback compatibility)"""
@@ -68,28 +89,35 @@ class StreamingChannel:
             # Don't throw exception, let upper layer code continue using traditional methods
             
     def _start_multi_streaming(self):
-        """Internal method: Start multi-stream concurrent streaming - 🚀 Multi-optimization design"""
-        # 🚀 Multi-stream concurrent optimization: Create dedicated stream pipelines
-        
+        """Internal method: Start multi-stream concurrent streaming - 🚀 Dual-channel design"""
+        # 🚀 DUAL CHANNEL ARCHITECTURE:
+        # - Control channel: Lightweight messages (HAVE, BITFIELD, REQUEST, etc.)
+        # - Data channel: Bulk data transfer (PIECE/CHUNK payloads)
+        # This prevents HOL blocking where data congestion blocks control messages
+
         # 🔧 CRITICAL FIX: Set is_active=True first, then create generators
         self.is_active = True
-        logger.debug(f"[StreamChannel] 🚀 Activating multi-pipeline streaming to peer {self.peer_id}")
-        
+
+        if self.dual_channel_enabled:
+            logger.info(f"[StreamChannel] 🚀 DUAL-CHANNEL mode for peer {self.peer_id} - Control/Data isolated")
+        else:
+            logger.debug(f"[StreamChannel] 🔧 Single-channel mode for peer {self.peer_id} - Legacy compatibility")
+
         # 🚀 Optimization 1: Stream pipeline reuse - Create dedicated queues and buffers
         self.control_request_queue = queue.Queue(maxsize=500)  # Control message queue
         self.upload_request_queue = queue.PriorityQueue(maxsize=500)   # 🎯 Upload priority queue (importance+rarity sorting)
         self.download_request_queue = queue.PriorityQueue(maxsize=500) # 🎯 Download priority queue (importance+rarity sorting)
-        
+
         # 🚀 Optimization 2: Performance monitoring and statistics
         self.control_msg_count = 0
         self.upload_chunk_count = 0
         self.download_request_count = 0
         self.last_activity_time = time.time()
-        
-        # 🚀 Optimization 3: Smart stream allocation
+
+        # 🚀 DUAL CHANNEL: Control stream uses control_stub (isolated from data congestion)
         # 1. Control stream: Dedicated handling of lightweight control messages (HAVE, BITFIELD, INTERESTED, etc.)
-        self.control_stream = self.stub.streamChunks(self._enhanced_control_generator())
-        logger.debug(f"[StreamChannel] ✅ Control pipeline established for peer {self.peer_id}")
+        self.control_stream = self.control_stub.streamChunks(self._enhanced_control_generator())
+        logger.debug(f"[StreamChannel] ✅ Control pipeline established for peer {self.peer_id} (isolated channel)")
         
         # 2. Upload stream: Dedicated transmission of large chunk data (managed in dedicated threads)
         # 3. Download stream: Batch processing of chunk requests (managed in dedicated threads)
@@ -137,17 +165,13 @@ class StreamingChannel:
         logger.debug(f"[StreamChannel] 📊 Performance monitoring enabled - Control/Upload/Download pipelines ready")
             
     def _enhanced_control_generator(self):
-        """🚀 Optimization 1: Enhanced control message flow generator - specialized for lightweight control messages"""
-        logger.debug(f"[StreamChannel] 🎛️ Control pipeline generator started for peer {self.peer_id}")
-        
-        # 🚀 Performance optimization parameters
-        # heartbeat_interval = 30.0  # heartbeat interval
-        last_heartbeat = time.time()
+        """Enhanced control message flow generator for lightweight control messages"""
+        logger.debug(f"[StreamChannel] Control pipeline generator started for peer {self.peer_id}")
         processed_count = 0
-        
+
         while self.is_active:
             try:
-                # 🚀 Optimization: Use dedicated control queue to avoid message confusion
+                # Use dedicated control queue to avoid message confusion
                 try:
                     request = self.control_request_queue.get(timeout=0.2)  # Optimize response time and reduce CPU idle spinning
                 except queue.Empty:
@@ -163,28 +187,23 @@ class StreamingChannel:
                     continue
                 
                 if request is None:  # Sentinel for shutdown
-                    logger.debug(f"[StreamChannel] 🎛️ Control pipeline shutdown for peer {self.peer_id}")
                     break
-                
-                # 🚀 Optimization: Intelligent message routing - only process control messages
+
+                # Intelligent message routing - only process control messages
                 if self._is_control_message(request):
                     yield request
                     processed_count += 1
                     self.control_msg_count += 1
                     self.last_activity_time = time.time()
-                    
-                    # 🚀 Performance monitoring
-                    if processed_count % 50 == 0:
-                        logger.debug(f"[StreamChannel] 🎛️ Control pipeline processed {processed_count} messages for peer {self.peer_id}")
                 else:
                     # Re-route non-control messages to correct queue
                     self._route_message_to_correct_pipeline(request)
-                    
+
                 self.control_request_queue.task_done()
-                
+
             except Exception as e:
-                logger.error(f"[StreamChannel] 🎛️ Control generator error for peer {self.peer_id}: {e}")
-                time.sleep(0.1)  # Avoid error loops
+                logger.error(f"[StreamChannel] Control generator error for peer {self.peer_id}: {e}")
+                time.sleep(0.1)
                 
         logger.debug(f"[StreamChannel] 🎛️ Control pipeline generator ended for peer {self.peer_id}, processed {processed_count} messages")
         
@@ -305,10 +324,11 @@ class StreamingChannel:
         while self.is_active:
             try:
                 logger.debug(f"[StreamChannel] 📤 Starting persistent upload pipeline to peer {self.peer_id} (attempt {connection_retries + 1})")
-                
-                # 🚀 地下管道模式：持续运行的上传流
+
+                # 🚀 DUAL CHANNEL: Upload uses data_stub (isolated from control messages)
+                # This prevents bulk data congestion from blocking control RPCs
                 upload_start_time = time.time()
-                upload_response = self.stub.uploadChunks(self._enhanced_upload_generator())
+                upload_response = self.data_stub.uploadChunks(self._enhanced_upload_generator())
                 
                 # 🚀 关键：消费最终响应以完成客户端流
                 if upload_response:
@@ -594,9 +614,10 @@ class StreamingChannel:
                     )
 
                     # 🚀 DEADLOCK FIX: Only enqueue responses, never call callbacks directly
+                    # 🚀 DUAL CHANNEL: Download uses data_stub (isolated from control messages)
                     download_start = time.time()
                     try:
-                        download_stream = self.stub.downloadChunks(batch_request)
+                        download_stream = self.data_stub.downloadChunks(batch_request)
                         chunks_received = 0
 
                         for chunk_response in download_stream:
@@ -1065,12 +1086,19 @@ class StreamingChannel:
             if thread and thread.is_alive():
                 thread.join(timeout=1.0)
 
-        # Close gRPC channel
+        # Close gRPC channels (both control and data if dual-channel mode)
         try:
-            self.channel.close()
-            logger.debug(f"[StreamChannel] Closed streaming to peer {self.peer_id}")
+            self.control_channel.close()
+            logger.debug(f"[StreamChannel] Closed control channel to peer {self.peer_id}")
         except:
             pass
+
+        if self.dual_channel_enabled:
+            try:
+                self.data_channel.close()
+                logger.debug(f"[StreamChannel] Closed data channel to peer {self.peer_id}")
+            except:
+                pass
             
     def get_stats(self):
         """Get channel statistics"""
@@ -1127,15 +1155,15 @@ class StreamingChannelManager:
             ('grpc.tcp_socket_recv_buffer_size', 8 * 1024 * 1024),   # 8MB receive buffer
             ('grpc.tcp_socket_send_buffer_size', 8 * 1024 * 1024),   # 8MB send buffer
 
-            # === 🔧 FIX: KEEPALIVE SETTINGS - Solve "too many pings" error ===
-            ('grpc.keepalive_time_ms', 120000),         # 120s keepalive (reduced frequency)
-            ('grpc.keepalive_timeout_ms', 20000),       # 20s keepalive timeout
-            ('grpc.keepalive_permit_without_calls', False), # ❌ Disable ping without active calls
+            # === 🔧 ROBUST KEEPALIVE SETTINGS for high-concurrency FL ===
+            ('grpc.keepalive_time_ms', 300000),         # 300s (5min) keepalive - reduce ping frequency
+            ('grpc.keepalive_timeout_ms', 60000),       # 60s keepalive timeout (was 20s)
+            ('grpc.keepalive_permit_without_calls', False), # Disable ping without active calls
 
-            # === 🔧 CRITICAL: HTTP2 PING CONTROL - Prevent server rejection ===
-            ('grpc.http2.max_pings_without_data', 2),   # ✅ Limit to 2 pings without data
-            ('grpc.http2.min_time_between_pings_ms', 30000), # 30s minimum ping interval
-            ('grpc.http2.min_ping_interval_without_data_ms', 600000), # 10min interval without data
+            # === 🔧 HTTP2 PING CONTROL - More permissive settings ===
+            ('grpc.http2.max_pings_without_data', 0),   # Unlimited pings without data
+            ('grpc.http2.min_time_between_pings_ms', 60000), # 60s minimum ping interval
+            ('grpc.http2.min_ping_interval_without_data_ms', 300000), # 5min interval without data
 
             # === 🚀 HIGH-CONCURRENCY OPTIMIZATIONS ===
             ('grpc.so_reuseaddr', 1),                   # Socket reuse
@@ -1183,34 +1211,53 @@ class StreamingChannelManager:
                 continue
 
             try:
-                # 🚀 Create enhanced gRPC channel - Support large message transmission
-                # Works with both TCP (host:port) and UDS (unix:///path) addresses
-                channel = grpc.insecure_channel(address, options=grpc_options)
-                
-                # Create stub
-                stub = gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub(channel)
-                
-                # Create streaming channel wrapper
-                stream_channel = StreamingChannel(peer_id, channel, stub, client_id=self.client_id, client_instance=self.client_instance)
-                
+                # 🚀 DUAL CHANNEL ARCHITECTURE: Prevent HOL blocking
+                # Problem: gRPC HTTP/2 flow control operates at connection level.
+                # When data plane (large chunks) saturates the connection,
+                # control plane (heartbeat/monitor) gets blocked → DEADLINE_EXCEEDED
+                #
+                # Solution: Create TWO independent channels per peer:
+                # 1. Control channel: Lightweight messages (HAVE, BITFIELD, REQUEST, etc.)
+                # 2. Data channel: Bulk data transfer (PIECE/CHUNK payloads)
+
+                # === CONTROL CHANNEL: Lightweight, low-latency messages ===
+                control_channel = grpc.insecure_channel(address, options=grpc_options)
+                control_stub = gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub(control_channel)
+
+                # === DATA CHANNEL: Bulk data, can tolerate congestion ===
+                data_channel = grpc.insecure_channel(address, options=grpc_options)
+                data_stub = gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub(data_channel)
+
+                # Create streaming channel wrapper with dual channels
+                stream_channel = StreamingChannel(
+                    peer_id,
+                    control_channel=control_channel,
+                    control_stub=control_stub,
+                    data_channel=data_channel,
+                    data_stub=data_stub,
+                    client_id=self.client_id,
+                    client_instance=self.client_instance
+                )
+
                 # Start streaming (auto fallback if failed)
                 stream_channel.start_streaming()
-                
+
                 # Always save channel, can be used for traditional messages even if streaming fails
                 self.channels[peer_id] = stream_channel
-                self.server_stubs[address] = stub
-                
+                self.server_stubs[address] = control_stub  # Use control stub for legacy operations
+
                 is_uds = address.startswith('unix://')
                 mode_str = "UDS" if is_uds else "TCP"
 
                 if stream_channel.is_active:
-                    logger.debug(f"[StreamingManager] ✅ Enhanced streaming channel ({mode_str}): Client {self.client_id} -> Peer {peer_id} ({address})")
-                    logger.debug(f"[StreamingManager] 🚀 Support for chunks up to {max_message_size / (1024*1024):.0f}MB")
+                    logger.info(f"[StreamingManager] ✅ DUAL-CHANNEL streaming ({mode_str}): Client {self.client_id} -> Peer {peer_id}")
+                    logger.debug(f"[StreamingManager]   📡 Control channel: lightweight messages (isolated)")
+                    logger.debug(f"[StreamingManager]   📦 Data channel: bulk chunks (can congest without blocking control)")
                 else:
                     logger.debug(f"[StreamingManager] 🔧 Traditional fallback channel ({mode_str}): Client {self.client_id} -> Peer {peer_id} ({address})")
 
             except Exception as e:
-                logger.error(f"[StreamingManager] Failed to create enhanced channel to peer {peer_id} at {address}: {e}")
+                logger.error(f"[StreamingManager] Failed to create dual channels to peer {peer_id} at {address}: {e}")
                 
         logger.debug(f"[StreamingManager] Client {self.client_id}: Created {len(self.channels)} enhanced streaming channels")
         logger.debug(f"[StreamingManager] 🚀 STREAMING OPTIMIZATION: BitTorrent messages now support high-performance streaming:")

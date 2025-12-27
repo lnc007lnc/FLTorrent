@@ -314,6 +314,12 @@ class BitTorrentManager:
         self.is_download_complete = False  # Mark whether current node has completed download, used for seeding mode
         self.max_retries = 3  # Maximum retry count
         self.retry_count: Dict[Tuple, int] = {}  # {(source_id, chunk_id): count}
+
+        # 🚀 CRITICAL FIX: Memory-based chunk counter to avoid DB queries for completion check
+        # This prevents process freeze caused by SQLite lock contention
+        self.chunks_received_set: Set[Tuple] = set()  # {(round_num, source_id, chunk_id)}
+        self.own_chunks_count = 0  # Will be set when own chunks are registered
+        self.expected_total_chunks = 0  # Total chunks expected from all clients
         
         # 🚀 OPTIMIZATION: Cache importance scores to avoid repeated database queries
         self._importance_cache: Dict[int, Dict[int, float]] = {}  # {round_num: {chunk_id: importance_score}}
@@ -547,6 +553,9 @@ class BitTorrentManager:
 
         # 🚀 ONLY after successful enqueue: mark as processed and update state
         self.processed_pieces.add(chunk_key)
+
+        # 🚀 CRITICAL FIX: Update memory-based chunk counter to avoid DB queries
+        self.chunks_received_set.add(chunk_key)
 
         if chunk_key in self.pending_requests:
             del self.pending_requests[chunk_key]
@@ -1139,7 +1148,7 @@ class BitTorrentManager:
                 if chunk_key in self.retry_count:
                     del self.retry_count[chunk_key]
 
-    def process_request_triggers(self, max_requests: int = 10) -> int:
+    def process_request_triggers(self, max_requests: int = 10, cached_bitfield: dict = None) -> int:
         """
         🚀 EVENT-DRIVEN: Process request trigger queue and send REQUESTs
 
@@ -1148,6 +1157,7 @@ class BitTorrentManager:
 
         Args:
             max_requests: Maximum number of requests to process in one call
+            cached_bitfield: Optional pre-fetched bitfield to avoid duplicate DB query
 
         Returns:
             Number of requests actually sent
@@ -1157,6 +1167,13 @@ class BitTorrentManager:
 
         requests_sent = 0
         processed_chunks = set()  # Avoid duplicate processing in same batch
+
+        # 🚀 CRITICAL FIX: Use cached bitfield if provided to avoid SQLite lock contention
+        # This prevents process freeze when main loop already queried the bitfield
+        if cached_bitfield is not None:
+            my_bitfield = cached_bitfield
+        else:
+            my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
 
         while requests_sent < max_requests:
             try:
@@ -1171,8 +1188,7 @@ class BitTorrentManager:
                 continue
             processed_chunks.add(chunk_key)
 
-            # Skip if we already have this chunk (check DB here, it's safe in main loop)
-            my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
+            # Skip if we already have this chunk (using cached bitfield)
             if chunk_key in my_bitfield:
                 continue
 
@@ -1209,8 +1225,21 @@ class BitTorrentManager:
                 success = self._send_request(peer_id, source_id, chunk_id)
                 if success:
                     requests_sent += 1
+                else:
+                    # 🔧 CRITICAL FIX: Requeue failed requests instead of dropping them!
+                    # This prevents "dropped trigger" deadlock when streaming layer has backpressure
+                    try:
+                        self._request_trigger_queue.put_nowait((chunk_key, peer_id, importance_score))
+                        logger.debug(f"[BT] Client {self.client_id}: Requeued rejected request for {chunk_key}")
+                    except queue.Full:
+                        logger.warning(f"[BT] Client {self.client_id}: Queue full, cannot requeue {chunk_key}")
             except Exception as e:
                 logger.warning(f"[BT] Client {self.client_id}: Failed to send request for {chunk_key}: {e}")
+                # 🔧 Also requeue on exception to prevent chunk loss
+                try:
+                    self._request_trigger_queue.put_nowait((chunk_key, peer_id, importance_score))
+                except queue.Full:
+                    pass
 
         return requests_sent
 
@@ -1598,7 +1627,7 @@ class BitTorrentManager:
         my_bitfield = self.chunk_manager.get_global_bitfield(self.round_num)
         # 🔧 CRITICAL FIX: Use total_clients for expected chunks calculation
         total_expected = self.total_clients * self.chunks_per_client  # All clients' chunks
-        
+
         return {
             'chunks_collected': len(my_bitfield),
             'total_expected': total_expected,
@@ -1608,6 +1637,31 @@ class BitTorrentManager:
             'bytes_downloaded': self.total_downloaded,
             'bytes_uploaded': self.total_uploaded
         }
+
+    def set_own_chunks_count(self, count: int):
+        """🚀 CRITICAL FIX: Set own chunks count for memory-based completion check
+        Called when client's own chunks are registered at the start of exchange"""
+        self.own_chunks_count = count
+        logger.debug(f"[BT] Client {self.client_id}: Set own_chunks_count = {count}")
+
+    def set_expected_total_chunks(self, total: int):
+        """🚀 CRITICAL FIX: Set expected total chunks for completion check
+        Called at start of exchange to know when download is complete"""
+        self.expected_total_chunks = total
+        logger.debug(f"[BT] Client {self.client_id}: Set expected_total_chunks = {total}")
+
+    def get_memory_chunk_count(self) -> int:
+        """🚀 CRITICAL FIX: Get current chunk count using memory counter (NO DB QUERY!)
+        Returns: own_chunks + received_chunks (memory-only, instant)"""
+        return self.own_chunks_count + len(self.chunks_received_set)
+
+    def is_complete_by_memory(self) -> bool:
+        """🚀 CRITICAL FIX: Check if download is complete using memory counter (NO DB QUERY!)
+        Returns True if own_chunks + received_chunks >= expected_total_chunks"""
+        if self.expected_total_chunks <= 0:
+            return False  # Not initialized yet
+        current_count = self.get_memory_chunk_count()
+        return current_count >= self.expected_total_chunks
     
     def stop_exchange(self):
         """
@@ -1652,7 +1706,14 @@ class BitTorrentManager:
             pieces_count = len(self.processed_pieces)
             self.processed_pieces.clear()
             logger.debug(f"[BT] Client {self.client_id}: Cleared {pieces_count} processed_pieces")
-        
+
+        # 🚀 CRITICAL FIX: Clear memory-based chunk counter
+        received_count = len(self.chunks_received_set)
+        self.chunks_received_set.clear()
+        self.own_chunks_count = 0
+        self.expected_total_chunks = 0
+        logger.debug(f"[BT] Client {self.client_id}: Cleared memory counter - {received_count} received chunks")
+
         # 🔧 CRITICAL FIX: Clear streaming channel deduplication sets
         if self.streaming_manager:
             total_requested = 0
@@ -1701,7 +1762,12 @@ class BitTorrentManager:
         # 🔧 Emergency cleanup: Clear deduplication sets
         if hasattr(self, 'processed_pieces'):
             self.processed_pieces.clear()
-        
+
+        # 🚀 Emergency cleanup: Clear memory-based chunk counter
+        self.chunks_received_set.clear()
+        self.own_chunks_count = 0
+        self.expected_total_chunks = 0
+
         if self.streaming_manager:
             for channel in self.streaming_manager.channels.values():
                 if hasattr(channel, 'requested_chunks'):

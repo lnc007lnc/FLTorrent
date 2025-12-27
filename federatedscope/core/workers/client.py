@@ -2100,7 +2100,19 @@ class Client(BaseClient):
             self._cfg,  # 🆕 Pass configuration object
             self._streaming_manager  # 🚀 Pass streaming manager
         )
-        
+
+        # 🚀 CRITICAL FIX: Initialize memory-based chunk counters to avoid DB queries in main loop
+        # Query own chunks count ONCE at start, then use memory counter for completion check
+        own_bitfield = self.chunk_manager.get_global_bitfield(round_num)
+        own_chunks_count = len(own_bitfield)
+        total_clients = self._cfg.federate.client_num if hasattr(self._cfg, 'federate') else 50
+        chunks_per_client = self._cfg.chunk.num_chunks if hasattr(self._cfg, 'chunk') else 16
+        expected_total = total_clients * chunks_per_client
+
+        self.bt_manager.set_own_chunks_count(own_chunks_count)
+        self.bt_manager.set_expected_total_chunks(expected_total)
+        logger.info(f"[BT] Client {self.ID}: Memory counter initialized - own={own_chunks_count}, expected_total={expected_total}")
+
         # Directly start chunk exchange, no tracker needed
         self.bt_manager.start_exchange()
         
@@ -2156,8 +2168,30 @@ class Client(BaseClient):
             import time
             last_progress_time = time.time()
             last_unchoke_time = time.time()
+            last_bitfield_refresh = 0
 
-            while not self._has_all_chunks(expected_chunks):
+            # Use memory-based counter instead of DB queries to avoid SQLite lock contention
+            BITFIELD_REFRESH_INTERVAL = 5.0
+            cached_bitfield = {}
+
+            while True:
+                current_time = time.time()
+
+                # Use memory-based counter (instant, no DB query)
+                current_chunks = self.bt_manager.get_memory_chunk_count()
+                has_all = current_chunks >= expected_chunks
+
+                # Periodic DB verification for process_request_triggers
+                if current_time - last_bitfield_refresh >= BITFIELD_REFRESH_INTERVAL:
+                    try:
+                        cached_bitfield = self.chunk_manager.get_global_bitfield(self.bt_manager.round_num)
+                        last_bitfield_refresh = time.time()
+                    except Exception as e:
+                        logger.debug(f"[BT] Client {self.ID}: DB verification failed: {e}")
+
+                if has_all:
+                    break
+
                 # Check if exchange was stopped
                 if hasattr(self.bt_manager, 'is_stopped') and self.bt_manager.is_stopped:
                     logger.info(f"[BT] Client {self.ID}: BitTorrent exchange stopped")
@@ -2169,8 +2203,8 @@ class Client(BaseClient):
 
                 current_time = time.time()
 
-                # 🚀 EVENT-DRIVEN: Process request triggers from HAVE/BITFIELD handlers
-                requests_sent = self.bt_manager.process_request_triggers(max_requests=20)
+                # Process request triggers using cached bitfield
+                requests_sent = self.bt_manager.process_request_triggers(max_requests=20, cached_bitfield=cached_bitfield)
 
                 # Check timeouts (handles retries)
                 self.bt_manager.check_timeouts()
@@ -2182,18 +2216,16 @@ class Client(BaseClient):
 
                 # Progress logging (every 5 seconds)
                 if current_time - last_progress_time >= 5.0:
-                    current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
                     pending_count = len(self.bt_manager.pending_requests)
                     queue_size = self.bt_manager._request_trigger_queue.qsize()
                     logger.info(f"[BT] Client {self.ID}: Progress {current_chunks}/{expected_chunks}, pending={pending_count}, queue={queue_size}")
                     last_progress_time = current_time
 
-                # 🚀 EVENT-DRIVEN: Wait for events instead of busy-polling
-                # If no requests were sent and queue is empty, wait longer
+                # Wait for events instead of busy-polling
                 if requests_sent == 0 and self.bt_manager._request_trigger_queue.empty():
-                    time.sleep(0.5)  # Wait 500ms for events
+                    time.sleep(0.5)
                 else:
-                    time.sleep(0.01)  # Brief yield when active
+                    time.sleep(0.01)
                 
             # Record completion reason
             final_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
@@ -2300,52 +2332,23 @@ class Client(BaseClient):
         
     def callback_funcs_for_request(self, message):
         """Handle chunk request"""
-        # 🔍 DEBUG LOG: Detailed receive log - extended display of complete message information
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: RECEIVED chunk REQUEST from peer {message.sender}")
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: 📋 FULL MESSAGE DEBUG:")
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - msg_type: {message.msg_type}")  
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - sender: {message.sender}")
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - receiver: {message.receiver}")
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - state: {message.state}")
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - timestamp: {getattr(message, 'timestamp', 'N/A')}")
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}:   - content: {message.content}")
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: Processing request for chunk ({message.content['round_num']}, {message.content['source_client_id']}, {message.content['chunk_id']})")
-        
-        logger.debug(f"[BT] Client {self.ID}: Received request from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
-        
         if not hasattr(self, 'bt_manager') or self.bt_manager is None:
-            logger.debug(f"[BT] Client {self.ID}: bt_manager not ready, buffering request message from {message.sender}")
             self.bt_message_buffer.append(('request', message))
             return
-        
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: Calling bt_manager.handle_request for peer {message.sender}")
-            
-        # 🔴 Pass round_num to handle_request
+
         self.bt_manager.handle_request(
             message.sender,
             message.content['round_num'],
             message.content['source_client_id'],
             message.content['chunk_id']
         )
-        
-        logger.debug(f"🎯 [BT-REQ-RECV] Client {self.ID}: bt_manager.handle_request COMPLETED for peer {message.sender}")
-        
+
     def callback_funcs_for_piece(self, message):
         """Handle chunk data"""
-        # 🔍 DEBUG LOG: Detailed piece receive log
-        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: RECEIVED chunk PIECE from peer {message.sender}")
-        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: Piece content keys = {list(message.content.keys())}")
-        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: Processing piece for chunk ({message.content['round_num']}, {message.content['source_client_id']}, {message.content['chunk_id']})")
-        
-        logger.debug(f"[BT] Client {self.ID}: Received piece from peer {message.sender} for chunk {message.content['source_client_id']}:{message.content['chunk_id']}")
-        
         if not hasattr(self, 'bt_manager') or self.bt_manager is None:
-            logger.debug(f"[BT] Client {self.ID}: bt_manager not ready, buffering piece message from {message.sender}")
             self.bt_message_buffer.append(('piece', message))
             return
-        
-        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: Calling bt_manager.handle_piece for peer {message.sender}")
-            
+
         self.bt_manager.handle_piece(
             message.sender,
             message.content['round_num'],
@@ -2354,8 +2357,6 @@ class Client(BaseClient):
             message.content['data'],
             message.content['checksum']
         )
-        
-        logger.debug(f"📥 [BT-PIECE-RECV] Client {self.ID}: bt_manager.handle_piece COMPLETED for peer {message.sender}")
         
     def callback_funcs_for_cancel(self, message):
         """Handle cancel message"""
@@ -2372,12 +2373,10 @@ class Client(BaseClient):
             del self.bt_manager.pending_requests[chunk_key]
 
     def _has_all_chunks(self, expected_chunks):
-        """🐛 Bug Fix 29: Check if all chunks have been collected"""
+        """Check if all chunks have been collected"""
         if not hasattr(self, 'chunk_manager') or not hasattr(self, 'bt_manager'):
             return False
-        
-        # Get current number of chunks owned
-        # 🔴 Pass round_num to limit checking only current round chunks
+
         current_chunks = len(self.chunk_manager.get_global_bitfield(self.bt_manager.round_num))
         return current_chunks >= expected_chunks
         
