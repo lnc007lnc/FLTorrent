@@ -774,25 +774,22 @@ class StreamingChannel:
             logger.error(f"[StreamChannel] Traceback: {traceback.format_exc()}")
         
     def _handle_download_response(self, response):
-        """🔧 Optimization: Handle chunk download response - Deduplicate statistics, prevent duplicate processing"""        
+        """🔧 Optimization: Handle chunk download response - Deduplicate statistics, prevent duplicate processing
+
+        🚀 P0 FIX: Only count/mark completed AFTER callback confirms successful enqueue
+        """
         if not self.client_instance:
             logger.warning(f"[StreamChannel] No client instance for peer {self.peer_id}, cannot process chunk download")
             return
-            
+
         try:
             # Validate response data
             if not response.response_data:
                 logger.error(f"[StreamChannel] 🚫 Empty chunk data from peer {self.peer_id}, chunk_id={response.chunk_id}")
                 return
-            
-            # 🔧 Unified statistics management (count only once)
-            chunk_size = len(response.response_data)
-            self.chunks_received += 1
-            self.bytes_received += chunk_size
-            
-            # 🔧 Update deduplication state
+
             source_client_id = getattr(response, 'source_client_id', response.sender_id)
-            self.mark_chunk_completed(response.round_num, source_client_id, response.chunk_id)
+            chunk_size = len(response.response_data)
 
             # Create ChunkData object
             # Note: Message and ChunkData are imported at module level to avoid import lock contention
@@ -800,10 +797,10 @@ class StreamingChannel:
 
             # Calculate checksum
             checksum = hashlib.sha256(response.response_data).hexdigest()
-            
+
             # Create ChunkData object to wrap raw data
             chunk_data = ChunkData(response.response_data, checksum)
-            
+
             # Construct message content (compatible with traditional BitTorrent PIECE message format)
             content = {
                 'round_num': response.round_num,
@@ -812,7 +809,7 @@ class StreamingChannel:
                 'data': chunk_data,
                 'checksum': checksum
             }
-            
+
             # Create Message object
             message = Message(
                 msg_type='piece',
@@ -820,11 +817,22 @@ class StreamingChannel:
                 receiver=[self.client_id],
                 content=content
             )
-            
-            # Call callback function to handle chunk piece
+
+            # 🚀 P0 FIX: Call callback and CHECK return value for backpressure feedback
             logger.debug(f"[StreamChannel] Calling callback_funcs_for_piece for peer {self.peer_id}, chunk {response.sender_id}:{response.chunk_id}")
-            self.client_instance.callback_funcs_for_piece(message)
-            
+            success = self.client_instance.callback_funcs_for_piece(message)
+
+            if success:
+                # 🚀 ONLY after successful enqueue: update statistics and mark completed
+                self.chunks_received += 1
+                self.bytes_received += chunk_size
+                self.mark_chunk_completed(response.round_num, source_client_id, response.chunk_id)
+                logger.debug(f"[StreamChannel] ✅ Chunk {source_client_id}:{response.chunk_id} successfully processed")
+            else:
+                # 🚀 Enqueue failed (backpressure) - DON'T count, DON'T mark completed
+                # Timeout mechanism will trigger retry from peer
+                logger.warning(f"[StreamChannel] 🔙 Chunk {source_client_id}:{response.chunk_id} rejected (backpressure), will retry via timeout")
+
         except Exception as e:
             logger.error(f"[StreamChannel] Error handling chunk download from peer {self.peer_id}: {e}")
         
@@ -917,12 +925,20 @@ class StreamingChannel:
             return False
             
     def mark_chunk_completed(self, round_num: int, source_client_id: int, chunk_id: int):
-        """🔧 Mark chunk as completed, clear deduplication state"""
+        """🔧 Mark chunk as completed, update deduplication state
+
+        🚀 P2 FIX: Also add to completed_chunks for proper deduplication
+        """
         chunk_key = (round_num, source_client_id, chunk_id)
-        
+
         if hasattr(self, 'requested_chunks'):
             self.requested_chunks.discard(chunk_key)  # Remove from request set
-            
+
+        # 🚀 P2 FIX: Add to completed_chunks set for deduplication
+        if not hasattr(self, 'completed_chunks'):
+            self.completed_chunks = set()
+        self.completed_chunks.add(chunk_key)
+
         logger.debug(f"[StreamChannel] ✅ Marked chunk {source_client_id}:{chunk_id} as completed for peer {self.peer_id}")
             
     def send_chunk_data(self, round_num: int, source_client_id: int, chunk_id: int,

@@ -35,11 +35,14 @@ def extend_bittorrent_cfg(cfg):
     cfg.bittorrent.end_game_threshold = 10  # Remaining chunk threshold for entering End Game mode
     
     # 🆕 Concurrent request management configuration
-    cfg.bittorrent.max_active_requests = 20  # Maximum concurrent active requests per client
-    cfg.bittorrent.max_pending_queue = 40    # Maximum pending request queue size
-    
+    # 🔧 FIX: Reduced from 20/40 to prevent excessive concurrent requests
+    cfg.bittorrent.max_active_requests = 10  # Maximum concurrent active requests per client
+    cfg.bittorrent.max_pending_queue = 20    # Maximum pending request queue size
+
     # Completion strategy configuration
-    cfg.bittorrent.min_completion_ratio = 0.8  # Minimum completion ratio allowed to continue
+    # 🔧 FIX: Increased from 0.8 to 0.9 to reduce premature endgame mode
+    cfg.bittorrent.min_completion_ratio = 0.9  # Minimum completion ratio before endgame mode
+    cfg.bittorrent.endgame_max_parallel_peers = 2  # Max parallel requests per chunk in endgame
     cfg.bittorrent.require_full_completion = True  # Whether to require all clients to complete fully
     
     # Algorithm selection configuration

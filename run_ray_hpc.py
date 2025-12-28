@@ -113,7 +113,7 @@ class SLURMConfig:
     """SLURM job scheduler configuration for HPC environments"""
 
     # === Basic SLURM Settings ===
-    PARTITION: str = "gpu2"                   # SLURM partition name (gpu2 has 4 GPUs, 512GB RAM)
+    PARTITION: str = "gpu3"                   # SLURM partition name (gpu3 has 3 GPUs)
     ACCOUNT: str = ""                         # Account/project for billing (optional)
     QOS: str = ""                             # Quality of Service (optional)
 
@@ -123,9 +123,9 @@ class SLURMConfig:
     # === Resource Requests ===
     NODES: int = 1                            # Number of nodes to request
     TASKS_PER_NODE: int = 1                   # Tasks per node (1 for Ray)
-    CPUS_PER_TASK: int = 64                   # CPUs per task (gpu2 has 64 CPUs)
-    MEM_PER_NODE: str = "400G"                # Memory per node (gpu2 has 512GB)
-    GPUS_PER_NODE: int = 4                    # GPUs per node (gpu2 has 4 GPUs)
+    CPUS_PER_TASK: int = 64                   # CPUs per task
+    MEM_PER_NODE: str = "400G"                # Memory per node
+    GPUS_PER_NODE: int = 2                    # GPUs per node
     GPU_TYPE: str = ""                        # Specific GPU type (e.g., "v100", "a100")
 
     # === Environment Settings ===
@@ -209,7 +209,7 @@ class FLConfig:
 
     # === Basic Settings ===
     CLIENT_NUM: int = 50                   # Number of clients for FL experiments
-    TOTAL_ROUNDS: int = 100                  # Extended to 100 rounds for two-phase training
+    TOTAL_ROUNDS: int = 2                    # Quick test: 2 rounds
     CHUNK_NUM: int = 16                    # 128 chunks: ~343KB each, fits in 425KB socket buffer
     IMPORTANCE_METHOD: str = "fisher"         # Chunk importance method: magnitude, l2_norm, snip, fisher
     SEED: int = 12345                       # Random seed for reproducibility (server uses SEED, clients use SEED + client_id)
@@ -316,7 +316,8 @@ class FLConfig:
     # === BitTorrent Settings ===
     BITTORRENT_TIMEOUT: float = 160.0     # BitTorrent timeout 5min
     BT_CHUNK_SELECTION: str = "rarest_first"  # Chunk selection strategy
-    BT_MIN_COMPLETION_RATIO: float = 0.8   # Minimum completion ratio
+    # 🔧 FIX: Increased from 0.8 to 0.9 to reduce premature endgame mode (was causing massive duplicates)
+    BT_MIN_COMPLETION_RATIO: float = 0.9   # Minimum completion ratio before endgame mode
     BT_PARAMETER_COMPLETION: str = "global_model"  # Parameter completion strategy: 'global_model', 'zeros', 'local_model'
     # BT_PARAMETER_COMPLETION: str = "zeros"  # Parameter completion strategy: 'global_model', 'zeros', 'local_model'
 
@@ -368,10 +369,10 @@ class FLConfig:
     TRAINER_TYPE: str = "cvtrainer"           # Trainer type: cvtrainer, nlptrainer
     EVAL_FREQ: int = 1                        # Evaluation frequency
     EVAL_METRICS: List[str] = field(default_factory=lambda: ['acc', 'correct', 'f1'])  # Evaluation metrics: acc, correct, f1 (macro F1 score)
-    EVAL_BEST_KEY: str = "val_acc"           # Key to track for best results
+    EVAL_BEST_KEY: str = "test_acc"          # Key to track for best results (use test_acc for non-IID scenarios where some clients may lack val data)
     
     # === Data Processing Settings ===
-    DATA_ROOT: str = "data/"                  # Data root directory
+    DATA_ROOT: str = "/home/naicheng_li/FLTorrent/data/"  # Data root directory (absolute path for batch experiments)
     DATA_SPLITS: List[float] = field(default_factory=lambda: [0.8, 0.1, 0.1])  # Train/val/test splits (CelebA default)
     DATA_SUBSAMPLE: float = 1.0               # Data subsample ratio - controls total dataset size 1.0 = use full dataset, 0.1 = use only 10% of data
     DATA_SPLITTER: str = "lda"                # Data splitter method
@@ -2623,10 +2624,9 @@ class RayV2FederatedLearning:
                         if resource_name.startswith('accelerator_type:'):
                             gpu_type = resource_name.split(':')[1].upper()
                             if 'A100' in gpu_type:
-                                if '80' in gpu_type:
-                                    gpu_memory_per_gpu = 80.0
-                                else:
-                                    gpu_memory_per_gpu = 40.0  # A100-40GB
+                                # Default to 80GB for A100 (most common HPC configuration)
+                                # A100 comes in 40GB and 80GB variants
+                                gpu_memory_per_gpu = 80.0
                             elif 'L4' in gpu_type:
                                 gpu_memory_per_gpu = 23.0  # L4-24GB (actually 23GB usable)
                             elif 'L40' in gpu_type:
@@ -2701,9 +2701,11 @@ class RayV2FederatedLearning:
                 num_gpus = 0
         
         # Create new Ray cluster configuration
-        # Use parent directory to avoid Unix socket path length limit (107 bytes)
-        parent_dir = os.path.dirname(PROJECT_ROOT)
-        ray_temp_dir = os.path.join(parent_dir, "ray")
+        # Use /tmp to avoid Unix socket path length limit (107 bytes)
+        # Generate unique temp dir using timestamp to avoid conflicts between experiments
+        import hashlib
+        unique_id = hashlib.md5(PROJECT_ROOT.encode()).hexdigest()[:8]
+        ray_temp_dir = f"/tmp/ray_{unique_id}"
         os.makedirs(ray_temp_dir, exist_ok=True)
         
         # Calculate available memory (use 90% of system memory)
@@ -3567,19 +3569,49 @@ class RayV2FederatedLearning:
         # Monitor training
         self.monitor_training()
         
+    def _check_server_log_completion(self) -> bool:
+        """Check server log for training completion marker"""
+        # Check both CONFIG.LOG_DIR (for batch experiments) and PROJECT_ROOT/logs (for regular runs)
+        log_paths = [
+            os.path.join(CONFIG.LOG_DIR, "server.log") if hasattr(CONFIG, 'LOG_DIR') and CONFIG.LOG_DIR else None,
+            os.path.join(PROJECT_ROOT, "logs", "server.log"),
+        ]
+        for server_log_path in log_paths:
+            if server_log_path is None:
+                continue
+            try:
+                if os.path.exists(server_log_path):
+                    with open(server_log_path, 'r') as f:
+                        # Read last 50KB of log file for efficiency
+                        f.seek(0, 2)  # Go to end
+                        file_size = f.tell()
+                        read_size = min(50000, file_size)
+                        f.seek(max(0, file_size - read_size))
+                        content = f.read()
+                        if "Server: Final evaluation is finished!" in content:
+                            return True
+            except Exception as e:
+                pass  # Silently ignore read errors
+        return False
+
     def monitor_training(self):
         """Monitor training progress"""
         self.logger.info(f"📊 Starting training monitoring ({CONFIG.MONITOR_DURATION} seconds)...")
-        
+
         start_time = time.time()
-        
+
         while True:
             elapsed = int(time.time() - start_time)
-            
+
             if elapsed > CONFIG.MONITOR_DURATION:
                 self.logger.info("⏰ Monitoring time ended")
                 break
-            
+
+            # Check server log for completion marker
+            if self._check_server_log_completion():
+                self.logger.info("🏁 Detected 'Server: Final evaluation is finished!' in server log - training complete!")
+                break
+
             # Check status with retry for network resilience
             max_retries = 3
             status_ok = False
@@ -3822,6 +3854,15 @@ echo "CPUs per Task: $SLURM_CPUS_PER_TASK"
 echo "Start Time: $(date)"
 echo "============================================"
 
+# Load CUDA modules and set environment
+module purge
+module load nvidia/cuda/toolkit/12.9.1
+
+# Fix LD_LIBRARY_PATH for CUDA
+export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lib64
+
 # Activate conda environment
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate {SLURM_CONFIG.CONDA_ENV}
@@ -3853,7 +3894,7 @@ echo "============================================"
 # ============================================================================
 
 echo "Starting FL experiment..."
-python {PROJECT_ROOT}/run_ray_hpc.py --local
+srun python {PROJECT_ROOT}/run_ray_hpc.py --local
 
 echo "============================================"
 echo "Job finished at $(date)"
@@ -4138,13 +4179,13 @@ def create_code_snapshot(snapshot_dir: str, experiment_name: str) -> str:
         "setup.py",
     ]
 
-    # Directories to exclude
+    # Directories to exclude (these patterns match directory names at any level)
+    # Note: "data" is intentionally NOT excluded as it would exclude federatedscope/core/data/
     exclude_patterns = [
         "__pycache__",
         "*.pyc",
         ".git",
         "*.egg-info",
-        "data",
         "logs",
         "ray_v2_output",
         "experiments_output",
@@ -4152,6 +4193,9 @@ def create_code_snapshot(snapshot_dir: str, experiment_name: str) -> str:
         "slurm_logs",
         ".backup*",
         "node_modules",
+        "celeba",  # Exclude large dataset directories
+        "cifar*",
+        "femnist",
     ]
 
     os.makedirs(snapshot_path, exist_ok=True)
@@ -4236,18 +4280,19 @@ def generate_experiment_slurm_script(
     os.makedirs(slurm_log_dir, exist_ok=True)
 
     # Generate config overrides for the experiment
+    # Use single quotes for strings to avoid conflict with bash double quotes
     config_overrides = []
     for key, value in exp_config.items():
         if isinstance(value, str):
-            config_overrides.append(f'    CONFIG.{key} = "{value}"')
+            config_overrides.append(f"CONFIG.{key} = '{value}'")
         elif isinstance(value, bool):
-            config_overrides.append(f'    CONFIG.{key} = {value}')
+            config_overrides.append(f'CONFIG.{key} = {value}')
         elif isinstance(value, (int, float)):
-            config_overrides.append(f'    CONFIG.{key} = {value}')
+            config_overrides.append(f'CONFIG.{key} = {value}')
         elif isinstance(value, list):
-            config_overrides.append(f'    CONFIG.{key} = {value}')
+            config_overrides.append(f'CONFIG.{key} = {value}')
 
-    config_override_str = '\n'.join(config_overrides) if config_overrides else '    pass'
+    config_override_str = '\n'.join(config_overrides) if config_overrides else 'pass'
 
     script_content = f'''#!/bin/bash
 #SBATCH --job-name={exp_name}
@@ -4292,6 +4337,9 @@ conda activate flv2
 cd {snapshot_path}
 export PYTHONPATH={snapshot_path}:$PYTHONPATH
 
+# Set Ray temp directory to avoid long socket path issues
+export RAY_TMPDIR=/tmp/ray_{exp_name}
+
 # Apply experiment-specific configuration
 python -c "
 import sys
@@ -4328,6 +4376,7 @@ srun --ntasks=1 bash -c "
     conda activate flv2
     cd {snapshot_path}
     export PYTHONPATH={snapshot_path}:$PYTHONPATH
+    export RAY_TMPDIR=/tmp/ray_{exp_name}
 
     # Run with experiment config
     python -c \\"

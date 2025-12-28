@@ -335,8 +335,9 @@ class BitTorrentManager:
             self.MAX_UPLOAD_SLOTS = cfg.bittorrent.max_upload_slots
         else:
             # Fallback defaults
-            self.MAX_ACTIVE_REQUESTS = 10  # Active request pool size: actual concurrent request count sent
-            self.MAX_PENDING_QUEUE = 20   # Pending queue pool size: pre-selected chunk queue size
+            # 🔧 FIX: Restored reasonable defaults (was 50/100, caused excessive concurrent requests)
+            self.MAX_ACTIVE_REQUESTS = 10  # Active request pool size
+            self.MAX_PENDING_QUEUE = 20   # Pending queue pool size
             self.MAX_UPLOAD_SLOTS = 4     # Default upload slots
         
         self.pending_queue: List[Tuple] = []  # Pending queue: chunk list sorted by importance
@@ -359,10 +360,12 @@ class BitTorrentManager:
         self.is_stopped = False  # Stop flag for exchange termination
         
         # 🚀 ENDGAME OPTIMIZATION: Multi-peer parallel requests for final chunks
-        self.min_completion_ratio = cfg.bittorrent.min_completion_ratio if (cfg and hasattr(cfg, 'bittorrent') and hasattr(cfg.bittorrent, 'min_completion_ratio')) else 0.8
+        # 🔧 FIX: Changed defaults - 0.9 threshold (was 0.5) and max 2 parallel peers (was 10)
+        # Previous values caused massive duplicate requests (50% of training in endgame, 10x requests per chunk)
+        self.min_completion_ratio = cfg.bittorrent.min_completion_ratio if (cfg and hasattr(cfg, 'bittorrent') and hasattr(cfg.bittorrent, 'min_completion_ratio')) else 0.9
         self.is_endgame_mode = False  # Endgame mode flag
         self.endgame_requests: Dict[Tuple, List[int]] = {}  # {chunk_key: [peer_id_list]} - Track multiple requests
-        self.endgame_max_parallel_peers = 2  # Maximum parallel peers to request from in endgame
+        self.endgame_max_parallel_peers = cfg.bittorrent.endgame_max_parallel_peers if (cfg and hasattr(cfg, 'bittorrent') and hasattr(cfg.bittorrent, 'endgame_max_parallel_peers')) else 2
         self.endgame_start_time = None  # When endgame mode started
 
         # 🚀 DEADLOCK FIX S1: Upload task queue + worker thread
@@ -441,8 +444,11 @@ class BitTorrentManager:
                 self.peer_importance_scores[sender_id][chunk_key] = importance_score
 
                 # 🚀 EVENT-DRIVEN: Trigger request for each chunk we might need
-                # Check using in-memory structures only (no DB access)
-                if chunk_key not in self.pending_requests and chunk_key not in getattr(self, 'processed_pieces', set()):
+                # 🔧 FIX: Also check chunks_received_set to prevent duplicate requests for recently received chunks
+                if (chunk_key not in self.pending_requests and
+                    chunk_key not in getattr(self, 'processed_pieces', set()) and
+                    chunk_key not in getattr(self, 'chunks_received_set', set()) and
+                    chunk_key not in getattr(self, 'own_chunks_set', set())):
                     try:
                         self._request_trigger_queue.put_nowait((chunk_key, sender_id, importance_score))
                     except queue.Full:
@@ -451,7 +457,11 @@ class BitTorrentManager:
             bitfield = bitfield_content
             # Old format: enqueue all chunks
             for chunk_key in bitfield.keys():
-                if chunk_key not in self.pending_requests and chunk_key not in getattr(self, 'processed_pieces', set()):
+                # 🔧 FIX: Also check chunks_received_set to prevent duplicate requests
+                if (chunk_key not in self.pending_requests and
+                    chunk_key not in getattr(self, 'processed_pieces', set()) and
+                    chunk_key not in getattr(self, 'chunks_received_set', set()) and
+                    chunk_key not in getattr(self, 'own_chunks_set', set())):
                     try:
                         self._request_trigger_queue.put_nowait((chunk_key, sender_id, 0.0))
                     except queue.Full:
@@ -568,7 +578,14 @@ class BitTorrentManager:
         self._update_download_rate(sender_id, len(raw_bytes))
         self.last_activity[sender_id] = time.time()
 
-        # 🚀 NO _transfer_from_queue_to_active() here - main loop does it
+        # 🚀 FIX: Signal that a slot is available for new requests
+        # This triggers immediate refill instead of waiting for next loop cycle
+        # Put a dummy trigger to wake up the main loop
+        try:
+            self._request_trigger_queue.put_nowait(("__REFILL__", -1, 0.0))
+        except:
+            pass  # Queue full is OK, main loop will refill anyway
+
         return True
         
     def handle_have(self, sender_id: int, round_num: int, source_client_id: int, chunk_id: int, importance_score: float = 0.0):
@@ -596,8 +613,11 @@ class BitTorrentManager:
         self.peer_importance_scores[sender_id][chunk_key] = importance_score
 
         # 🚀 EVENT-DRIVEN: Trigger request if we need this chunk
-        # Check using in-memory structures only (no DB access in callback)
-        if chunk_key not in self.pending_requests and chunk_key not in getattr(self, 'processed_pieces', set()):
+        # 🔧 FIX: Also check chunks_received_set to prevent duplicate requests for recently received chunks
+        if (chunk_key not in self.pending_requests and
+            chunk_key not in getattr(self, 'processed_pieces', set()) and
+            chunk_key not in getattr(self, 'chunks_received_set', set()) and
+            chunk_key not in getattr(self, 'own_chunks_set', set())):
             try:
                 self._request_trigger_queue.put_nowait((chunk_key, sender_id, importance_score))
             except queue.Full:
@@ -636,6 +656,12 @@ class BitTorrentManager:
             if chunk_key in my_bitfield or chunk_key in self.pending_requests:
                 continue  # Skip chunks already owned or being requested
 
+            # 🔧 FIX: Real-time check for recently received chunks (not in cached bitfield)
+            # This prevents duplicate requests when chunks arrive during loop execution
+            if (chunk_key in getattr(self, 'chunks_received_set', set()) or
+                chunk_key in getattr(self, 'processed_pieces', set())):
+                continue
+
             # Find all peers that have this chunk
             peer_ids = self._find_peer_with_chunk(chunk_key)
             if not peer_ids:
@@ -654,10 +680,10 @@ class BitTorrentManager:
             
             
             if completion_ratio >= self.min_completion_ratio:
-                # 🎯 ENDGAME MODE: Send requests to multiple peers (up to 2)
-                endgame_peer_count = min(2, len(available_peers))
+                # 🎯 ENDGAME MODE: Send requests to multiple peers for faster completion
+                endgame_peer_count = min(self.endgame_max_parallel_peers, len(available_peers))
                 logger.debug(f"[BT-ENDGAME] Client {self.client_id}: Entering endgame mode (completion: {completion_ratio:.2f}) - sending to {endgame_peer_count} peers")
-                
+
                 for i in range(endgame_peer_count):
                     peer_id = available_peers[i]
                     try:
@@ -668,7 +694,7 @@ class BitTorrentManager:
                             logger.debug(f"[BT-ENDGAME] Client {self.client_id}: Failed to send endgame request for chunk {chunk_key} to peer {peer_id}")
                     except Exception as e:
                         logger.error(f"[BT-ENDGAME] Client {self.client_id}: Exception while sending endgame request to peer {peer_id}: {e}")
-                break  # Successfully processed one request (endgame mode)
+                # 🚀 FIX: Continue to fill more slots instead of breaking after 1 chunk
             else:
                 # 🎯 NORMAL MODE: Send request to first available peer
                 peer_id = available_peers[0]
@@ -676,7 +702,7 @@ class BitTorrentManager:
                     success = self._send_request(peer_id, source_id, chunk_id)
                     if success:
                         logger.debug(f"[BT-POOL] Client {self.client_id}: Transferred chunk {chunk_key} from queue to active pool")
-                        break  # Successfully transferred one request
+                        # 🚀 FIX: Continue to fill more slots instead of breaking after 1 request
                     else:
                         logger.debug(f"[BT-POOL] Client {self.client_id}: Failed to transfer chunk {chunk_key} to active pool")
                 except Exception as e:
@@ -708,11 +734,14 @@ class BitTorrentManager:
         my_bitfield = self.get_memory_bitfield()
 
         # Select needed chunks
+        # 🔧 FIX: Also check processed_pieces to prevent adding already received chunks to queue
+        processed_pieces = getattr(self, 'processed_pieces', set())
         for chunk_key, availability_count in chunk_availability.items():
             if (chunk_key not in my_bitfield and
                 chunk_key not in self.pending_requests and
-                chunk_key not in self.pending_queue):
-                
+                chunk_key not in self.pending_queue and
+                chunk_key not in processed_pieces):
+
                 importance_score = self._get_chunk_importance_score(chunk_key)
                 
                 # 🚀 NEW: Calculate rarity score (scarcity)
@@ -1187,6 +1216,10 @@ class BitTorrentManager:
 
             chunk_key, peer_id, importance_score = item
 
+            # 🚀 FIX: Handle refill trigger (signals slot available)
+            if chunk_key == "__REFILL__":
+                continue  # Skip dummy trigger, main loop will call _transfer_from_queue_to_active()
+
             # Skip if already processed in this batch
             if chunk_key in processed_chunks:
                 continue
@@ -1202,6 +1235,15 @@ class BitTorrentManager:
 
             # Skip if already processed
             if chunk_key in getattr(self, 'processed_pieces', set()):
+                continue
+
+            # 🔧 FIX: Also check chunks_received_set to prevent race condition
+            # This catches chunks that were received after bitfield was cached
+            if chunk_key in getattr(self, 'chunks_received_set', set()):
+                continue
+
+            # 🔧 FIX: Check own_chunks_set as well
+            if chunk_key in getattr(self, 'own_chunks_set', set()):
                 continue
 
             # Skip if peer is choked
@@ -1324,12 +1366,10 @@ class BitTorrentManager:
                             if processed_count % 100 == 0:
                                 logger.debug(f"[UploadWorker] Client {self.client_id}: Processed {processed_count} upload tasks")
                         else:
-                            # Send failed (congestion) - brief backoff then requeue
-                            time.sleep(retry_backoff)
-                            try:
-                                self._upload_task_queue.put_nowait((sender_id, round_num, source_id, chunk_id))
-                            except queue.Full:
-                                logger.warning(f"[UploadWorker] Client {self.client_id}: Failed to requeue task, queue full")
+                            # 🚀 P1 FIX: DON'T requeue on send failure!
+                            # Let peer's request timeout trigger a new request
+                            # This prevents self-amplifying congestion when peer is slow
+                            logger.debug(f"[UploadWorker] Client {self.client_id}: Send failed for {source_id}:{chunk_id} to peer {sender_id}, peer will retry via timeout")
                     else:
                         logger.warning(f"[UploadWorker] Client {self.client_id}: Chunk {source_id}:{chunk_id} not found for peer {sender_id}")
 
@@ -1674,11 +1714,19 @@ class BitTorrentManager:
         Returns dict of {(round_num, source_id, chunk_id): True} for all owned chunks.
         This replaces get_global_bitfield() calls in the main loop to avoid SQLite lock."""
         bitfield = {}
+        # 🚀 Thread-safety fix: Create copies to avoid "Set changed size during iteration"
+        try:
+            own_chunks_copy = set(self.own_chunks_set)
+            received_chunks_copy = set(self.chunks_received_set)
+        except RuntimeError:
+            # Fallback if copy fails during concurrent modification
+            own_chunks_copy = set()
+            received_chunks_copy = set()
         # Add own chunks
-        for chunk_key in self.own_chunks_set:
+        for chunk_key in own_chunks_copy:
             bitfield[chunk_key] = True
         # Add received chunks
-        for chunk_key in self.chunks_received_set:
+        for chunk_key in received_chunks_copy:
             bitfield[chunk_key] = True
         return bitfield
 

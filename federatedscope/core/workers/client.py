@@ -71,6 +71,10 @@ class Client(BaseClient):
 
         self.data = data
 
+        # 🚀 SHUTDOWN SIGNAL: Flag to signal all components to exit immediately
+        # This is set when receiving finish message from server
+        self._shutdown_signal = False
+
         # Register message handlers
         self._register_default_handlers()
         
@@ -316,6 +320,9 @@ class Client(BaseClient):
                 self.msg_handlers[msg.msg_type](msg)
 
             if msg.msg_type == 'finish':
+                # 🚀 SET SHUTDOWN SIGNAL: All components should check this and exit immediately
+                logger.info(f"[Client {self.ID}] Received finish message, setting shutdown signal")
+                self._shutdown_signal = True
                 break
 
         # 🚀 GRACEFUL SHUTDOWN: Stop all components after FL completes
@@ -334,9 +341,9 @@ class Client(BaseClient):
                 logger.warning(f"[Client {self.ID}] Error stopping BitTorrent: {e}")
 
         # 2. Stop streaming channel manager if exists
-        if hasattr(self, 'streaming_channel_manager') and self.streaming_channel_manager is not None:
+        if hasattr(self, '_streaming_manager') and self._streaming_manager is not None:
             try:
-                self.streaming_channel_manager.close_all_channels()
+                self._streaming_manager.close_all_channels()
                 logger.info(f"[Client {self.ID}] Streaming channels closed")
             except Exception as e:
                 logger.warning(f"[Client {self.ID}] Error closing streaming channels: {e}")
@@ -2263,6 +2270,10 @@ class Client(BaseClient):
                 # Check timeouts (handles retries)
                 self.bt_manager.check_timeouts()
 
+                # 🚀 FIX: Actively fill pending queue and transfer to active pool
+                # This ensures all available slots are filled, not just triggered by events
+                self.bt_manager._transfer_from_queue_to_active()
+
                 # Periodic unchoke (every 10 seconds)
                 if current_time - last_unchoke_time >= 10.0:
                     self.bt_manager._regular_unchoke_algorithm()
@@ -2403,12 +2414,17 @@ class Client(BaseClient):
         )
 
     def callback_funcs_for_piece(self, message):
-        """Handle chunk data"""
+        """Handle chunk data
+
+        Returns:
+            bool: True if chunk was successfully processed/enqueued, False if rejected (e.g., queue full)
+        """
         if not hasattr(self, 'bt_manager') or self.bt_manager is None:
             self.bt_message_buffer.append(('piece', message))
-            return
+            return False  # Not processed, buffered for later
 
-        self.bt_manager.handle_piece(
+        # 🚀 P0 FIX: Return handle_piece result for backpressure feedback
+        return self.bt_manager.handle_piece(
             message.sender,
             message.content['round_num'],
             message.content['source_client_id'],
