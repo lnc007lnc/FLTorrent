@@ -61,17 +61,17 @@ experiments:
   #     BITTORRENT_TIMEOUT: 0.0
   #     DATA_SPLIT_ALPHA: 1.0
 
-  - name: "set1_nocomp_t0_alpha03"
-    description: "No BitTorrent (timeout=0), local only, high non-IID (alpha=0.3)"
-    config:
-      CLIENT_NUM: 50
-      TOTAL_ROUNDS: 100
-      DATASET: "celeba"
-      MODEL_TYPE: "resnet18"
-      LEARNING_RATE: 0.0001
-      BT_ENABLE_COMPENSATION: False
-      BITTORRENT_TIMEOUT: 0.0
-      DATA_SPLIT_ALPHA: 0.3
+  # [COMPLETED] - name: "set1_nocomp_t0_alpha03"
+  #   description: "No BitTorrent (timeout=0), local only, high non-IID (alpha=0.3)"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BITTORRENT_TIMEOUT: 0.0
+  #     DATA_SPLIT_ALPHA: 0.3
 
   # --- Timeout = infinite (Full BitTorrent, wait for 100% chunks) ---
   - name: "set1_nocomp_inf_alpha10000"

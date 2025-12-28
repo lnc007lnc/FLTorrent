@@ -1072,11 +1072,9 @@ class Client(BaseClient):
                     own_chunk_keys = [(self.state, self.ID, i) for i in range(len(saved_hashes))]
                     self.bt_manager.register_own_chunks(own_chunk_keys)
 
-                # Log storage statistics for current round
-                stats = self.chunk_manager.get_storage_stats(round_num=self.state)
-                logger.debug(f"📊 Client {self.ID}: Storage stats - "
-                           f"Total chunks: {stats.get('unique_chunks', 0)}, "
-                           f"Size: {stats.get('storage_size_mb', 0):.2f} MB")
+                # 🔧 REMOVED: get_storage_stats() could block on cache_lock contention
+                # This caused Client 50 to hang at round 45 (infinite lock wait)
+                # The stats are only for debug logging, not critical for operation
             else:
                 logger.error(f"❌ Client {self.ID}: Failed to save any chunks for round {self.state}")
                 
