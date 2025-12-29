@@ -84,39 +84,53 @@ def db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0):
         return wrapper
     return decorator
 
-# 🚀 UNIFIED DATABASE CONNECTION WITH STANDARD PRAGMA SETTINGS  
-def create_optimized_connection(db_path: str, timeout: float = 30.0) -> sqlite3.Connection:
+# 🚀 UNIFIED DATABASE CONNECTION WITH STANDARD PRAGMA SETTINGS
+def create_optimized_connection(db_path: str, timeout: float = 30.0, nfs_compatible: bool = False) -> sqlite3.Connection:
     """
     Create a SQLite connection with optimized and unified PRAGMA settings.
-    
+
     Args:
         db_path: Path to the database file
         timeout: Connection timeout in seconds
-        
+        nfs_compatible: If True, use DELETE journal mode instead of WAL for NFS compatibility
+
     Returns:
         Optimized SQLite connection
-    
+
     Notes:
         - page_size only affects new databases or after VACUUM
         - mmap_size reduced to 64MB to limit memory usage with many connections
         - Settings balanced for federated learning workload patterns
+        - NFS compatibility mode uses DELETE journal to avoid WAL/shm issues on NFS
     """
     conn = sqlite3.connect(db_path, timeout=timeout, check_same_thread=False)
     cursor = conn.cursor()
-    
+
+    # 🔧 Choose journal mode based on NFS compatibility setting
+    if nfs_compatible:
+        journal_mode = "DELETE"  # NFS-safe: no .shm/.wal files
+        mmap_size = "0"          # Disable mmap on NFS (not reliable)
+        logger.debug(f"[DB-CONFIG] Using NFS-compatible mode (DELETE journal) for {db_path}")
+    else:
+        journal_mode = "WAL"     # Default: better concurrency
+        mmap_size = "67108864"   # 64MB mmap
+
     # 🚀 UNIFIED PRAGMA SETTINGS FOR ALL CONNECTIONS
     pragma_settings = [
-        ("journal_mode", "WAL"),           # Enable WAL mode for better concurrency
+        ("journal_mode", journal_mode),    # WAL (default) or DELETE (NFS-compatible)
         ("synchronous", "NORMAL"),         # Balance safety and performance
         ("cache_size", "10000"),           # 10000 pages cache
         ("temp_store", "MEMORY"),          # Store temp tables in memory
-        ("busy_timeout", "30000"),         # 30 second busy timeout
-        ("wal_autocheckpoint", "1000"),    # Auto-checkpoint every 1000 pages
-        ("mmap_size", "67108864"),         # 🚀 REDUCED: 64MB (was 256MB) to reduce memory footprint
+        ("busy_timeout", "5000"),          # 5 second busy timeout (reduced from 30s to avoid cascading waits)
+        ("mmap_size", mmap_size),          # 64MB or 0 (NFS)
         ("page_size", "4096"),             # 4KB page size (only effective for new DBs)
         ("foreign_keys", "ON"),            # Enable foreign key constraints
     ]
-    
+
+    # Only set wal_autocheckpoint for WAL mode
+    if not nfs_compatible:
+        pragma_settings.append(("wal_autocheckpoint", "1000"))
+
     for pragma, value in pragma_settings:
         try:
             cursor.execute(f"PRAGMA {pragma}={value}")
@@ -152,11 +166,29 @@ class ChunkManager:
         self._cfg = cfg  # 🚀 NEW: Store config for fast path optimization
         self.chunk_write_queue = None  # 🚀 NEW: Reference to ChunkWriteQueue
         self._bt_session_ids = {}  # 🚀 Track session IDs by round
-        
-        # Create database directory by node name: /tmp/fl_chunks/client_X/
+
+        # Create database directory by node name: {tmp_dir}/client_X/
         # Use /tmp (tmpfs, 2.8GB/s) instead of NFS (441MB/s) for 6x faster I/O
+        # tmp_dir is configurable via cfg.chunk.tmp_dir or cfg.chunk_tmp_dir
         client_name = f"client_{client_id}"
-        self.db_dir = os.path.join("/tmp", "fl_chunks", client_name)
+        if cfg is not None:
+            # Try cfg.chunk.tmp_dir first, then cfg.chunk_tmp_dir, fallback to /tmp/fl_chunks
+            if hasattr(cfg, 'chunk') and hasattr(cfg.chunk, 'tmp_dir'):
+                tmp_base = cfg.chunk.tmp_dir
+            elif hasattr(cfg, 'chunk_tmp_dir'):
+                tmp_base = cfg.chunk_tmp_dir
+            else:
+                tmp_base = '/tmp/fl_chunks'
+            # 🔧 NFS compatibility mode: use DELETE journal instead of WAL
+            self._nfs_compatible = getattr(cfg, 'chunk_nfs_compatible', False)
+        else:
+            tmp_base = '/tmp/fl_chunks'
+            self._nfs_compatible = False
+
+        if self._nfs_compatible:
+            logger.info(f"📊 NFS compatibility mode enabled for client {client_id} - using DELETE journal mode")
+
+        self.db_dir = os.path.join(tmp_base, client_name)
         os.makedirs(self.db_dir, exist_ok=True)
         
         # 🚀 NEW: Initialize high-performance chunk data cache (replaces database for chunk data)
@@ -210,7 +242,8 @@ class ChunkManager:
             db_path = self.legacy_db_path
             
         # 🚀 Use unified connection function with standard PRAGMA settings
-        return create_optimized_connection(db_path, timeout=30.0)
+        # Pass nfs_compatible flag to use DELETE journal mode on NFS filesystems
+        return create_optimized_connection(db_path, timeout=30.0, nfs_compatible=self._nfs_compatible)
     
     def set_chunk_write_queue(self, chunk_write_queue):
         """
@@ -2053,8 +2086,27 @@ class ChunkManager:
                 return None
                 
             # 5) 为每个参数分配扁平数组 & 掩码
-            params_flat: Dict[str, np.ndarray] = {p: np.zeros(L, dtype=np.float32) for p, L in total_len.items()}
-            mask_flat:   Dict[str, np.ndarray] = {p: np.zeros(L, dtype=bool)  for p, L in total_len.items()}
+            # 🔧 FIX: Use fill_missing_with_baseline if provided (respects BT_PARAMETER_COMPLETION setting)
+            params_flat: Dict[str, np.ndarray] = {}
+            mask_flat:   Dict[str, np.ndarray] = {}
+            for p, L in total_len.items():
+                if fill_missing_with_baseline is not None and p in fill_missing_with_baseline:
+                    # Use baseline parameters for initialization
+                    base_param = fill_missing_with_baseline[p]
+                    if hasattr(base_param, 'detach'):
+                        base_flat = base_param.detach().cpu().numpy().astype(np.float32).flatten()
+                    else:
+                        base_flat = np.array(base_param, dtype=np.float32).flatten()
+                    # Ensure correct size
+                    if base_flat.size >= L:
+                        params_flat[p] = base_flat[:L].copy()
+                    else:
+                        params_flat[p] = np.zeros(L, dtype=np.float32)
+                        params_flat[p][:base_flat.size] = base_flat
+                else:
+                    # Fallback to zeros if no baseline provided
+                    params_flat[p] = np.zeros(L, dtype=np.float32)
+                mask_flat[p] = np.zeros(L, dtype=bool)
 
             # 6) 逐 chunk 反序列化后，按 parts_info 切片填充（同时标记 mask）
             #    注意：反序列化→numpy：避免多余 copy
@@ -2099,7 +2151,7 @@ class ChunkManager:
                         logger.info(f"[ChunkManager] {pname}: No data received, filled with zeros")
 
                     elif actual_size < expected_size:
-                        # Partial data received - pad with zeros
+                        # Partial data received - pad (baseline already applied in initialization if provided)
                         padded_flat = np.zeros(expected_size, dtype=flat.dtype)
                         padded_flat[:actual_size] = flat
                         padded_mask = np.zeros(expected_size, dtype=bool)
@@ -2108,8 +2160,9 @@ class ChunkManager:
                         params[pname] = torch.from_numpy(padded_flat.reshape(shp))
                         mask[pname] = torch.from_numpy(padded_mask.reshape(shp))
                         coverage[pname] = float(actual_size) / float(expected_size)
+                        fill_strategy = "baseline" if fill_missing_with_baseline is not None else "zeros"
                         logger.info(f"[ChunkManager] {pname}: Partial data ({actual_size}/{expected_size}), "
-                                   f"filled missing with zeros, coverage={coverage[pname]:.3f}")
+                                   f"filled missing with {fill_strategy}, coverage={coverage[pname]:.3f}")
                     else:
                         # More data than expected - truncate
                         truncated_flat = flat[:expected_size]
@@ -2146,7 +2199,179 @@ class ChunkManager:
             logger.error(f"[ChunkManager] reconstruct failed: {e}")
             import traceback; logger.debug(traceback.format_exc())
             return None
-    
+
+    def batch_prefetch_for_reconstruction(self, client_ids: List[int], round_num: int) -> Dict:
+        """
+        🚀 BATCH PREFETCH: Fetch all data needed for reconstruction in ONE database access.
+
+        Reduces SQLite contention from O(N) connections to O(1) connections.
+
+        Returns:
+            Dict with 'parts_info_map', 'client_chunks', 'local_chunks', 'prefetched_data'
+        """
+        result = {
+            'parts_info_map': {},
+            'client_chunks': {},
+            'local_chunks': None,
+            'prefetched_data': {}
+        }
+
+        try:
+            metadata_db_path = self._get_round_db_path(round_num, 'metadata')
+            bt_db_path = self._get_round_db_path(round_num, 'bt')
+
+            if not os.path.exists(metadata_db_path):
+                return result
+
+            # 1) Fetch parts_info + local_chunks from metadata DB (ONE connection)
+            with closing(self._get_optimized_connection(round_num, 'metadata')) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT chunk_id, parts_info FROM chunk_metadata")
+                for chunk_id, parts_json in cur.fetchall():
+                    result['parts_info_map'][chunk_id] = json.loads(parts_json)
+
+                if self.client_id in client_ids:
+                    cur.execute("SELECT chunk_id, chunk_hash FROM chunk_metadata ORDER BY chunk_id")
+                    result['local_chunks'] = cur.fetchall()
+
+            # 2) Fetch all bt_chunks for remote clients (ONE connection)
+            remote_client_ids = [cid for cid in client_ids if cid != self.client_id]
+            if remote_client_ids and os.path.exists(bt_db_path):
+                with closing(self._get_optimized_connection(round_num, 'bt')) as conn:
+                    cur = conn.cursor()
+                    placeholders = ','.join(['?'] * len(remote_client_ids))
+                    cur.execute(f"""
+                        SELECT source_client_id, chunk_id, chunk_hash
+                        FROM bt_chunks
+                        WHERE source_client_id IN ({placeholders})
+                        ORDER BY source_client_id, chunk_id
+                    """, tuple(remote_client_ids))
+
+                    for source_client_id, chunk_id, chunk_hash in cur.fetchall():
+                        if source_client_id not in result['client_chunks']:
+                            result['client_chunks'][source_client_id] = []
+                        result['client_chunks'][source_client_id].append((chunk_id, chunk_hash))
+
+            # 3) Prefetch chunk bytes from cache/queue (memory ops, no DB)
+            for client_id in client_ids:
+                if client_id == self.client_id and result['local_chunks']:
+                    chunk_list = result['local_chunks']
+                else:
+                    chunk_list = result['client_chunks'].get(client_id, [])
+
+                for chunk_id, _ in chunk_list:
+                    data = None
+                    if hasattr(self, 'chunk_cache') and self.chunk_cache:
+                        data = self.chunk_cache.get_chunk_data(round_num, client_id, chunk_id)
+                    if data is None and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
+                        data = self.chunk_write_queue.search_pending_chunk(round_num, client_id, chunk_id)
+                    if data is not None:
+                        result['prefetched_data'][(client_id, chunk_id)] = data
+
+            logger.info(f"[ChunkManager] Batch prefetch: {len(result['parts_info_map'])} parts_info, "
+                       f"{len(remote_client_ids)} remote clients, {len(result['prefetched_data'])} chunks")
+            return result
+
+        except Exception as e:
+            logger.error(f"[ChunkManager] Batch prefetch failed: {e}")
+            return result
+
+    def reconstruct_from_prefetched(self, client_id: int, round_num: int,
+                                     baseline_params: Dict, prefetched: Dict) -> Optional[tuple]:
+        """
+        🚀 FAST RECONSTRUCTION: Use prefetched data, NO database access.
+        """
+        try:
+            # Get chunk list from prefetched data
+            if client_id == self.client_id:
+                chunk_list = prefetched.get('local_chunks', [])
+            else:
+                chunk_list = prefetched.get('client_chunks', {}).get(client_id, [])
+
+            if not chunk_list:
+                filtered = self._filter_personalized_params(baseline_params)
+                return filtered, {k: 0.0 for k in filtered.keys()}
+
+            # Get chunk bytes from prefetched data
+            prefetched_data = prefetched.get('prefetched_data', {})
+            chunk_bytes_list = []
+            for chunk_id, _ in chunk_list:
+                data = prefetched_data.get((client_id, chunk_id))
+                if data is not None:
+                    chunk_bytes_list.append((chunk_id, data))
+
+            if not chunk_bytes_list:
+                filtered = self._filter_personalized_params(baseline_params)
+                return filtered, {k: 0.0 for k in filtered.keys()}
+
+            chunk_bytes_list.sort(key=lambda x: x[0])
+            parts_info_map = prefetched.get('parts_info_map', {})
+
+            # Reconstruction logic (same as _compensate_from_chunks_fast but no DB)
+            total_len, covered_len, shapes = {}, {}, {}
+            cid_segs = {}
+
+            for cid, raw in chunk_bytes_list:
+                parts_info = parts_info_map.get(cid, {})
+                pos = 0
+                for pname, parts in parts_info.items():
+                    for s, e, shape in parts:
+                        if pname not in shapes and shape:
+                            shapes[pname] = tuple(shape)
+                        total_len[pname] = max(total_len.get(pname, 0), e)
+                        covered_len[pname] = covered_len.get(pname, 0) + (e - s)
+                        cid_segs.setdefault(cid, []).append((pname, pos, s, e))
+                        pos += (e - s)
+
+            if not total_len:
+                filtered = self._filter_personalized_params(baseline_params)
+                return filtered, {k: 0.0 for k in filtered.keys()}
+
+            # Prepare output
+            out = {}
+            for pname, L in total_len.items():
+                base = baseline_params.get(pname)
+                if base is not None:
+                    base_t = (base.detach().cpu().to(torch.float32)
+                              if hasattr(base, 'detach') else torch.tensor(base, dtype=torch.float32))
+                    out[pname] = base_t.view(-1).clone()
+                else:
+                    out[pname] = torch.zeros(L, dtype=torch.float32)
+
+            # Fill chunks
+            raw_map = dict(chunk_bytes_list)
+            for cid, _ in chunk_bytes_list:
+                np_chunk = pickle.loads(raw_map[cid])
+                for pname, pos0, s, e in cid_segs.get(cid, []):
+                    size = e - s
+                    if 0 <= pos0 and pos0 + size <= np_chunk.size:
+                        out[pname][s:e] = torch.from_numpy(np_chunk[pos0:pos0+size]).to(torch.float32)
+
+            # Reshape and coverage
+            final, coverage = {}, {}
+            for pname, flat in out.items():
+                shp = shapes.get(pname, (flat.numel(),))
+                final[pname] = flat.view(*shp)
+                total_e = total_len.get(pname, 0)
+                covered_e = covered_len.get(pname, 0)
+                coverage[pname] = float(covered_e) / float(total_e) if total_e > 0 else 0.0
+
+            # Add missing baseline params
+            filtered_baseline = self._filter_personalized_params(baseline_params)
+            for pname, base in filtered_baseline.items():
+                if pname not in final:
+                    final[pname] = (base.detach().cpu().to(torch.float32)
+                                    if hasattr(base, 'detach') else torch.tensor(base, dtype=torch.float32))
+                    coverage[pname] = 0.0
+
+            avg_cov = sum(coverage.values()) / len(coverage) if coverage else 0.0
+            logger.info(f"[ChunkManager] Client {client_id}: Prefetched reconstruction, avg coverage: {avg_cov:.3f}")
+            return final, coverage
+
+        except Exception as e:
+            logger.error(f"[ChunkManager] Prefetched reconstruction failed for client {client_id}: {e}")
+            return None
+
     def reconstruct_with_coverage_info(self, client_id: int, round_num: int, baseline_params: Optional[Dict] = None) -> Optional[tuple]:
         """
         🔧 NEW: Reconstruction that preserves coverage information for post-aggregation compensation
@@ -2182,10 +2407,10 @@ class ChunkManager:
             logger.warning(f"[ChunkManager] Client {client_id}: No bittorrent config found (has_cfg={has_cfg}, has_bittorrent={has_bittorrent}), defaulting to compensation enabled")
 
         if not enable_compensation:
-            # Use the standard reconstruction method without baseline (no compensation needed)
-            # Pass None for baseline to avoid shape mismatch - function will fill missing data with zeros
-            logger.info(f"[ChunkManager] Client {client_id}: Using FAST PATH (compensation disabled)")
-            reconstruction = self.reconstruct_model_from_client_chunks(client_id, round_num, fill_missing_with_baseline=None)
+            # 🔧 FIX: Even without compensation, still use baseline_params for filling (respects BT_PARAMETER_COMPLETION)
+            # Compensation and backfill strategy are independent settings
+            logger.info(f"[ChunkManager] Client {client_id}: Using FAST PATH (compensation disabled, backfill with baseline)")
+            reconstruction = self.reconstruct_model_from_client_chunks(client_id, round_num, fill_missing_with_baseline=baseline_params)
             if reconstruction:
                 logger.info(f"[ChunkManager] Client {client_id}: Reconstruction completed without compensation")
                 return reconstruction.params, reconstruction.coverage

@@ -1798,23 +1798,35 @@ class Client(BaseClient):
             # Get expected sample sizes for all clients (real data split info)
             expected_sample_sizes = self._get_expected_client_sample_sizes(round_num)
             
-            # Calculate available clients' actual sample sizes
+            # 🚀 DB-FREE SAMPLE SIZE ASSIGNMENT: Avoid SQLite busy_timeout blocking
+            # The available_clients list already confirms these clients have chunks,
+            # so querying DB again with SELECT COUNT(*) is redundant and causes blocking
+            # under high concurrency due to busy_timeout=30s wait.
+
+            # Compute local estimate once (avoids repeated DB access)
+            local_est = self.chunk_manager._get_local_sample_size()
+            if local_est is None:
+                local_est = 128  # fallback consistent with chunk_manager fallback path
+
             available_sample_sizes = {}
             total_available_samples = 0
-            
+
             for client_id in available_clients:
                 try:
-                    sample_size = self.chunk_manager.get_client_sample_size(client_id, round_num)
-                    if sample_size is not None:
-                        available_sample_sizes[client_id] = sample_size
-                        total_available_samples += sample_size
+                    if expected_sample_sizes and client_id in expected_sample_sizes:
+                        sample_size = int(expected_sample_sizes[client_id])
+                    else:
+                        sample_size = int(local_est)
+
+                    available_sample_sizes[client_id] = sample_size
+                    total_available_samples += sample_size
                 except Exception as e:
-                    logger.warning(f"[BT-FL] Client {self.ID}: Failed to get sample size for client {client_id}: {e}")
-            
+                    logger.warning(f"[BT-FL] Client {self.ID}: Failed to set sample size for client {client_id}: {e}")
+
             if not available_sample_sizes:
                 logger.error(f"[BT-FL] Client {self.ID}: No valid sample sizes found")
                 return None
-            
+
             # Expected total clients (from config or estimated from expected_sample_sizes)
             if expected_sample_sizes:
                 expected_total_clients = len(expected_sample_sizes)
@@ -1822,18 +1834,21 @@ class Client(BaseClient):
             else:
                 expected_total_clients = getattr(self._cfg.federate, 'sample_client_num', len(available_clients))
                 avg_sample_size = total_available_samples / len(available_sample_sizes)
-                logger.info(f"[BT-FL] Client {self.ID}: Using average sample size estimation: {avg_sample_size:.1f}")
-            
-            # Process available clients with parameter completion
+                logger.info(f"[BT-FL] Client {self.ID}: DB-free sample size estimation: local_est={local_est}, avg={avg_sample_size:.1f}")
+
+            # 🚀 BATCH PREFETCH: Fetch all data in 2 DB connections instead of 2*N connections
+            prefetched = self.chunk_manager.batch_prefetch_for_reconstruction(available_clients, round_num)
+
+            # Process available clients with prefetched data (NO database access in loop)
             for client_id in available_clients:
                 try:
-                    # 🔧 CRITICAL FIX: Get model params WITH coverage information
-                    result = self.chunk_manager.reconstruct_with_coverage_info(client_id, round_num, baseline_params)
+                    # 🚀 Use prefetched data - no DB access
+                    result = self.chunk_manager.reconstruct_from_prefetched(client_id, round_num, baseline_params, prefetched)
                     sample_size = available_sample_sizes.get(client_id)
-                    
+
                     if result is not None and sample_size is not None:
                         model_params, coverage_ratios = result
-                        
+
                         # Parameter completion and BN filtering now handled in chunk_manager
                         # Just ensure device/dtype consistency for aggregator
                         normalized_params = {}
@@ -1842,13 +1857,13 @@ class Client(BaseClient):
                                 normalized_params[param_name] = param_value.cpu().float()
                             else:
                                 normalized_params[param_name] = param_value
-                        
+
                         # 🔧 CRITICAL FIX: Preserve client_id AND coverage_ratios for real compensation
                         completed_client_models.append((sample_size, normalized_params, client_id, coverage_ratios))
                         logger.debug(f"[BT-FL] Client {self.ID}: Completed model for client {client_id} with {sample_size} samples and coverage info")
                     else:
                         logger.warning(f"[BT-FL] Client {self.ID}: Failed to reconstruct model for available client {client_id}")
-                        
+
                 except Exception as e:
                     logger.error(f"[BT-FL] Client {self.ID}: Failed to process client {client_id}: {e}")
             
