@@ -104,9 +104,11 @@ class StreamingChannel:
             logger.debug(f"[StreamChannel] 🔧 Single-channel mode for peer {self.peer_id} - Legacy compatibility")
 
         # 🚀 Optimization 1: Stream pipeline reuse - Create dedicated queues and buffers
-        self.control_request_queue = queue.Queue(maxsize=500)  # Control message queue
-        self.upload_request_queue = queue.PriorityQueue(maxsize=500)   # 🎯 Upload priority queue (importance+rarity sorting)
-        self.download_request_queue = queue.PriorityQueue(maxsize=500) # 🎯 Download priority queue (importance+rarity sorting)
+        # 🔧 MEMORY TEST: Reduced queue sizes to limit memory usage
+        # upload_request_queue stores full chunk data (~3MB each), 16 × 3MB = 48MB per peer max
+        self.control_request_queue = queue.Queue(maxsize=100)  # Control message queue (small messages)
+        self.upload_request_queue = queue.PriorityQueue(maxsize=16)   # 🎯 Upload priority queue - REDUCED from 500
+        self.download_request_queue = queue.PriorityQueue(maxsize=16) # 🎯 Download priority queue - REDUCED from 500
 
         # 🚀 Optimization 2: Performance monitoring and statistics
         self.control_msg_count = 0
@@ -1115,7 +1117,36 @@ class StreamingChannel:
                 logger.debug(f"[StreamChannel] Closed data channel to peer {self.peer_id}")
             except:
                 pass
-            
+
+        # 🔧 MEMORY LEAK FIX: Clear all queues to release chunk data references
+        # Each request in upload_request_queue contains full chunk_data (~3MB)
+        # Without clearing, these references persist and cause memory growth between rounds
+        queues_to_clear = [
+            ('request_queue', getattr(self, 'request_queue', None)),
+            ('upload_request_queue', getattr(self, 'upload_request_queue', None)),
+            ('download_request_queue', getattr(self, 'download_request_queue', None)),
+            ('control_request_queue', getattr(self, 'control_request_queue', None)),
+            ('download_response_queue', getattr(self, 'download_response_queue', None)),
+        ]
+
+        total_cleared = 0
+        for queue_name, q in queues_to_clear:
+            if q is not None:
+                cleared = 0
+                try:
+                    while not q.empty():
+                        try:
+                            q.get_nowait()
+                            cleared += 1
+                        except:
+                            break
+                except:
+                    pass
+                total_cleared += cleared
+
+        if total_cleared > 0:
+            logger.debug(f"[StreamChannel] 🔧 Memory cleanup: Cleared {total_cleared} items from queues for peer {self.peer_id}")
+
     def get_stats(self):
         """Get channel statistics"""
         return {
@@ -1334,16 +1365,45 @@ class StreamingChannelManager:
         """Get list of all active peers"""
         return [peer_id for peer_id, channel in self.channels.items() if channel.is_active]
         
+    def clear_all_queues(self):
+        """
+        🔧 MEMORY LEAK FIX: Clear all queues in all channels WITHOUT closing connections.
+        This releases chunk data references between rounds while keeping channels alive.
+        """
+        total_cleared = 0
+        for peer_id, channel in self.channels.items():
+            queues_to_clear = [
+                getattr(channel, 'request_queue', None),
+                getattr(channel, 'upload_request_queue', None),
+                getattr(channel, 'download_request_queue', None),
+                getattr(channel, 'control_request_queue', None),
+                getattr(channel, 'download_response_queue', None),
+            ]
+            for q in queues_to_clear:
+                if q is not None:
+                    try:
+                        while not q.empty():
+                            try:
+                                q.get_nowait()
+                                total_cleared += 1
+                            except:
+                                break
+                    except:
+                        pass
+        if total_cleared > 0:
+            logger.info(f"[StreamingManager] Client {self.client_id}: 🔧 Cleared {total_cleared} items from channel queues")
+        return total_cleared
+
     def close_all_channels(self):
         """Close all streaming channels"""
         logger.debug(f"[StreamingManager] Client {self.client_id}: Closing all streaming channels")
-        
+
         for peer_id, channel in self.channels.items():
             channel.close()
-            
+
         self.channels.clear()
         self.server_stubs.clear()
-        
+
         logger.debug(f"[StreamingManager] Client {self.client_id}: All streaming channels closed")
         
     def get_channel_stats(self):

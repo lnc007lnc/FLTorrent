@@ -37,73 +37,120 @@ class ChunkWriteQueue:
         self.write_queue = queue.Queue(maxsize=queue_size)
         self.writer_thread = None
         self.is_running = False
-        
-        
+
+        # 🚀 DEADLOCK FIX: Thread safety for start/stop operations
+        self._state_lock = threading.RLock()
+        self._stopping = False
+
+
     def start_writer_thread(self):
-        """Start the single writer thread"""
-        if self.is_running:
-            return
-            
-        self.is_running = True
-        self.writer_thread = threading.Thread(
-            target=self._writer_loop,
-            daemon=True,
-            name=f"ChunkWriter-{self.client_id}"
-        )
-        self.writer_thread.start()
-        logger.debug(f"[ChunkWriteQueue] Started single writer thread for client {self.client_id}")
+        """Start the single writer thread (thread-safe)"""
+        with self._state_lock:
+            # 🚀 DEADLOCK FIX: Don't start if stopping in progress
+            if self._stopping:
+                logger.debug(f"[ChunkWriteQueue] Cannot start writer - stop in progress for client {self.client_id}")
+                return
+            # Check if already running and thread is alive
+            if self.writer_thread and self.writer_thread.is_alive():
+                self.is_running = True
+                return
+            if self.is_running:
+                return
+
+            self.is_running = True
+            t = threading.Thread(
+                target=self._writer_loop,
+                daemon=True,
+                name=f"ChunkWriter-{self.client_id}"
+            )
+            self.writer_thread = t
+            t.start()
+            logger.debug(f"[ChunkWriteQueue] Started single writer thread for client {self.client_id}")
         
     def stop_writer_thread(self, force_immediate=False, max_wait_time=30.0):
         """
         🚀 Graceful shutdown of write thread: wait for queue processing to complete, avoid data loss
+
+        🚀 DEADLOCK FIX: Capture old_thread reference before any state changes to prevent
+        race condition where callback thread overwrites self.writer_thread during join().
+
         Args:
             force_immediate: whether to force immediate shutdown (emergency case)
-            max_wait_time: maximum wait time (seconds), ignored in graceful mode
+            max_wait_time: maximum wait time (seconds)
         """
-        if not self.is_running:
-            return
-            
-        queue_size = self.write_queue.qsize()
+        # 🚀 DEADLOCK FIX: Atomically set stopping state and capture thread reference
+        with self._state_lock:
+            if not self.is_running and not (self.writer_thread and self.writer_thread.is_alive()):
+                return
+            self._stopping = True
+            self.is_running = False
+            old_thread = self.writer_thread  # Capture reference BEFORE any callback can overwrite it
+            queue_size = self.write_queue.qsize()
+
         if queue_size > 0 and not force_immediate:
             logger.debug(f"[ChunkWriteQueue] Graceful shutdown: waiting for {queue_size} chunks to complete writing...")
-        
-        self.is_running = False
-        
+
+        # 🚀 DEADLOCK FIX: Use non-blocking put with timeout to avoid blocking on full queue
+        deadline = time.time() + max_wait_time
+        sentinel_sent = False
+        while not sentinel_sent:
+            try:
+                self.write_queue.put_nowait(None)  # send shutdown signal (non-blocking)
+                sentinel_sent = True
+            except queue.Full:
+                if time.time() >= deadline:
+                    logger.warning(f"[ChunkWriteQueue] Timeout sending shutdown signal, queue still full")
+                    break
+                time.sleep(0.01)
+
         if force_immediate:
             # Emergency shutdown: stop immediately
-            self.write_queue.put(None)  # send shutdown signal
-            if self.writer_thread and self.writer_thread.is_alive():
-                self.writer_thread.join(timeout=2.0)
+            if old_thread and old_thread.is_alive():
+                old_thread.join(timeout=2.0)
             logger.warning(f"[ChunkWriteQueue] Force close write thread, may lose {queue_size} chunks")
         else:
-            # Graceful shutdown: wait for queue to be completely empty
-            self.write_queue.put(None)  # send shutdown signal
-            
-            if self.writer_thread and self.writer_thread.is_alive():
+            # Graceful shutdown: wait for old_thread (NOT self.writer_thread which may be overwritten)
+            if old_thread and old_thread.is_alive():
+                start_time = time.time()
                 if queue_size > 0:
-                    import time
-                    start_time = time.time()
-                    logger.debug(f"[ChunkWriteQueue] Waiting for all {queue_size} chunks to be written (unlimited wait)...")
-                    self.writer_thread.join()  # Wait indefinitely until thread completes
-                    elapsed_time = time.time() - start_time
-                    logger.info(f"[ChunkWriteQueue] Background write thread completed in {elapsed_time:.2f} seconds, processed {queue_size} chunks")
+                    logger.debug(f"[ChunkWriteQueue] Waiting for all {queue_size} chunks to be written (max {max_wait_time}s)...")
                 else:
                     logger.debug(f"[ChunkWriteQueue] Waiting for write thread to complete...")
-                    self.writer_thread.join(timeout=2.0)
-                    logger.debug(f"[ChunkWriteQueue] Background write thread graceful shutdown completed")
-            
+                # 🚀 DEADLOCK FIX: Use timeout instead of indefinite wait
+                old_thread.join(timeout=max_wait_time)
+                elapsed_time = time.time() - start_time
+                if old_thread.is_alive():
+                    logger.warning(f"[ChunkWriteQueue] Write thread still alive after {elapsed_time:.2f}s timeout")
+                else:
+                    logger.info(f"[ChunkWriteQueue] Background write thread completed in {elapsed_time:.2f} seconds, processed {queue_size} chunks")
+
+        # 🚀 DEADLOCK FIX: Reset stopping state (must be done even if thread didn't fully stop)
+        with self._state_lock:
+            # Only clear writer_thread if it hasn't been replaced by a new thread
+            if self.writer_thread is old_thread:
+                self.writer_thread = None
+            self._stopping = False
+
         logger.debug(f"[ChunkWriteQueue] Write thread stopped for client {self.client_id}")
         
     def enqueue_chunk_write(self, round_num: int, source_client_id: int, chunk_id: int,
                           chunk_data: bytes, checksum: str, timestamp: float) -> bool:
         """Enqueue chunk write operation - NON-BLOCKING
 
+        🚀 DEADLOCK FIX: Callback threads must NEVER start/stop writer thread.
+        If writer is not running or stopping, reject the enqueue - caller will retry via timeout.
+
         Returns:
-            bool: True if successfully enqueued, False if queue is full (caller should NOT mark as processed)
+            bool: True if successfully enqueued, False if not running/stopping/full
         """
-        if not self.is_running:
-            logger.warning(f"[ChunkWriteQueue] Writer thread not running, starting...")
-            self.start_writer_thread()
+        # 🚀 DEADLOCK FIX: Check state with lock, never auto-start from callback thread
+        with self._state_lock:
+            if self._stopping:
+                logger.debug(f"[ChunkWriteQueue] Rejecting chunk {source_client_id}:{chunk_id} - writer stopping")
+                return False
+            if not self.is_running or not (self.writer_thread and self.writer_thread.is_alive()):
+                logger.debug(f"[ChunkWriteQueue] Rejecting chunk {source_client_id}:{chunk_id} - writer not running")
+                return False
 
         write_task = {
             'type': 'chunk_write',
@@ -129,54 +176,62 @@ class ChunkWriteQueue:
     def search_pending_chunk(self, round_num: int, source_client_id: int, chunk_id: int):
         """
         🚀 NEW: Search for pending chunk data in write queue
+
+        🔧 MEMORY FIX: Removed deepcopy which caused 1.5GB+ temporary allocation per call!
+        Each task contains ~3MB chunk_data, queue has 500 items = 1.5GB copied per search.
+        Now we just iterate through items without copying, returning original reference.
+
         Args:
             round_num: round number
             source_client_id: source client ID
             chunk_id: chunk ID
         Returns:
-            chunk_bytes: if found return bytes directly (avoid CPU-intensive deserialization), otherwise return None
+            chunk_bytes: if found return bytes reference directly, otherwise return None
         """
         if not self.is_running or self.write_queue.empty():
             return None
-            
-        # Create queue copy for safe traversal (avoid concurrent modifications)
-        import copy
+
         try:
-            # Get queue snapshot (thread-safe)
-            queue_snapshot = []
-            temp_queue = queue.Queue()
-            
-            # Transfer tasks from queue to temporary queue while copying to snapshot
+            # 🔧 MEMORY FIX: Don't use deepcopy! Just iterate through queue items
+            # Only store references, not copies of the 3MB chunk_data
+            found_chunk_data = None
+            items_to_restore = []
+
+            # Transfer items out of queue, check each one, then restore
             while not self.write_queue.empty():
                 try:
                     task = self.write_queue.get_nowait()
-                    queue_snapshot.append(copy.deepcopy(task))
-                    temp_queue.put(task)
+                    if task is None:
+                        # Sentinel for shutdown, put it back
+                        items_to_restore.append(task)
+                        continue
+
+                    items_to_restore.append(task)  # Store reference, NOT copy
+
+                    # Check if this is the chunk we're looking for (NO deepcopy!)
+                    if (found_chunk_data is None and  # Only match first occurrence
+                        task.get('type') == 'chunk_write' and
+                        task.get('round_num') == round_num and
+                        task.get('source_client_id') == source_client_id and
+                        task.get('chunk_id') == chunk_id):
+
+                        # Found matching chunk - return reference to original bytes, no copy
+                        found_chunk_data = task['chunk_data']
+                        logger.debug(f"[ChunkWriteQueue] 🎯 Found chunk in write queue: {source_client_id}:{chunk_id}")
+
                 except queue.Empty:
                     break
-            
-            # Put tasks back to original queue
-            while not temp_queue.empty():
+
+            # Restore all items back to queue in original order
+            for task in items_to_restore:
                 try:
-                    task = temp_queue.get_nowait()
-                    self.write_queue.put(task)
-                except queue.Empty:
+                    self.write_queue.put_nowait(task)
+                except queue.Full:
+                    logger.error(f"[ChunkWriteQueue] Queue full during restore, item lost!")
                     break
-            
-            # Search for matching chunk in snapshot
-            for task in queue_snapshot:
-                if (task.get('type') == 'chunk_write' and
-                    task.get('round_num') == round_num and
-                    task.get('source_client_id') == source_client_id and
-                    task.get('chunk_id') == chunk_id):
-                    
-                    # Found matching chunk, return bytes directly to avoid CPU overhead
-                    chunk_bytes = task['chunk_data']
-                    logger.debug(f"[ChunkWriteQueue] 🎯 Found chunk in write queue: {source_client_id}:{chunk_id}")
-                    return chunk_bytes
-            
-            return None
-            
+
+            return found_chunk_data
+
         except Exception as e:
             logger.error(f"[ChunkWriteQueue] Error searching pending chunk: {e}")
             return None
@@ -193,6 +248,8 @@ class ChunkWriteQueue:
                 
                 if task is None:  # Sentinel for shutdown
                     logger.debug(f"[ChunkWriteQueue] Received shutdown signal, remaining queue: {self.write_queue.qsize()}")
+                    # 🚀 DEADLOCK FIX: Must call task_done() for sentinel to prevent queue.join() deadlock
+                    self.write_queue.task_done()
                     # Do not break immediately, continue processing remaining tasks
                     if self.write_queue.empty():
                         break
@@ -371,13 +428,15 @@ class BitTorrentManager:
         # 🚀 DEADLOCK FIX S1: Upload task queue + worker thread
         # Purpose: Make handle_request() non-blocking by moving DB read + send to background worker
         # This breaks the deadlock cycle where callback threads block on DB/send operations
-        self._upload_task_queue = queue.Queue(maxsize=10000)
+        # 🔧 MEMORY TEST: Reduced from 10000 to 100 to limit pending upload tasks
+        self._upload_task_queue = queue.Queue(maxsize=100)
         self._upload_worker_thread = None  # Will be started in start_exchange()
 
         # 🚀 EVENT-DRIVEN: Request trigger queue
         # Callbacks put chunk_keys here, main loop processes them to send REQUESTs
         # This enables event-driven requests instead of busy-polling
-        self._request_trigger_queue = queue.Queue(maxsize=10000)
+        # 🔧 MEMORY TEST: Reduced from 10000 to 500
+        self._request_trigger_queue = queue.Queue(maxsize=500)
 
         logger.debug(f"[BT] BitTorrentManager initialized for client {client_id}, round {round_num}")
         logger.debug(f"[BT] Client {client_id}: Concurrent settings - Active requests: {self.MAX_ACTIVE_REQUESTS}, Pending queue: {self.MAX_PENDING_QUEUE}, Upload slots: {self.MAX_UPLOAD_SLOTS}")
@@ -1794,6 +1853,44 @@ class BitTorrentManager:
         self.own_chunks_count = 0
         self.expected_total_chunks = 0
         logger.debug(f"[BT] Client {self.client_id}: Cleared memory counter - {received_count} received chunks")
+
+        # 🔧 MEMORY LEAK FIX: Clear own_chunks_set to prevent memory growth between rounds
+        # This set stores (round_num, source_id, chunk_id) tuples for all own chunks
+        own_count = len(self.own_chunks_set)
+        self.own_chunks_set.clear()
+        logger.debug(f"[BT] Client {self.client_id}: Cleared own_chunks_set - {own_count} entries")
+
+        # 🔧 MEMORY LEAK FIX: Clear additional data structures that accumulate between rounds
+        # pending_queue stores chunk_key tuples waiting to be requested
+        if hasattr(self, 'pending_queue'):
+            pending_count = len(self.pending_queue)
+            self.pending_queue.clear()
+            if pending_count > 0:
+                logger.debug(f"[BT] Client {self.client_id}: Cleared pending_queue - {pending_count} entries")
+
+        # endgame_requests stores {chunk_key: [peer_id_list]} for parallel requests
+        if hasattr(self, 'endgame_requests'):
+            endgame_count = len(self.endgame_requests)
+            self.endgame_requests.clear()
+            if endgame_count > 0:
+                logger.debug(f"[BT] Client {self.client_id}: Cleared endgame_requests - {endgame_count} entries")
+
+        # _importance_cache stores {round_num: {chunk_id: importance_score}}
+        if hasattr(self, '_importance_cache'):
+            cache_count = len(self._importance_cache)
+            self._importance_cache.clear()
+            if cache_count > 0:
+                logger.debug(f"[BT] Client {self.client_id}: Cleared _importance_cache - {cache_count} rounds")
+
+        if hasattr(self, '_cache_initialized'):
+            self._cache_initialized.clear()
+
+        # peer_importance_scores stores {peer_id: {chunk_key: importance_score}}
+        if hasattr(self, 'peer_importance_scores'):
+            peer_count = len(self.peer_importance_scores)
+            self.peer_importance_scores.clear()
+            if peer_count > 0:
+                logger.debug(f"[BT] Client {self.client_id}: Cleared peer_importance_scores - {peer_count} peers")
 
         # 🔧 CRITICAL FIX: Clear streaming channel deduplication sets
         if self.streaming_manager:

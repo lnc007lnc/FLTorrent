@@ -213,10 +213,15 @@ class ChunkManager:
         self.last_db_mtime = 0
         
         logger.info(f"📊 Initialize round-based chunk database system for node {client_id}: {self.db_dir}")
-        
-        # If callback function is provided, start monitoring
-        if change_callback:
-            self.start_monitoring()
+
+        # 🔧 DEADLOCK FIX: Disabled ChunkMonitor background thread
+        # The background monitoring thread causes SQLite lock contention with main thread:
+        # - MainThread: save_model_chunks() -> _ensure_table_database_exists() -> conn operations
+        # - ChunkMonitor: _monitor_database_changes() -> _get_optimized_connection() -> conn operations
+        # Since save_model_chunks() already calls report_chunk_change() directly (line 912),
+        # the background monitoring is redundant and only causes deadlocks.
+        # if change_callback:
+        #     self.start_monitoring()
         
     @db_retry_on_lock(max_retries=5, base_delay=0.1, max_delay=2.0)
     def _get_optimized_connection(self, round_num: Optional[int] = None, table_type: str = None, _ensure_exists: bool = True):
@@ -2005,7 +2010,8 @@ class ChunkManager:
     def reconstruct_model_from_client_chunks(self, client_id: int, round_num: int, fill_missing_with_baseline: Optional[Dict] = None) -> Optional[Reconstruction]:
         """
         重建：把该 client 在本轮收到/产生的 chunks 还原成参数 + 掩码/coverage。
-        
+        🔧 MEMORY FIX: Streaming reconstruction - loads bytes one chunk at a time
+
         Args:
             client_id: Target client ID
             round_num: Target round
@@ -2040,34 +2046,35 @@ class ChunkManager:
                 logger.info(f"[ChunkManager] client {client_id}, round {round_num}: no chunks")
                 return None
 
-            # 2) 读出 chunk 原始 bytes（cache→queue→缺失）
-            chunk_bytes_list: List[Tuple[int, bytes]] = []
+            # 2) 🔧 MEMORY FIX Phase A: Only collect chunk IDs that have data available
+            # Don't load bytes yet - just check existence and count missing
+            available_chunk_ids = []
             missing = 0
             for chunk_id, _ in local_chunks:
-                data = self.chunk_cache.get_chunk_data(round_num, client_id, chunk_id)
-                if data is None and self.chunk_write_queue:
-                    data = self.chunk_write_queue.search_pending_chunk(round_num, client_id, chunk_id)
-                if data is None:
+                has_data = False
+                if hasattr(self, 'chunk_cache') and self.chunk_cache:
+                    has_data = self.chunk_cache.has_chunk(round_num, client_id, chunk_id)
+                if not has_data and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
+                    has_data = self.chunk_write_queue.search_pending_chunk(round_num, client_id, chunk_id) is not None
+                if has_data:
+                    available_chunk_ids.append(chunk_id)
+                else:
                     missing += 1
-                    continue
-                chunk_bytes_list.append((chunk_id, data))
 
-            if not chunk_bytes_list:
+            if not available_chunk_ids:
                 logger.info(f"[ChunkManager] client {client_id}, round {round_num}: all chunks missing")
                 return None
 
-            chunk_bytes_list.sort(key=lambda x: x[0])
+            available_chunk_ids.sort()
 
             # 3) 一次性取所有 parts_info（减少 per-chunk 查询）
-            chunk_ids = tuple(cid for cid, _ in chunk_bytes_list)
             parts_map: Dict[int, Dict] = {}
-            if chunk_ids:  # Only query if we have chunk IDs
-                with closing(self._get_optimized_connection(round_num, 'metadata')) as conn:
-                    cur = conn.cursor()
-                    q = f"SELECT chunk_id, parts_info FROM chunk_metadata WHERE chunk_id IN ({','.join(['?']*len(chunk_ids))})"
-                    cur.execute(q, chunk_ids)
-                    for cid, parts_json in cur.fetchall():
-                        parts_map[cid] = json.loads(parts_json)
+            with closing(self._get_optimized_connection(round_num, 'metadata')) as conn:
+                cur = conn.cursor()
+                q = f"SELECT chunk_id, parts_info FROM chunk_metadata WHERE chunk_id IN ({','.join(['?']*len(available_chunk_ids))})"
+                cur.execute(q, tuple(available_chunk_ids))
+                for cid, parts_json in cur.fetchall():
+                    parts_map[cid] = json.loads(parts_json)
 
             # 4) 先扫一遍，确定各参数总长度 & 原始形状（由 parts_info 提供的 shape 汇总）
             total_len: Dict[str, int] = {}
@@ -2084,7 +2091,7 @@ class ChunkManager:
             if not total_len:
                 logger.warning(f"[ChunkManager] client {client_id}, round {round_num}: no parameters found in parts_info")
                 return None
-                
+
             # 5) 为每个参数分配扁平数组 & 掩码
             # 🔧 FIX: Use fill_missing_with_baseline if provided (respects BT_PARAMETER_COMPLETION setting)
             params_flat: Dict[str, np.ndarray] = {}
@@ -2108,20 +2115,37 @@ class ChunkManager:
                     params_flat[p] = np.zeros(L, dtype=np.float32)
                 mask_flat[p] = np.zeros(L, dtype=bool)
 
-            # 6) 逐 chunk 反序列化后，按 parts_info 切片填充（同时标记 mask）
-            #    注意：反序列化→numpy：避免多余 copy
-            for cid, raw in chunk_bytes_list:
-                np_chunk = pickle.loads(raw)        # 假设你存的就是 np.ndarray；否则这里可换成内存视图
+            # 6) 🔧 MEMORY FIX Phase B: STREAMING reconstruction - load one chunk at a time
+            # Old approach: chunk_bytes_list held ALL bytes in memory
+            # New approach: for each chunk: load → deserialize → apply → delete immediately
+            for cid in available_chunk_ids:
+                # Load chunk bytes on-demand
+                chunk_bytes = None
+                if hasattr(self, 'chunk_cache') and self.chunk_cache:
+                    chunk_bytes = self.chunk_cache.get_chunk_data(round_num, client_id, cid)
+                if chunk_bytes is None and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
+                    chunk_bytes = self.chunk_write_queue.search_pending_chunk(round_num, client_id, cid)
+
+                if chunk_bytes is None:
+                    missing += 1  # Count as missing if no longer available
+                    continue
+
+                # Deserialize immediately
+                np_chunk = pickle.loads(chunk_bytes)
+                del chunk_bytes  # Release bytes reference immediately
+
+                # Apply to params_flat and mask_flat
                 pos = 0
                 parts_info = parts_map.get(cid, {})
-                # 确保同一 chunk 内部的 parts 与序列化顺序一致（你已有 ORDER BY chunk_id）
                 for pname, parts in parts_info.items():
                     for flat_start, flat_end, _shape in parts:
                         size = flat_end - flat_start
                         slice_ = np_chunk[pos:pos+size]
                         params_flat[pname][flat_start:flat_end] = slice_
-                        mask_flat[pname][flat_start:flat_end]   = True
+                        mask_flat[pname][flat_start:flat_end] = True
                         pos += size
+
+                del np_chunk  # Release deserialized array immediately
 
             # 7) reshape & 转 torch；计算 coverage
             params: Dict[str, torch.Tensor] = {}
@@ -2185,8 +2209,8 @@ class ChunkManager:
             overall_data_coverage = total_received_elements / total_expected_elements if total_expected_elements > 0 else 1.0
             
             logger.info(f"[ChunkManager] client {client_id}, round {round_num}: "
-                        f"reconstructed {len(params)} params")
-            logger.info(f"  Chunk-level: {len(chunk_bytes_list)} chunks available, {missing} chunks missing from cache")
+                        f"reconstructed {len(params)} params (streaming)")
+            logger.info(f"  Chunk-level: {len(available_chunk_ids)} chunks available, {missing} chunks missing from cache")
             logger.info(f"  Data-level: {total_received_elements:,}/{total_expected_elements:,} elements "
                        f"({overall_data_coverage:.1%} coverage)")
             
@@ -2252,24 +2276,17 @@ class ChunkManager:
                             result['client_chunks'][source_client_id] = []
                         result['client_chunks'][source_client_id].append((chunk_id, chunk_hash))
 
-            # 3) Prefetch chunk bytes from cache/queue (memory ops, no DB)
-            for client_id in client_ids:
-                if client_id == self.client_id and result['local_chunks']:
-                    chunk_list = result['local_chunks']
-                else:
-                    chunk_list = result['client_chunks'].get(client_id, [])
+            # 3) 🔧 MEMORY FIX: DO NOT prefetch chunk bytes!
+            # Old approach loaded ALL bytes for ALL clients into prefetched_data
+            # causing O(num_clients × num_chunks × chunk_size) memory explosion
+            #
+            # Now we only prefetch metadata (parts_info, chunk lists)
+            # reconstruct_from_prefetched will load bytes on-demand per chunk
+            #
+            # Note: prefetched_data is kept empty - bytes loaded streaming in reconstruction
 
-                for chunk_id, _ in chunk_list:
-                    data = None
-                    if hasattr(self, 'chunk_cache') and self.chunk_cache:
-                        data = self.chunk_cache.get_chunk_data(round_num, client_id, chunk_id)
-                    if data is None and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
-                        data = self.chunk_write_queue.search_pending_chunk(round_num, client_id, chunk_id)
-                    if data is not None:
-                        result['prefetched_data'][(client_id, chunk_id)] = data
-
-            logger.info(f"[ChunkManager] Batch prefetch: {len(result['parts_info_map'])} parts_info, "
-                       f"{len(remote_client_ids)} remote clients, {len(result['prefetched_data'])} chunks")
+            logger.info(f"[ChunkManager] Batch prefetch (metadata only): {len(result['parts_info_map'])} parts_info, "
+                       f"{len(remote_client_ids)} remote clients, {sum(len(v) for v in result['client_chunks'].values())} total chunks")
             return result
 
         except Exception as e:
@@ -2279,10 +2296,11 @@ class ChunkManager:
     def reconstruct_from_prefetched(self, client_id: int, round_num: int,
                                      baseline_params: Dict, prefetched: Dict) -> Optional[tuple]:
         """
-        🚀 FAST RECONSTRUCTION: Use prefetched data, NO database access.
+        🚀 FAST RECONSTRUCTION: Use prefetched metadata, NO database access.
+        🔧 MEMORY FIX: Streaming reconstruction - loads bytes one chunk at a time
         """
         try:
-            # Get chunk list from prefetched data
+            # Get chunk list from prefetched metadata (no bytes here)
             if client_id == self.client_id:
                 chunk_list = prefetched.get('local_chunks', [])
             else:
@@ -2292,26 +2310,30 @@ class ChunkManager:
                 filtered = self._filter_personalized_params(baseline_params)
                 return filtered, {k: 0.0 for k in filtered.keys()}
 
-            # Get chunk bytes from prefetched data
-            prefetched_data = prefetched.get('prefetched_data', {})
-            chunk_bytes_list = []
+            # 🔧 MEMORY FIX Phase A: Only collect chunk IDs that have data available
+            # Don't load bytes yet - just check existence
+            available_chunk_ids = []
             for chunk_id, _ in chunk_list:
-                data = prefetched_data.get((client_id, chunk_id))
-                if data is not None:
-                    chunk_bytes_list.append((chunk_id, data))
+                has_data = False
+                if hasattr(self, 'chunk_cache') and self.chunk_cache:
+                    has_data = self.chunk_cache.has_chunk(round_num, client_id, chunk_id)
+                if not has_data and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
+                    has_data = self.chunk_write_queue.search_pending_chunk(round_num, client_id, chunk_id) is not None
+                if has_data:
+                    available_chunk_ids.append(chunk_id)
 
-            if not chunk_bytes_list:
+            if not available_chunk_ids:
                 filtered = self._filter_personalized_params(baseline_params)
                 return filtered, {k: 0.0 for k in filtered.keys()}
 
-            chunk_bytes_list.sort(key=lambda x: x[0])
+            available_chunk_ids.sort()
             parts_info_map = prefetched.get('parts_info_map', {})
 
-            # Reconstruction logic (same as _compensate_from_chunks_fast but no DB)
+            # Phase A continued: Compute metadata without loading bytes
             total_len, covered_len, shapes = {}, {}, {}
             cid_segs = {}
 
-            for cid, raw in chunk_bytes_list:
+            for cid in available_chunk_ids:
                 parts_info = parts_info_map.get(cid, {})
                 pos = 0
                 for pname, parts in parts_info.items():
@@ -2327,7 +2349,7 @@ class ChunkManager:
                 filtered = self._filter_personalized_params(baseline_params)
                 return filtered, {k: 0.0 for k in filtered.keys()}
 
-            # Prepare output
+            # Prepare output tensors
             out = {}
             for pname, L in total_len.items():
                 base = baseline_params.get(pname)
@@ -2338,14 +2360,31 @@ class ChunkManager:
                 else:
                     out[pname] = torch.zeros(L, dtype=torch.float32)
 
-            # Fill chunks
-            raw_map = dict(chunk_bytes_list)
-            for cid, _ in chunk_bytes_list:
-                np_chunk = pickle.loads(raw_map[cid])
+            # 🔧 MEMORY FIX Phase B: STREAMING reconstruction - load one chunk at a time
+            # Old approach: raw_map = dict(chunk_bytes_list) held ALL bytes in memory
+            # New approach: for each chunk: load → deserialize → apply → delete immediately
+            for cid in available_chunk_ids:
+                # Load chunk bytes on-demand
+                chunk_bytes = None
+                if hasattr(self, 'chunk_cache') and self.chunk_cache:
+                    chunk_bytes = self.chunk_cache.get_chunk_data(round_num, client_id, cid)
+                if chunk_bytes is None and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
+                    chunk_bytes = self.chunk_write_queue.search_pending_chunk(round_num, client_id, cid)
+
+                if chunk_bytes is None:
+                    continue  # Skip if chunk no longer available
+
+                # Deserialize immediately
+                np_chunk = pickle.loads(chunk_bytes)
+                del chunk_bytes  # Release bytes reference immediately
+
+                # Apply segments to output
                 for pname, pos0, s, e in cid_segs.get(cid, []):
                     size = e - s
                     if 0 <= pos0 and pos0 + size <= np_chunk.size:
                         out[pname][s:e] = torch.from_numpy(np_chunk[pos0:pos0+size]).to(torch.float32)
+
+                del np_chunk  # Release deserialized array immediately
 
             # Reshape and coverage
             final, coverage = {}, {}
@@ -2365,11 +2404,11 @@ class ChunkManager:
                     coverage[pname] = 0.0
 
             avg_cov = sum(coverage.values()) / len(coverage) if coverage else 0.0
-            logger.info(f"[ChunkManager] Client {client_id}: Prefetched reconstruction, avg coverage: {avg_cov:.3f}")
+            logger.info(f"[ChunkManager] Client {client_id}: Streaming reconstruction, avg coverage: {avg_cov:.3f}")
             return final, coverage
 
         except Exception as e:
-            logger.error(f"[ChunkManager] Prefetched reconstruction failed for client {client_id}: {e}")
+            logger.error(f"[ChunkManager] Streaming reconstruction failed for client {client_id}: {e}")
             return None
 
     def reconstruct_with_coverage_info(self, client_id: int, round_num: int, baseline_params: Optional[Dict] = None) -> Optional[tuple]:
@@ -2455,36 +2494,40 @@ class ChunkManager:
             if not local_chunks:
                 return self._filter_personalized_params(baseline_params)
 
-            # 2) 读 bytes（cache→queue）
-            chunk_bytes_list = []
+            # 2) 🔧 MEMORY FIX: Only collect chunk_ids first, NOT bytes
+            # Old approach loaded ALL bytes into chunk_bytes_list causing O(#chunks × chunk_size) memory
+            # New streaming approach: collect IDs first, then process one chunk at a time
+            available_chunk_ids = []
             for cid, _ in local_chunks:
-                data = None
+                # Just check if chunk exists, don't load bytes yet
+                has_data = False
                 if hasattr(self, 'chunk_cache') and self.chunk_cache:
-                    data = self.chunk_cache.get_chunk_data(round_num, client_id, cid)
-                if data is None and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
-                    data = self.chunk_write_queue.search_pending_chunk(round_num, client_id, cid)
-                if data is not None:
-                    chunk_bytes_list.append((cid, data))
-            if not chunk_bytes_list:
-                return self._filter_personalized_params(baseline_params)
-            chunk_bytes_list.sort(key=lambda x: x[0])
+                    has_data = self.chunk_cache.get_chunk_data(round_num, client_id, cid) is not None
+                if not has_data and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
+                    has_data = self.chunk_write_queue.search_pending_chunk(round_num, client_id, cid) is not None
+                if has_data:
+                    available_chunk_ids.append(cid)
 
-            # 3) 取 parts_info
+            if not available_chunk_ids:
+                return self._filter_personalized_params(baseline_params)
+            available_chunk_ids.sort()
+
+            # 3) 取 parts_info (metadata only, no bytes)
             with closing(self._get_optimized_connection(round_num, 'metadata')) as conn:
                 cur = conn.cursor()
-                ids = tuple(cid for cid, _ in chunk_bytes_list)
+                ids = tuple(available_chunk_ids)
                 q = f"SELECT chunk_id, parts_info FROM chunk_metadata WHERE chunk_id IN ({','.join(['?']*len(ids))})"
                 cur.execute(q, ids)
                 parts_map = {cid: json.loads(js) for cid, js in cur.fetchall()}
 
             # 4) 第一遍：统计 total_len / covered_len，并构建 "cid -> 片段列表"
+            # 🔧 MEMORY FIX: This pass only uses metadata, no bytes loaded
             total_len, covered_len, shapes = {}, {}, {}
             cid_segs = {}   # cid -> list[(pname, pos0, s, e)]
-            for cid, raw in chunk_bytes_list:
+            for cid in available_chunk_ids:
                 parts_info = parts_map.get(cid, {})
                 pos = 0
                 for pname, parts in parts_info.items():
-                    # 若 parts 顺序不保证，保险：parts = sorted(parts, key=lambda x: x[0])
                     for s, e, shape in parts:
                         if pname not in shapes and shape:
                             shapes[pname] = tuple(shape)
@@ -2496,31 +2539,47 @@ class ChunkManager:
             if not total_len:
                 return self._filter_personalized_params(baseline_params)
 
-            # 5) 🔧 FIXED: 准备 out 扁平向量，不计算补偿alpha（纯拼接模式）
+            # 5) 准备 out 扁平向量，不计算补偿alpha（纯拼接模式）
             out = {}
             for pname, L in total_len.items():
                 base = baseline_params.get(pname)
                 if base is not None:
-                    base_t = (base.detach().cpu().to(torch.float32) 
+                    base_t = (base.detach().cpu().to(torch.float32)
                               if hasattr(base, 'detach') else torch.tensor(base, dtype=torch.float32))
                     out[pname] = base_t.view(-1).clone()   # 扁平
                 else:
                     # 如果baseline中没有这个参数，创建零向量
                     out[pname] = torch.zeros(L, dtype=torch.float32)
 
-            # 6) 🔧 FIXED: 第二遍：按片段纯拼接，无补偿 (alpha=1)
-            raw_map = dict(chunk_bytes_list)
-            for cid, _ in chunk_bytes_list:
-                np_chunk = pickle.loads(raw_map[cid])          # 反序列化为 np.ndarray (1-D)
+            # 6) 🔧 MEMORY FIX: STREAMING reconstruction - load one chunk at a time
+            # Old approach: raw_map = dict(chunk_bytes_list) held ALL bytes in memory
+            # New approach: for each chunk: load → deserialize → apply → delete immediately
+            for cid in available_chunk_ids:
+                # Load chunk bytes on-demand (not accumulated)
+                chunk_bytes = None
+                if hasattr(self, 'chunk_cache') and self.chunk_cache:
+                    chunk_bytes = self.chunk_cache.get_chunk_data(round_num, client_id, cid)
+                if chunk_bytes is None and hasattr(self, 'chunk_write_queue') and self.chunk_write_queue:
+                    chunk_bytes = self.chunk_write_queue.search_pending_chunk(round_num, client_id, cid)
+
+                if chunk_bytes is None:
+                    continue  # Skip if chunk no longer available
+
+                # Deserialize immediately
+                np_chunk = pickle.loads(chunk_bytes)
+                del chunk_bytes  # Release bytes reference immediately
+
+                # Apply segments to output
                 pos_max = np_chunk.size
                 for pname, pos0, s, e in cid_segs.get(cid, []):
                     size = e - s
-                    # 安全断言：片段长度不要越界
                     assert 0 <= pos0 and pos0 + size <= pos_max, f"Chunk {cid} slice OOB"
                     recv_slice = torch.from_numpy(np_chunk[pos0:pos0+size]).to(torch.float32)
                     flat = out[pname]
                     # 纯拼接：直接覆盖，不做补偿
                     flat[s:e] = recv_slice
+
+                del np_chunk  # Release deserialized array immediately
 
             # 7) 还原形状；计算覆盖率；补齐 baseline 中缺的键
             final = {}

@@ -61,8 +61,15 @@ class ChunkDataCache:
         self.ram_cache_size = 0
         self.cache_lock = threading.RLock()
         
-        # Async disk spooling
+        # Async disk spooling with backpressure to prevent OOM
+        # 🔧 MEMORY FIX: Limit in-flight disk writes to prevent unbounded queue growth
+        # Without backpressure, Future objects hold references to chunk_bytes indefinitely
+        # when submit rate > disk write rate, causing memory to grow unbounded.
+        #
+        # max_inflight calculation: assuming avg chunk ~3MB, allow ~60MB in-flight
+        # This provides buffer for burst writes while preventing OOM
         self.spool_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix=f"ChunkSpool-{client_id}")
+        self.spool_semaphore = threading.Semaphore(20)  # Max 20 chunks in-flight (~60MB)
         
         # Statistics
         self.stats = {
@@ -133,9 +140,19 @@ class ChunkDataCache:
                 self.ram_cache_size += data_size
                 logger.debug(f"[ChunkCache] Client {self.client_id}: Cached chunk {chunk_key} in RAM ({data_size} bytes)")
         
-        # Async spool to disk
-        self.spool_executor.submit(self._spool_to_disk, round_num, source_client_id, chunk_id, data_bytes)
-        
+        # Async spool to disk with backpressure
+        # 🔧 MEMORY FIX: Acquire semaphore before submit to limit in-flight writes
+        # This blocks if too many writes are pending, preventing unbounded memory growth
+        self.spool_semaphore.acquire()
+        try:
+            future = self.spool_executor.submit(self._spool_to_disk, round_num, source_client_id, chunk_id, data_bytes)
+            # Release semaphore when disk write completes (success or failure)
+            future.add_done_callback(lambda _: self.spool_semaphore.release())
+        except Exception:
+            # If submit fails (e.g., executor shutdown), release semaphore immediately
+            self.spool_semaphore.release()
+            raise
+
         self.stats['saves'] += 1
         logger.debug(f"[ChunkCache] Client {self.client_id}: Saved chunk {source_client_id}:{chunk_id} r{round_num}")
     
@@ -350,10 +367,19 @@ class ChunkDataCache:
     def close(self):
         """Shutdown cache system"""
         logger.info(f"[ChunkCache] Client {self.client_id}: Shutting down cache system...")
-        
+
         # Shutdown async spool executor
         self.spool_executor.shutdown(wait=True)
-        
+
         # Log final statistics
         stats = self.get_stats()
         logger.info(f"[ChunkCache] Client {self.client_id}: Final stats: {stats}")
+
+        # 🔧 MEMORY LEAK FIX: Clear RAM cache to release chunk data references
+        with self.cache_lock:
+            cache_count = len(self.ram_cache)
+            cache_size_mb = self.ram_cache_size / (1024 * 1024)
+            self.ram_cache.clear()
+            self.ram_cache_size = 0
+            if cache_count > 0:
+                logger.info(f"[ChunkCache] Client {self.client_id}: 🔧 Cleared RAM cache - {cache_count} chunks ({cache_size_mb:.2f} MB)")

@@ -442,6 +442,16 @@ class Client(BaseClient):
                 # 🆕 FIX: Don't immediately set to None - let exchange loop check is_stopped flag first
                 # The exchange loop will exit gracefully when it sees bt_manager.is_stopped = True
                 # We'll set bt_manager = None later in the loop cleanup
+
+            # 🔧 MEMORY LEAK FIX: Clear streaming channel queues between rounds
+            # Each channel's queues hold protobuf messages with full chunk_data (~3MB each)
+            # Without clearing, these accumulate across rounds causing OOM
+            # Note: Use clear_all_queues() NOT close_all_channels() to keep connections alive
+            if hasattr(self, '_streaming_manager') and self._streaming_manager is not None:
+                try:
+                    self._streaming_manager.clear_all_queues()
+                except Exception as e:
+                    logger.warning(f"[BT-FL] Client {self.ID}: Error clearing streaming queues: {e}")
             
             # Check if this is a BitTorrent-enabled message
             if isinstance(content, dict) and content.get('skip_weights', False):
@@ -681,6 +691,11 @@ class Client(BaseClient):
             # Set chunk_manager reference to gRPC server
             self.comm_manager.server_funcs.chunk_manager = self.chunk_manager
             logger.info(f"[Client {self.ID}] ✅ Set chunk_manager reference to gRPC server for chunk data access")
+
+            # 🚀 P0 MEMORY FIX: Set client_instance reference for direct CHUNK_PIECE callback
+            # This bypasses msg_queue for PIECE messages, eliminating 3-4x memory copies
+            self.comm_manager.server_funcs.client_instance = self
+            logger.info(f"[Client {self.ID}] ✅ Set client_instance reference to gRPC server for direct PIECE callback")
             # Also update client_id for all existing channels
             for peer_id, channel in self._streaming_manager.channels.items():
                 channel.client_id = self.ID
