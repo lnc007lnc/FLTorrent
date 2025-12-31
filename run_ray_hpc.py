@@ -113,7 +113,10 @@ class SLURMConfig:
     """SLURM job scheduler configuration for HPC environments"""
 
     # === Basic SLURM Settings ===
-    PARTITION: str = "gpu3"                   # SLURM partition name (gpu3 has 3 GPUs)
+    # GPU2: srv-it-node02 - 64 CPUs, 512GB RAM, 4× NVIDIA A100-SXM4-40GB (40GB each)
+    PARTITION: str = "gpu2"                   # SLURM partition name
+    # GPU3: srv-it-node03 - 128 CPUs, 1.5TB RAM, 3× GPUs (currently allocated)
+    # PARTITION: str = "gpu3"                 # SLURM partition name (gpu3 has 3 GPUs)
     ACCOUNT: str = ""                         # Account/project for billing (optional)
     QOS: str = ""                             # Quality of Service (optional)
 
@@ -123,9 +126,12 @@ class SLURMConfig:
     # === Resource Requests ===
     NODES: int = 1                            # Number of nodes to request
     TASKS_PER_NODE: int = 1                   # Tasks per node (1 for Ray)
-    CPUS_PER_TASK: int = 64                   # CPUs per task
-    MEM_PER_NODE: str = "400G"                # Memory per node
-    GPUS_PER_NODE: int = 2                    # GPUs per node
+    CPUS_PER_TASK: int = 64                   # CPUs per task (gpu2 has 64 cores)
+    # CPUS_PER_TASK: int = 128                # CPUs per task (gpu3 has 128 cores)
+    MEM_PER_NODE: str = "480G"                # Memory per node (gpu2 has 512GB, reserve some for system)
+    # MEM_PER_NODE: str = "1400G"             # Memory per node (gpu3 has 1.5TB)
+    GPUS_PER_NODE: int = 4                    # GPUs per node (gpu2 has 4× A100-40GB)
+    # GPUS_PER_NODE: int = 2                  # GPUs per node (gpu3 has 3 GPUs but only 2 available)
     GPU_TYPE: str = ""                        # Specific GPU type (e.g., "v100", "a100")
 
     # === Environment Settings ===
@@ -244,7 +250,15 @@ class FLConfig:
     # MODEL_HIDDEN: int = 256                 # Increased hidden size for better capacity
     # MODEL_OUT_CHANNELS: int = 80            # Vocab size for shakespeare
     # MODEL_DROPOUT: float = 0.1             # Add dropout for regularization
-    
+
+    # === NLP/Transformer Specific Settings ===
+    MODEL_TASK: str = ""                      # Model task for transformers: SequenceClassification, QuestionAnswering, etc.
+                                              # Leave empty for non-transformer models
+    DATA_MAX_LEN: int = 128                   # Max sequence length for NLP tokenization
+    HF_CACHE_DIR: str = ""                    # HuggingFace cache directory (empty = use default)
+    DATA_HF_HALF_VAL_DUMMY_TEST: bool = False # For GLUE datasets with masked test labels (-1),
+                                              # split validation set into val/test halves
+
     # === Container Settings ===
     USE_DOCKER: bool = False              # Enable Docker for containerized execution (requires root)
     USE_PODMAN: bool = True               # 🚀 Enable Podman rootless for HPC (no root required)
@@ -331,7 +345,10 @@ class FLConfig:
     BT_RANDOM_NOISE: float = 1e-4          # gamma: random noise strength
 
     # === Write Queue Parameters ===
-    BT_WRITE_QUEUE_SIZE: int = 500        # ChunkWriteQueue maximum capacity
+    # 🚀 P0 MEMORY FIX: Reduced from 500 to 50 to limit memory usage
+    # OLD: 500 × 3MB = 1.5GB per client (OOM risk with 50 clients)
+    # NEW: 50 × 3MB = 150MB per client (safe memory budget)
+    BT_WRITE_QUEUE_SIZE: int = 50         # ChunkWriteQueue maximum capacity (byte-budget: ~150MB)
     
     # === Topology Settings ===
     TOPOLOGY_TYPE: str = "mesh"         # Topology type: star, ring, fully_connected, mesh, random
@@ -412,6 +429,9 @@ class FLConfig:
     
     # === Chunk Database Retention Settings ===
     CHUNK_KEEP_ROUNDS: int = 1             # Number of recent rounds to keep in database
+    CHUNK_TMP_DIR: str = "/tmp/fl_chunks"  # Chunk temp storage (use fast SSD/tmpfs, not NFS)
+    CHUNK_NFS_COMPATIBLE: bool = False     # NFS compatibility mode: use DELETE journal instead of WAL
+                                           # Enable this when CHUNK_TMP_DIR is on NFS filesystem
     
     # === Advanced FederatedScope Settings ===
     BACKEND: str = "torch"                 # Backend framework: torch, tensorflow
@@ -2758,7 +2778,7 @@ class RayV2FederatedLearning:
         except ImportError:
             self.logger.warning("⚠️ PyTorch not installed, use CPU mode")
             
-        return {
+        config = {
             'use_gpu': use_gpu,
             'device': 0 if use_gpu else -1,  # GPU device ID or CPU mode
             'seed': CONFIG.SEED,  # Will be dynamically overridden for clients (CONFIG.SEED + client_id)
@@ -2804,12 +2824,12 @@ class RayV2FederatedLearning:
                 ],
                 'args': [{'download': CONFIG.DATA_AUTO_DOWNLOAD}]
             },
-            
+
             'dataloader': {
                 'batch_size': CONFIG.BATCH_SIZE,
                 'num_workers': CONFIG.DATALOADER_NUM_WORKERS
             },
-            
+
             'model': {
                 'type': CONFIG.MODEL_TYPE,
                 # 'hidden': CONFIG.MODEL_HIDDEN,
@@ -2884,11 +2904,14 @@ class RayV2FederatedLearning:
             
             'chunk': {
                 'num_chunks': CONFIG.CHUNK_NUM,
-                'importance_method': CONFIG.IMPORTANCE_METHOD
+                'importance_method': CONFIG.IMPORTANCE_METHOD,
+                'tmp_dir': CONFIG.CHUNK_TMP_DIR
             },
-            
+
             'chunk_keep_rounds': CONFIG.CHUNK_KEEP_ROUNDS,
-            
+            'chunk_tmp_dir': CONFIG.CHUNK_TMP_DIR,
+            'chunk_nfs_compatible': CONFIG.CHUNK_NFS_COMPATIBLE,
+
             'chunk_num': CONFIG.CHUNK_NUM,
             'chunk_importance_method': CONFIG.IMPORTANCE_METHOD,
             
@@ -2914,10 +2937,35 @@ class RayV2FederatedLearning:
                 'use': CONFIG.WANDB_USE,
                 'client_train_info': CONFIG.WANDB_CLIENT_TRAIN_INFO
             },
-            
+
             'outdir': '/app/output'
         }
-        
+
+        # === NLP/Transformer Model Adaptation ===
+        # If using a transformer model (@transformers suffix), adapt config for NLP
+        self.logger.info(f"🔍 NLP Check: CONFIG.MODEL_TYPE = '{CONFIG.MODEL_TYPE}', contains @transformers: {'@transformers' in CONFIG.MODEL_TYPE}")
+        self.logger.info(f"🔍 NLP Check: CONFIG.MODEL_TASK = '{CONFIG.MODEL_TASK}'")
+        if '@transformers' in CONFIG.MODEL_TYPE:
+            self.logger.info(f"🔤 Detected transformer model: {CONFIG.MODEL_TYPE}")
+            # Modify data config for NLP
+            config['data']['transform'] = []  # No image transforms for NLP
+            # Build data.args for NLP (max_len required, hg_cache_dir optional)
+            data_args = {'max_len': CONFIG.DATA_MAX_LEN}
+            if CONFIG.HF_CACHE_DIR:
+                data_args['hg_cache_dir'] = CONFIG.HF_CACHE_DIR
+            # For GLUE datasets with masked test labels (-1), split validation into val/test
+            if CONFIG.DATA_HF_HALF_VAL_DUMMY_TEST:
+                data_args['half_val_dummy_test'] = True
+            config['data']['args'] = [data_args]
+            # Modify model config for NLP
+            del config['model']['in_channels']  # Remove CV-specific field
+            if CONFIG.MODEL_TASK:
+                config['model']['task'] = CONFIG.MODEL_TASK  # Add task for transformers
+            self.logger.info(f"   📝 data.args = {config['data']['args']}")
+            self.logger.info(f"   📝 model.task = {config['model'].get('task', 'not set')}")
+
+        return config
+
     def allocate_gpu_resources(self, client_node_assignments: List[Tuple[str, float]] = None,
                                 clients_per_node: Dict[str, int] = None) -> Tuple[Optional[float], List[Tuple[Optional[float], Optional[int]]]]:
         """
@@ -3239,19 +3287,19 @@ class RayV2FederatedLearning:
                 'docker_data/tmp/**/*.db',                  # Docker temp databases
                 f"{CONFIG.OUTPUT_DIR}/**/*.db",             # Output directory databases
                 f"{CONFIG.LOG_DIR}/**/*.db",                # Log directory databases
-                '/tmp/fl_chunks/**/*.db',                   # tmpfs chunk databases
-                '/tmp/fl_chunks/**/chunks/*'                # tmpfs chunk cache files
+                f"{CONFIG.CHUNK_TMP_DIR}/**/*.db",          # Configured chunk directory databases
+                f"{CONFIG.CHUNK_TMP_DIR}/**/chunks/*"       # Configured chunk cache files
             ]
 
-            # Clean /tmp/fl_chunks/ directory (tmpfs storage for fast I/O)
-            tmpfs_chunk_dir = '/tmp/fl_chunks'
-            if os.path.exists(tmpfs_chunk_dir):
+            # Clean chunk directory (use CONFIG.CHUNK_TMP_DIR instead of hardcoded path)
+            chunk_dir = CONFIG.CHUNK_TMP_DIR
+            if os.path.exists(chunk_dir):
                 try:
                     import shutil
-                    shutil.rmtree(tmpfs_chunk_dir)
-                    self.logger.info(f"🗑️  Cleaned tmpfs chunk directory: {tmpfs_chunk_dir}")
+                    shutil.rmtree(chunk_dir)
+                    self.logger.info(f"🗑️  Cleaned chunk directory: {chunk_dir}")
                 except Exception as e:
-                    self.logger.warning(f"Failed to clean {tmpfs_chunk_dir}: {e}")
+                    self.logger.warning(f"Failed to clean {chunk_dir}: {e}")
             
             for pattern in db_patterns:
                 db_files = glob.glob(pattern, recursive=True)
@@ -3674,7 +3722,7 @@ class RayV2FederatedLearning:
     def stop_all(self):
         """Stop all processes and Docker containers"""
         self.logger.info("🛑 Stop all federated learning processes...")
-        
+
         # Clean Docker environment
         if CONFIG.USE_DOCKER and hasattr(self, 'docker_manager'):
             try:
@@ -3693,14 +3741,25 @@ class RayV2FederatedLearning:
                     ray.get(stop_futures)
             except Exception as e:
                 self.logger.warning(f"⚠️  Ray Actors stop warning: {e}")
-            
-            # Clean environment in non-Docker mode too
-            try:
-                self.cleanup_environment()
-                self.logger.info("✅ Environment cleaned")
-            except Exception as e:
-                self.logger.warning(f"⚠️  Environment cleanup warning: {e}")
-        
+
+        # Always clean up chunk temp directory at the end (bypass cleanup_performed flag)
+        try:
+            import shutil
+            chunk_dir = CONFIG.CHUNK_TMP_DIR
+            if os.path.exists(chunk_dir):
+                shutil.rmtree(chunk_dir)
+                self.logger.info(f"🗑️  Cleaned chunk directory: {chunk_dir}")
+
+            # Also clean Ray temp directories
+            import glob
+            ray_tmp_pattern = f"/tmp/ray_*"
+            for ray_tmp in glob.glob(ray_tmp_pattern):
+                if os.path.isdir(ray_tmp):
+                    shutil.rmtree(ray_tmp, ignore_errors=True)
+                    self.logger.debug(f"🗑️  Cleaned Ray temp: {ray_tmp}")
+        except Exception as e:
+            self.logger.warning(f"⚠️  Chunk/Ray temp cleanup warning: {e}")
+
         self.logger.info("✅ All resources stopped")
         
     def generate_results_summary(self):
@@ -4261,7 +4320,18 @@ def generate_experiment_slurm_script(
     """
     exp_name = experiment['name']
     exp_description = experiment.get('description', 'No description')
-    exp_config = experiment.get('config', {})
+
+    # Merge FL config: global config as base, experiment config overrides
+    # This allows global settings like CHUNK_TMP_DIR to be inherited by all experiments
+    merged_config = {}
+    # First, add all uppercase keys from global_config (FL config parameters)
+    for key, value in global_config.items():
+        if key.isupper():  # FL config parameters are uppercase (e.g., CHUNK_TMP_DIR)
+            merged_config[key] = value
+    # Then, experiment config overrides global
+    merged_config.update(experiment.get('config', {}))
+    exp_config = merged_config
+
     time_limit = experiment.get('time_limit', global_config.get('time_limit', '24:00:00'))
 
     # Merge settings (experiment overrides global)
@@ -4293,6 +4363,9 @@ def generate_experiment_slurm_script(
             config_overrides.append(f'CONFIG.{key} = {value}')
 
     config_override_str = '\n'.join(config_overrides) if config_overrides else 'pass'
+
+    # Get chunk_tmp_dir for cleanup (from exp_config or default)
+    chunk_tmp_dir = exp_config.get('CHUNK_TMP_DIR', '/tmp/fl_chunks')
 
     script_content = f'''#!/bin/bash
 #SBATCH --job-name={exp_name}
@@ -4378,6 +4451,13 @@ srun --ntasks=1 bash -c "
     export PYTHONPATH={snapshot_path}:$PYTHONPATH
     export RAY_TMPDIR=/tmp/ray_{exp_name}
 
+    # HuggingFace cache and offline mode (compute nodes have no internet)
+    export HF_HOME=$HOME/.cache/huggingface
+    export TRANSFORMERS_CACHE=$HOME/.cache/huggingface/hub
+    export HF_DATASETS_CACHE=$HOME/.cache/huggingface/datasets
+    export HF_HUB_OFFLINE=1
+    export TRANSFORMERS_OFFLINE=1
+
     # Run with experiment config
     python -c \\"
 import sys
@@ -4410,7 +4490,14 @@ echo "============================================"
 echo "Experiment {exp_name} finished at $(date)"
 echo "============================================"
 
+# Cleanup Ray
 ray stop --force 2>/dev/null || true
+
+# Cleanup tmp directories (fallback in case Python cleanup failed)
+echo "Cleaning up tmp directories..."
+rm -rf {chunk_tmp_dir} 2>/dev/null || true
+rm -rf /tmp/ray_* 2>/dev/null || true
+echo "Cleanup completed"
 '''
 
     script_path = os.path.join(output_base_dir, "slurm_scripts", f"{exp_name}.sh")

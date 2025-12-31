@@ -6,6 +6,7 @@ Replaces database storage with direct file I/O for maximum performance
 File naming: client_{source_client_id}_chunk_{chunk_id}_r{round_num}.dat
 """
 
+import gc
 import os
 import time
 import hashlib
@@ -333,7 +334,12 @@ class ChunkDataCache:
                     _, size, _ = self.ram_cache.pop(key)
                     self.ram_cache_size -= size
                     logger.debug(f"[ChunkCache] Client {self.client_id}: Cleaned up RAM chunk {key}")
-        
+
+            # 🔧 MEMORY FIX: Force garbage collection after clearing RAM cache
+            if keys_to_remove:
+                gc.collect()
+                logger.debug(f"[ChunkCache] Client {self.client_id}: Forced GC after clearing {len(keys_to_remove)} RAM chunks")
+
         except Exception as e:
             logger.error(f"[ChunkCache] Client {self.client_id}: Error during cleanup: {e}")
     
@@ -383,3 +389,7 @@ class ChunkDataCache:
             self.ram_cache_size = 0
             if cache_count > 0:
                 logger.info(f"[ChunkCache] Client {self.client_id}: 🔧 Cleared RAM cache - {cache_count} chunks ({cache_size_mb:.2f} MB)")
+
+        # 🔧 MEMORY FIX: Force garbage collection after closing
+        gc.collect()
+        logger.debug(f"[ChunkCache] Client {self.client_id}: Forced GC after cache shutdown")

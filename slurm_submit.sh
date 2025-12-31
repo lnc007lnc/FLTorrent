@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=fl_experiment
-#SBATCH --partition=gpu2
+#SBATCH --partition=gpu3
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=64
@@ -8,7 +8,7 @@
 #SBATCH --time=UNLIMITED
 #SBATCH --output=/home/naicheng_li/FLTorrent/slurm_logs/%x_%j.out
 #SBATCH --error=/home/naicheng_li/FLTorrent/slurm_logs/%x_%j.err
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:2
 
 # ============================================================================
 # Environment Setup
@@ -23,6 +23,15 @@ echo "Tasks per Node: $SLURM_NTASKS_PER_NODE"
 echo "CPUs per Task: $SLURM_CPUS_PER_TASK"
 echo "Start Time: $(date)"
 echo "============================================"
+
+# Load CUDA modules and set environment
+module purge
+module load nvidia/cuda/toolkit/12.9.1
+
+# Fix LD_LIBRARY_PATH for CUDA
+export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lib64
 
 # Activate conda environment
 source $(conda info --base)/etc/profile.d/conda.sh
@@ -55,7 +64,7 @@ echo "============================================"
 # ============================================================================
 
 echo "Starting FL experiment..."
-python /home/naicheng_li/FLTorrent/run_ray_hpc.py --local
+srun python /home/naicheng_li/FLTorrent/run_ray_hpc.py --local
 
 echo "============================================"
 echo "Job finished at $(date)"
@@ -63,3 +72,9 @@ echo "============================================"
 
 # Cleanup Ray cluster
 ray stop --force 2>/dev/null || true
+
+# Cleanup tmp directories
+echo "Cleaning up tmp directories..."
+rm -rf /tmp/fl_chunks* 2>/dev/null || true
+rm -rf /tmp/ray_* 2>/dev/null || true
+echo "Cleanup completed"

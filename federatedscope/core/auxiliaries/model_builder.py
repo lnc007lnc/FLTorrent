@@ -75,12 +75,31 @@ def get_shape_from_data(data, model_config, backend='torch'):
             x, _ = next(iter(data_representative))
             if isinstance(x, list):
                 return x[0].shape
+            elif isinstance(x, dict):
+                # Handle HuggingFace-style dict data (e.g., {'input_ids': ..., 'attention_mask': ...})
+                if 'input_ids' in x:
+                    return x['input_ids'].shape
+                else:
+                    # Return shape of first tensor in dict
+                    for v in x.values():
+                        if hasattr(v, 'shape'):
+                            return v.shape
+                    return None
             return x.shape
         else:
             try:
                 x, _ = data_representative
                 if isinstance(x, list):
                     return x[0].shape
+                elif isinstance(x, dict):
+                    # Handle HuggingFace-style dict data
+                    if 'input_ids' in x:
+                        return x['input_ids'].shape
+                    else:
+                        for v in x.values():
+                            if hasattr(v, 'shape'):
+                                return v.shape
+                        return None
                 return x.shape
             except:
                 raise TypeError('Unsupported data type.')

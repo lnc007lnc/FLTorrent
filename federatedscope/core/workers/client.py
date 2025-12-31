@@ -1,4 +1,5 @@
 import copy
+import gc
 import logging
 import sys
 import pickle
@@ -472,9 +473,14 @@ class Client(BaseClient):
                         # Update model with aggregated weights
                         self.trainer.update(aggregated_model,
                                             strict=self._cfg.federate.share_local_model)
-                        
-                        
+
                         logger.info(f"[BT-FL] Client {self.ID}: Successfully updated model from chunk aggregation")
+
+                        # 🔧 MEMORY FIX: Clear aggregated_model reference and force GC
+                        # The aggregation creates large temporary tensors that should be freed immediately
+                        del aggregated_model
+                        gc.collect()
+                        logger.debug(f"[BT-FL] Client {self.ID}: Forced garbage collection after aggregation")
                     else:
                         logger.warning(f"[BT-FL] Client {self.ID}: Failed to aggregate model from chunks, keeping current model")
                         # Continue with current model instead of failing
@@ -1881,7 +1887,13 @@ class Client(BaseClient):
 
                 except Exception as e:
                     logger.error(f"[BT-FL] Client {self.ID}: Failed to process client {client_id}: {e}")
-            
+
+            # 🔧 MEMORY FIX: Clear prefetched data immediately after processing
+            # prefetched contains all raw chunk bytes (~3MB * num_chunks * num_clients)
+            del prefetched
+            gc.collect()
+            logger.debug(f"[BT-FL] Client {self.ID}: Cleared prefetched chunk data after reconstruction")
+
             # Calculate absent clients and merge their baseline contribution (only for FedAvg)
             if expected_sample_sizes:
                 # Use real expected client IDs and their true sample sizes
@@ -1995,8 +2007,19 @@ class Client(BaseClient):
                 aggregated_model = final_model
             
             logger.info(f"[BT-FL] Client {self.ID}: Successfully aggregated model using {aggregator_type} with {len(completed_client_models)} clients")
+
+            # 🔧 MEMORY FIX: Clear intermediate data before returning
+            # completed_client_models contains all client model tensors (large)
+            # agg_info also holds references to these tensors
+            del completed_client_models
+            del agg_info
+            if 'baseline_params_copy' in locals():
+                del baseline_params_copy
+            gc.collect()
+            logger.debug(f"[BT-FL] Client {self.ID}: Cleared intermediate aggregation data")
+
             return aggregated_model
-            
+
         except Exception as e:
             logger.error(f"[BT-FL] Client {self.ID}: Model aggregation failed: {e}")
             import traceback

@@ -3,6 +3,7 @@
 Creates dedicated streaming channels during topology construction, providing efficient chunk transmission
 """
 
+import gc
 import grpc
 import threading
 import time
@@ -1392,6 +1393,9 @@ class StreamingChannelManager:
                         pass
         if total_cleared > 0:
             logger.info(f"[StreamingManager] Client {self.client_id}: 🔧 Cleared {total_cleared} items from channel queues")
+
+        # 🔧 MEMORY FIX: Force garbage collection after clearing large protobuf objects
+        gc.collect()
         return total_cleared
 
     def close_all_channels(self):

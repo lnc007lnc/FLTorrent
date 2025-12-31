@@ -3,6 +3,7 @@ BitTorrent Protocol Manager
 Implements classic BitTorrent protocol for chunk exchange in FederatedScope
 """
 
+import gc
 import time
 import hashlib
 import random
@@ -170,7 +171,8 @@ class ChunkWriteQueue:
         except queue.Full:
             # Let caller know enqueue failed - they should NOT mark as processed
             # Timeout mechanism will trigger retry from peer
-            logger.warning(f"[ChunkWriteQueue] Write queue FULL, reject chunk {source_client_id}:{chunk_id} for retry")
+            # 🔧 Changed to debug: queue full is expected under high load, not an error
+            logger.debug(f"[ChunkWriteQueue] Write queue FULL, reject chunk {source_client_id}:{chunk_id} for retry")
             return False
     
     def search_pending_chunk(self, round_num: int, source_client_id: int, chunk_id: int):
@@ -619,7 +621,8 @@ class BitTorrentManager:
         if not ok:
             # Enqueue failed (queue full) - DON'T mark as processed!
             # Timeout mechanism will trigger retry from peer
-            logger.warning(f"[BT-PIECE] Client {self.client_id}: Enqueue failed for {source_client_id}:{chunk_id}, will retry")
+            # 🔧 Changed to debug: queue full is expected under high load, not an error
+            logger.debug(f"[BT-PIECE] Client {self.client_id}: Enqueue failed for {source_client_id}:{chunk_id}, will retry")
             return False
 
         # 🚀 ONLY after successful enqueue: mark as processed and update state
@@ -1771,7 +1774,21 @@ class BitTorrentManager:
     def get_memory_bitfield(self) -> Dict[Tuple, bool]:
         """🚀 CRITICAL FIX: Get bitfield from memory (NO DB QUERY!)
         Returns dict of {(round_num, source_id, chunk_id): True} for all owned chunks.
-        This replaces get_global_bitfield() calls in the main loop to avoid SQLite lock."""
+        This replaces get_global_bitfield() calls in the main loop to avoid SQLite lock.
+
+        🔧 MEMORY FIX: Uses cached bitfield to avoid creating new objects on every call.
+        The cache is invalidated when chunks_received_set or own_chunks_set changes.
+        """
+        # 🔧 MEMORY FIX: Cache the bitfield to avoid repeated object creation
+        # Check if cache is valid (same size as underlying sets)
+        current_size = len(self.own_chunks_set) + len(self.chunks_received_set)
+
+        if (hasattr(self, '_bitfield_cache') and
+            hasattr(self, '_bitfield_cache_size') and
+            self._bitfield_cache_size == current_size):
+            return self._bitfield_cache
+
+        # Cache miss or invalidated - rebuild
         bitfield = {}
         # 🚀 Thread-safety fix: Create copies to avoid "Set changed size during iteration"
         try:
@@ -1787,6 +1804,10 @@ class BitTorrentManager:
         # Add received chunks
         for chunk_key in received_chunks_copy:
             bitfield[chunk_key] = True
+
+        # Update cache
+        self._bitfield_cache = bitfield
+        self._bitfield_cache_size = current_size
         return bitfield
 
     def register_own_chunks(self, chunk_keys: list):
@@ -1860,6 +1881,12 @@ class BitTorrentManager:
         self.own_chunks_set.clear()
         logger.debug(f"[BT] Client {self.client_id}: Cleared own_chunks_set - {own_count} entries")
 
+        # 🔧 MEMORY FIX: Clear bitfield cache to prevent stale data
+        if hasattr(self, '_bitfield_cache'):
+            del self._bitfield_cache
+        if hasattr(self, '_bitfield_cache_size'):
+            del self._bitfield_cache_size
+
         # 🔧 MEMORY LEAK FIX: Clear additional data structures that accumulate between rounds
         # pending_queue stores chunk_key tuples waiting to be requested
         if hasattr(self, 'pending_queue'):
@@ -1910,7 +1937,12 @@ class BitTorrentManager:
         mb_downloaded = self.total_downloaded / (1024 * 1024)
         mb_uploaded = self.total_uploaded / (1024 * 1024)
         logger.info(f"[BT] Client {self.client_id}: Final stats - Downloaded: {mb_downloaded:.2f} MB, Uploaded: {mb_uploaded:.2f} MB")
-        
+
+        # 🔧 MEMORY FIX: Force garbage collection after clearing all data structures
+        # This ensures Python releases memory immediately instead of waiting for automatic GC
+        gc.collect()
+        logger.debug(f"[BT] Client {self.client_id}: Forced garbage collection after stop_exchange")
+
     def emergency_stop(self):
         """🚨 Emergency stop: Immediately close all operations, for system abnormal exit"""
         logger.warning(f"[BT] Client {self.client_id}: Emergency stop triggered!")
@@ -1952,5 +1984,7 @@ class BitTorrentManager:
                     channel.requested_chunks.clear()
                 if hasattr(channel, 'completed_chunks'):
                     channel.completed_chunks.clear()
-        
+
+        # 🔧 MEMORY FIX: Force garbage collection
+        gc.collect()
         logger.warning(f"[BT] Client {self.client_id}: Emergency stop completed")
