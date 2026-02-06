@@ -1,0 +1,47 @@
+# =============================================================================
+# Gossip-style DFL Test - 5 clients, 100 rounds, Ring topology
+# =============================================================================
+# Verify gossip bug fixes:
+#   - _send_bitfield: only send own chunks in neighbor_only mode
+#   - _broadcast_have: only broadcast own chunks
+#   - expected_chunks: use (neighbors + 1) * chunks in gossip mode
+#
+# Ring topology: 1-2-3-4-5-1 => each client has 2 neighbors
+# Expected: expected_chunks = 3 * 8 = 24 (NOT 5 * 8 = 40)
+# =============================================================================
+
+global:
+  code_snapshot_dir: "./experiments_snapshots"
+  output_base_dir: "./experiments_output_gossip"
+
+  # GPU3 Node Resources
+  partition: "gpu3"
+  nodes: 1
+  gpus_per_node: 2
+  cpus_per_task: 128
+  mem: "1400G"
+  time_limit: "48:00:00"
+
+experiments:
+  - name: "gossip_ring_5c_100r"
+    description: "Gossip DFL: 5 clients, ring topology, 100 rounds"
+    config:
+      # Basic settings - only override what's needed
+      CLIENT_NUM: 5
+      TOTAL_ROUNDS: 100
+      CHUNK_NUM: 8
+
+      # Ring topology
+      TOPOLOGY_TYPE: "ring"
+      TOPOLOGY_CONNECTIONS: 2
+
+      # Gossip settings - THIS IS WHAT WE'RE TESTING
+      GOSSIP_ENABLE: True
+      GOSSIP_MODE: "neighbor_avg"
+      GOSSIP_ITERATIONS: 2
+      GOSSIP_MIXING_WEIGHT: 0.5
+      BT_NEIGHBOR_ONLY: True
+
+      # BitTorrent
+      BITTORRENT_TIMEOUT: 120.0
+      BT_ENABLE_COMPENSATION: False

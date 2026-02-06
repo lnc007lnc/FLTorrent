@@ -1,0 +1,84 @@
+use_gpu: True
+device: 3
+seed: 12350
+
+federate:
+  client_num: 5
+  mode: 'distributed'
+
+distribute:
+  use: True
+  server_host: '127.0.0.1'
+  server_port: 50061
+  client_host: '127.0.0.1'
+  client_port: 50066
+  role: 'client'
+  data_idx: 5
+
+data:
+  root: data/
+  type: 'CIFAR10@torchvision'
+  splits: [0.8, 0.1, 0.1]
+  num_workers: 0
+  transform: [['ToTensor'], ['Normalize', {'mean': [0.4914, 0.4822, 0.4465], 'std': [0.2470, 0.2435, 0.2616]}]]
+  test_transform: [['ToTensor'], ['Normalize', {'mean': [0.4914, 0.4822, 0.4465], 'std': [0.2470, 0.2435, 0.2616]}]]
+  args: [{'download': True}]
+  splitter: 'lda'
+  splitter_args: [{'alpha': 0.5}]
+
+dataloader:
+  batch_size: 32
+
+model:
+  type: convnet2
+  hidden: 512
+  out_channels: 10
+  dropout: 0.0
+
+train:
+  local_update_steps: 5
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.01
+    type: SGD
+    weight_decay: 0.0001
+
+grad:
+  grad_clip: 5.0
+
+criterion:
+  type: CrossEntropyLoss
+
+trainer:
+  type: cvtrainer
+
+eval:
+  freq: 10
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_acc
+
+# Ring topology for gossip test
+topology:
+  use: True
+  type: 'ring'
+  timeout: 600.0
+  verbose: True
+  gossip:
+    enable: True
+    mode: neighbor_avg
+    iterations: 2
+    mixing_weight: 0.5
+
+bittorrent:
+  enable: True
+  timeout: 120.0
+  verbose: True
+  chunk_selection: 'rarest_first'
+  min_completion_ratio: 0.9
+  neighbor_only_collection: True
+
+chunk:
+  num_chunks: 8
+  importance_method: 'magnitude'
+
+outdir: 'gossip_dfl_100round_test/client_5_output'

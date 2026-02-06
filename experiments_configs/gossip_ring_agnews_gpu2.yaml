@@ -1,0 +1,194 @@
+global:
+  output_base_dir: ./experiments_output_gossip_ring_agnews_gpu2
+  code_snapshot_dir: ./experiments_snapshots
+  partition: gpu2
+  nodes: 1
+  cpus_per_task: 64
+  mem: 480G
+  gpus_per_node: 4
+  time_limit: "48:00:00"
+
+experiments:
+  - name: gossip_ring_agnews_alpha100000
+    description: "GOSSIP Ring AG News: 90 rounds, IID (alpha=100000)"
+    config:
+      MODEL_TYPE: ./pretrained_models/TinyBERT_General_4L_312D@transformers
+      MODEL_TASK: SequenceClassification
+      MODEL_OUT_CHANNELS: 4
+      TRAINER_TYPE: nlptrainer
+      CRITERION_TYPE: CrossEntropyLoss
+      BATCH_SIZE: 32
+      LEARNING_RATE: 2.0e-05
+      OPTIMIZER: AdamW
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      LOCAL_UPDATE_STEPS: 1
+      TOTAL_ROUNDS: 90
+
+      DATASET: ag_news@huggingface_datasets
+      CLIENT_NUM: 50
+      DATA_ROOT: ""
+      DATA_SHARE_TEST_DATASET: true
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_SPLITTER: lda
+      DATA_SPLIT_ALPHA: 100000.0
+      DATA_SPLIT_TRAIN_FOR_VAL: 0.1
+      DATA_TEXT_FIELD: text
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: false
+
+      CHUNK_NUM: 16
+      CHUNK_TMP_DIR: /tmp/fl_chunks_agnews
+      CHUNK_NFS_COMPATIBLE: false
+
+      EVAL_FREQ: 1
+      EVAL_METRICS: [acc, f1]
+
+      GOSSIP_ENABLE: true
+      GOSSIP_ITERATIONS: 1
+      GOSSIP_MIXING_WEIGHT: 0.5
+      GOSSIP_MODE: neighbor_avg
+
+      TOPOLOGY_TYPE: ring
+
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 1000000.0
+      BT_NEIGHBOR_ONLY: true
+
+  - name: gossip_ring_agnews_alpha1
+    description: "GOSSIP Ring AG News: 90 rounds, moderate non-IID (alpha=1.0)"
+    config:
+      MODEL_TYPE: ./pretrained_models/TinyBERT_General_4L_312D@transformers
+      MODEL_TASK: SequenceClassification
+      MODEL_OUT_CHANNELS: 4
+      TRAINER_TYPE: nlptrainer
+      CRITERION_TYPE: CrossEntropyLoss
+      BATCH_SIZE: 32
+      LEARNING_RATE: 2.0e-05
+      OPTIMIZER: AdamW
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      LOCAL_UPDATE_STEPS: 1
+      TOTAL_ROUNDS: 90
+
+      DATASET: ag_news@huggingface_datasets
+      CLIENT_NUM: 50
+      DATA_ROOT: ""
+      DATA_SHARE_TEST_DATASET: true
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_SPLITTER: lda
+      DATA_SPLIT_ALPHA: 1.0
+      DATA_SPLIT_TRAIN_FOR_VAL: 0.1
+      DATA_TEXT_FIELD: text
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: false
+
+      CHUNK_NUM: 16
+      CHUNK_TMP_DIR: /tmp/fl_chunks_agnews
+      CHUNK_NFS_COMPATIBLE: false
+
+      EVAL_FREQ: 1
+      EVAL_METRICS: [acc, f1]
+
+      GOSSIP_ENABLE: true
+      GOSSIP_ITERATIONS: 1
+      GOSSIP_MIXING_WEIGHT: 0.5
+      GOSSIP_MODE: neighbor_avg
+
+      TOPOLOGY_TYPE: ring
+
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 1000000.0
+      BT_NEIGHBOR_ONLY: true
+
+  - name: gossip_ring_agnews_alpha03
+    description: "GOSSIP Ring AG News: 90 rounds, high non-IID (alpha=0.3)"
+    config:
+      MODEL_TYPE: ./pretrained_models/TinyBERT_General_4L_312D@transformers
+      MODEL_TASK: SequenceClassification
+      MODEL_OUT_CHANNELS: 4
+      TRAINER_TYPE: nlptrainer
+      CRITERION_TYPE: CrossEntropyLoss
+      BATCH_SIZE: 32
+      LEARNING_RATE: 2.0e-05
+      OPTIMIZER: AdamW
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      LOCAL_UPDATE_STEPS: 1
+      TOTAL_ROUNDS: 90
+
+      DATASET: ag_news@huggingface_datasets
+      CLIENT_NUM: 50
+      DATA_ROOT: ""
+      DATA_SHARE_TEST_DATASET: true
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_SPLITTER: lda
+      DATA_SPLIT_ALPHA: 0.3
+      DATA_SPLIT_TRAIN_FOR_VAL: 0.1
+      DATA_TEXT_FIELD: text
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: false
+
+      CHUNK_NUM: 16
+      CHUNK_TMP_DIR: /tmp/fl_chunks_agnews
+      CHUNK_NFS_COMPATIBLE: false
+
+      EVAL_FREQ: 1
+      EVAL_METRICS: [acc, f1]
+
+      GOSSIP_ENABLE: true
+      GOSSIP_ITERATIONS: 1
+      GOSSIP_MIXING_WEIGHT: 0.5
+      GOSSIP_MODE: neighbor_avg
+
+      TOPOLOGY_TYPE: ring
+
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 1000000.0
+      BT_NEIGHBOR_ONLY: true
+
+  - name: gossip_ring_agnews_alpha01
+    description: "GOSSIP Ring AG News: 90 rounds, extreme non-IID (alpha=0.1)"
+    config:
+      MODEL_TYPE: ./pretrained_models/TinyBERT_General_4L_312D@transformers
+      MODEL_TASK: SequenceClassification
+      MODEL_OUT_CHANNELS: 4
+      TRAINER_TYPE: nlptrainer
+      CRITERION_TYPE: CrossEntropyLoss
+      BATCH_SIZE: 32
+      LEARNING_RATE: 2.0e-05
+      OPTIMIZER: AdamW
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      LOCAL_UPDATE_STEPS: 1
+      TOTAL_ROUNDS: 90
+
+      DATASET: ag_news@huggingface_datasets
+      CLIENT_NUM: 50
+      DATA_ROOT: ""
+      DATA_SHARE_TEST_DATASET: true
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_SPLITTER: lda
+      DATA_SPLIT_ALPHA: 0.1
+      DATA_SPLIT_TRAIN_FOR_VAL: 0.1
+      DATA_TEXT_FIELD: text
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: false
+
+      CHUNK_NUM: 16
+      CHUNK_TMP_DIR: /tmp/fl_chunks_agnews
+      CHUNK_NFS_COMPATIBLE: false
+
+      EVAL_FREQ: 1
+      EVAL_METRICS: [acc, f1]
+
+      GOSSIP_ENABLE: true
+      GOSSIP_ITERATIONS: 1
+      GOSSIP_MIXING_WEIGHT: 0.5
+      GOSSIP_MODE: neighbor_avg
+
+      TOPOLOGY_TYPE: ring
+
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 1000000.0
+      BT_NEIGHBOR_ONLY: true

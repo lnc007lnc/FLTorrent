@@ -1,0 +1,267 @@
+# ============================================================================
+# CFL Experiments with Average Aggregation (ignore_weight=False)
+# ============================================================================
+#
+# Usage:
+#   python run_ray_hpc.py --batch experiments_cfl_avg.yaml
+#
+# Experiments (7 total):
+#   - AG News CFL: alpha=100000, 1.0, 0.3, 0.1
+#   - CelebA ResNet18 CFL: alpha=100000, 1.0, 0.3
+#
+# Key setting: FEDERATE_IGNORE_WEIGHT: false (use sample_size average aggregation)
+#
+# ============================================================================
+
+global:
+  code_snapshot_dir: "./experiments_snapshots"
+  output_base_dir: "./experiments_output_cfl_avg"
+
+  # GPU3 Node
+  partition: "gpu3"
+  nodes: 1
+  gpus_per_node: 2
+  cpus_per_task: 128
+  mem: "1400G"
+  time_limit: "48:00:00"
+
+experiments:
+  # ==========================================================================
+  # AG News CFL - TinyBERT (4 experiments)
+  # ==========================================================================
+
+  - name: "cfl_agnews_alpha100000_avg"
+    description: "CFL AG News: 60 rounds, IID (alpha=100000), average aggregation"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 60
+      # CFL: No BitTorrent, standard FedAvg with average aggregation
+      BITTORRENT_ENABLE: false
+      GOSSIP_ENABLE: false
+      FEDERATE_IGNORE_WEIGHT: true
+      # AG News Dataset
+      DATASET: "ag_news@huggingface_datasets"
+      DATA_ROOT: ""
+      DATA_TEXT_FIELD: "text"
+      DATA_SPLIT_TRAIN_FOR_VAL: 0.1
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: false
+      DATA_SHARE_TEST_DATASET: true
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 100000.0
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      BATCH_SIZE: 32
+      # Model
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 4
+      TRAINER_TYPE: "nlptrainer"
+      # Training Parameters
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+
+  - name: "cfl_agnews_alpha1_avg"
+    description: "CFL AG News: 60 rounds, moderate non-IID (alpha=1.0), average aggregation"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 60
+      BITTORRENT_ENABLE: false
+      GOSSIP_ENABLE: false
+      FEDERATE_IGNORE_WEIGHT: true
+      DATASET: "ag_news@huggingface_datasets"
+      DATA_ROOT: ""
+      DATA_TEXT_FIELD: "text"
+      DATA_SPLIT_TRAIN_FOR_VAL: 0.1
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: false
+      DATA_SHARE_TEST_DATASET: true
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 1.0
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      BATCH_SIZE: 32
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 4
+      TRAINER_TYPE: "nlptrainer"
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+
+  - name: "cfl_agnews_alpha03_avg"
+    description: "CFL AG News: 60 rounds, high non-IID (alpha=0.3), average aggregation"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 60
+      BITTORRENT_ENABLE: false
+      GOSSIP_ENABLE: false
+      FEDERATE_IGNORE_WEIGHT: true
+      DATASET: "ag_news@huggingface_datasets"
+      DATA_ROOT: ""
+      DATA_TEXT_FIELD: "text"
+      DATA_SPLIT_TRAIN_FOR_VAL: 0.1
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: false
+      DATA_SHARE_TEST_DATASET: true
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 0.3
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      BATCH_SIZE: 32
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 4
+      TRAINER_TYPE: "nlptrainer"
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+
+  - name: "cfl_agnews_alpha01_avg"
+    description: "CFL AG News: 60 rounds, very high non-IID (alpha=0.1), average aggregation"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 60
+      BITTORRENT_ENABLE: false
+      GOSSIP_ENABLE: false
+      FEDERATE_IGNORE_WEIGHT: true
+      DATASET: "ag_news@huggingface_datasets"
+      DATA_ROOT: ""
+      DATA_TEXT_FIELD: "text"
+      DATA_SPLIT_TRAIN_FOR_VAL: 0.1
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: false
+      DATA_SHARE_TEST_DATASET: true
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 0.1
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      BATCH_SIZE: 32
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 4
+      TRAINER_TYPE: "nlptrainer"
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+
+  # ==========================================================================
+  # CelebA ResNet18 CFL (3 experiments)
+  # ==========================================================================
+
+  - name: "cfl_celeba_resnet_alpha100000_avg"
+    description: "CFL CelebA+ResNet18: 100 rounds, IID (alpha=100000), average aggregation"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      # CFL settings
+      BITTORRENT_ENABLE: false
+      GOSSIP_ENABLE: false
+      FEDERATE_IGNORE_WEIGHT: true
+      # Dataset & Model
+      DATASET: "celeba"
+      DATA_ROOT: "./data/"
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 100000.0
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_SHARE_TEST_DATASET: true
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      # Training
+      BATCH_SIZE: 16
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0005
+      GRAD_CLIP: 5.0
+      LOCAL_UPDATE_STEPS: 1
+      # LR Scheduler
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 1e-8
+      LR_SCHEDULER_MILESTONES: [11]
+
+  - name: "cfl_celeba_resnet_alpha1_avg"
+    description: "CFL CelebA+ResNet18: 100 rounds, moderate non-IID (alpha=1.0), average aggregation"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      BITTORRENT_ENABLE: false
+      GOSSIP_ENABLE: false
+      FEDERATE_IGNORE_WEIGHT: true
+      DATASET: "celeba"
+      DATA_ROOT: "./data/"
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 1.0
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_SHARE_TEST_DATASET: true
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      BATCH_SIZE: 16
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0005
+      GRAD_CLIP: 5.0
+      LOCAL_UPDATE_STEPS: 1
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 1e-8
+      LR_SCHEDULER_MILESTONES: [11]
+
+  - name: "cfl_celeba_resnet_alpha03_avg"
+    description: "CFL CelebA+ResNet18: 100 rounds, high non-IID (alpha=0.3), average aggregation"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      BITTORRENT_ENABLE: false
+      GOSSIP_ENABLE: false
+      FEDERATE_IGNORE_WEIGHT: true
+      DATASET: "celeba"
+      DATA_ROOT: "./data/"
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 0.3
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_SHARE_TEST_DATASET: true
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      BATCH_SIZE: 16
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0005
+      GRAD_CLIP: 5.0
+      LOCAL_UPDATE_STEPS: 1
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 1e-8
+      LR_SCHEDULER_MILESTONES: [11]

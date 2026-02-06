@@ -1,0 +1,40 @@
+# High-end smartphone simulation image
+# With full features and GPU support
+
+FROM federatedscope:base
+
+LABEL device.type="smartphone"
+LABEL device.capability="high"
+LABEL device.gpu.support="true"
+
+# Install GPU-related dependencies (PyTorch with CUDA)
+RUN pip install --no-cache-dir \
+    torch==2.1.0+cu118 \
+    torchvision==0.16.0+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118
+
+# Install additional dependencies for high-end devices
+RUN pip install --no-cache-dir \
+    transformers \
+    scikit-learn \
+    matplotlib \
+    seaborn \
+    pillow
+
+# Set device-specific environment variables
+ENV DEVICE_TYPE="smartphone_high"
+ENV GPU_AVAILABLE="true"
+ENV MEMORY_LIMIT="4096"  # 4GB
+ENV CPU_CORES="8"
+ENV NETWORK_TYPE="4G/5G"
+
+# Optimization settings
+ENV TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6"
+ENV CUDA_VISIBLE_DEVICES="0"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import torch; print('GPU available:', torch.cuda.is_available())" || exit 1
+
+# Entry command
+CMD ["python", "/app/federatedscope/main.py"]

@@ -1,0 +1,407 @@
+# ============================================================================
+# Multi-Experiment Batch Configuration - BitTorrent Compensation Study
+# ============================================================================
+#
+# Usage:
+#   python run_ray_hpc.py --batch experiments.yaml
+#
+# Total: 24 experiments (PRODUCTION MODE: 50 clients, 100 rounds)
+#   Set 1 (6): No compensation baseline: timeout=0 (no BT, local only) + timeout=inf (100% chunks)
+#   Set 2 (3): Compensation ON, tau=0.01, timeout=30s (~20% chunks)
+#   Set 3 (3): No compensation, tau=100 (rarity only), timeout=30s (~20% chunks)
+#   Set 4 (3): No compensation, tau=0.01, timeout=30s (~20% chunks)
+#   Set 5 (9): Compensation ON, tau=0.01, timeout={10,30,60}s (~7%,20%,40%) × alpha={10000,1.0,0.3}
+#
+# Timeout calculation (post-fix speed ~7 chunks/sec, 800 total chunks):
+#   1000000s → 100% (baseline, infinite wait)
+#   60s  → ~40%  (420 chunks capacity)
+#   30s  → ~20%  (210 chunks capacity)
+#   10s  → ~7%   (70 chunks capacity)
+#   0s   → 0%    (no BT exchange, local training only)
+#
+# ============================================================================
+
+# Global settings (can be overridden per experiment)
+global:
+  code_snapshot_dir: "./experiments_snapshots"
+  output_base_dir: "./experiments_output"
+  # GPU2 settings (commented out)
+  # partition: "gpu2"
+  # gpus_per_node: 4
+  # cpus_per_task: 64
+  # mem: "480G"
+  # CHUNK_TMP_DIR: "/tmp/fl_chunks_gpu2"
+  # GPU3 settings (active) - node03: 128 CPUs, 1500G mem, 2 GPUs max
+  partition: "gpu3"
+  nodes: 1
+  gpus_per_node: 2
+  cpus_per_task: 128
+  mem: "1400G"
+  time_limit: "48:00:00"  # 48 hours for production
+
+  # Chunk storage (use node-local tmpfs for fast I/O)
+  CHUNK_TMP_DIR: "/tmp/fl_chunks_gpu3"
+
+experiments:
+  # ==========================================================================
+  # Set 1: Baseline - No BT (timeout=0) + Full BT (timeout=inf)
+  # ==========================================================================
+  # --- Timeout = 0s (No BitTorrent, local training only) ---
+  # [COMPLETED]
+  # - name: "set1_nocomp_t0_alpha10000"
+  #   description: "No BitTorrent (timeout=0), local only, IID data (alpha=10000)"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BITTORRENT_TIMEOUT: 0.0
+  #     DATA_SPLIT_ALPHA: 10000.0
+
+  # [COMPLETED]
+  # - name: "set1_nocomp_t0_alpha1"
+  #   description: "No BitTorrent (timeout=0), local only, moderate non-IID (alpha=1.0)"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BITTORRENT_TIMEOUT: 0.0
+  #     DATA_SPLIT_ALPHA: 1.0
+
+  # [COMPLETED]
+  # - name: "set1_nocomp_t0_alpha03"
+  #   description: "No BitTorrent (timeout=0), local only, high non-IID (alpha=0.3)"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BITTORRENT_TIMEOUT: 0.0
+  #     DATA_SPLIT_ALPHA: 0.3
+
+  # --- Timeout = infinite (Full BitTorrent, wait for 100% chunks) ---
+  # [COMPLETED]
+  # - name: "set1_nocomp_inf_alpha10000"
+  #   description: "No compensation, infinite timeout, IID data (alpha=10000)"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BITTORRENT_TIMEOUT: 1000000.0
+  #     DATA_SPLIT_ALPHA: 10000.0
+
+  # [COMPLETED]
+  # - name: "set1_nocomp_inf_alpha1"
+  #   description: "No compensation, infinite timeout, moderate non-IID (alpha=1.0)"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BITTORRENT_TIMEOUT: 1000000.0
+  #     DATA_SPLIT_ALPHA: 1.0
+
+  # [COMPLETED]
+  # - name: "set1_nocomp_inf_alpha03"
+  #   description: "No compensation, infinite timeout, high non-IID (alpha=0.3)"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BITTORRENT_TIMEOUT: 1000000.0
+  #     DATA_SPLIT_ALPHA: 0.3
+
+  # ==========================================================================
+  # Set 2: Compensation ON, tau=0.01, timeout=30s (~20% chunks)
+  # ==========================================================================
+  # [COMPLETED]
+  # - name: "set2_comp_t30_tau001_alpha10000"
+  #   description: "Compensation ON, tau=0.01, timeout=30s (~20%), IID data"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 10000.0
+
+  # [COMPLETED]
+  # - name: "set2_comp_t30_tau001_alpha1"
+  #   description: "Compensation ON, tau=0.01, timeout=30s (~20%), moderate non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 1.0
+
+  # [COMPLETED]
+  # - name: "set2_comp_t30_tau001_alpha03"
+  #   description: "Compensation ON, tau=0.01, timeout=30s (~20%), high non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 0.3
+
+  # ==========================================================================
+  # Set 3: No Compensation, tau=100 (rarity only), timeout=30s (~20% chunks)
+  # ==========================================================================
+  # [COMPLETED]
+  # - name: "set3_nocomp_t30_tau100_alpha10000"
+  #   description: "No compensation, tau=100 (rarity only), timeout=30s (~20%), IID data"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BT_RARITY_WEIGHT: 100.0
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 10000.0
+
+  # [COMPLETED]
+  # - name: "set3_nocomp_t30_tau100_alpha1"
+  #   description: "No compensation, tau=100 (rarity only), timeout=30s (~20%), moderate non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BT_RARITY_WEIGHT: 100.0
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 1.0
+
+  # [COMPLETED]
+  # - name: "set3_nocomp_t30_tau100_alpha03"
+  #   description: "No compensation, tau=100 (rarity only), timeout=30s (~20%), high non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BT_RARITY_WEIGHT: 100.0
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 0.3
+
+  # ==========================================================================
+  # Set 4: No Compensation, tau=0.01, timeout=30s (~20% chunks)
+  # ==========================================================================
+  # [COMPLETED]
+  # - name: "set4_nocomp_t30_tau001_alpha10000"
+  #   description: "No compensation, tau=0.01, timeout=30s (~20%), IID data"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 10000.0
+
+  # [COMPLETED]
+  # - name: "set4_nocomp_t30_tau001_alpha1"
+  #   description: "No compensation, tau=0.01, timeout=30s (~20%), moderate non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 1.0
+
+  # [COMPLETED]
+  # - name: "set4_nocomp_t30_tau001_alpha03"
+  #   description: "No compensation, tau=0.01, timeout=30s (~20%), high non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: False
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 0.3
+
+  # ==========================================================================
+  # Set 5: Compensation ON, tau=0.01, timeout={20,30,60}s (~14%,20%,40%) × alpha={10000,1.0,0.3}
+  # ==========================================================================
+  # --- Timeout = 20s (~14% chunks) ---
+  # [COMPLETED]
+  # - name: "set5_comp_t20_tau001_alpha10000"
+  #   description: "Compensation ON, tau=0.01, timeout=20s (~14%), IID data"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 20.0
+  #     DATA_SPLIT_ALPHA: 10000.0
+
+  # [COMPLETED]
+  # - name: "set5_comp_t20_tau001_alpha1"
+  #   description: "Compensation ON, tau=0.01, timeout=20s (~14%), moderate non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 20.0
+  #     DATA_SPLIT_ALPHA: 1.0
+
+  # [COMPLETED]
+  # - name: "set5_comp_t20_tau001_alpha03"
+  #   description: "Compensation ON, tau=0.01, timeout=20s (~14%), high non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 20.0
+  #     DATA_SPLIT_ALPHA: 0.3
+
+  # --- Timeout = 30s (~20% chunks) ---
+  # [COMPLETED]
+  # - name: "set5_comp_t30_tau001_alpha10000"
+  #   description: "Compensation ON, tau=0.01, timeout=30s (~20%), IID data"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 10000.0
+
+  # [COMPLETED]
+  # - name: "set5_comp_t30_tau001_alpha1"
+  #   description: "Compensation ON, tau=0.01, timeout=30s (~20%), moderate non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 1.0
+
+  # [COMPLETED]
+  # - name: "set5_comp_t30_tau001_alpha03"
+  #   description: "Compensation ON, tau=0.01, timeout=30s (~20%), high non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 30.0
+  #     DATA_SPLIT_ALPHA: 0.3
+
+  # --- Timeout = 60s (~40% chunks) --- [PENDING - OOM issue]
+  # - name: "set5_comp_t60_tau001_alpha10000"
+  #   description: "Compensation ON, tau=0.01, timeout=60s (~40%), IID data"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 60.0
+  #     DATA_SPLIT_ALPHA: 10000.0
+
+  # - name: "set5_comp_t60_tau001_alpha1"
+  #   description: "Compensation ON, tau=0.01, timeout=60s (~40%), moderate non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 60.0
+  #     DATA_SPLIT_ALPHA: 1.0
+
+  # - name: "set5_comp_t60_tau001_alpha03"
+  #   description: "Compensation ON, tau=0.01, timeout=60s (~40%), high non-IID"
+  #   config:
+  #     CLIENT_NUM: 50
+  #     TOTAL_ROUNDS: 100
+  #     DATASET: "celeba"
+  #     MODEL_TYPE: "resnet18"
+  #     LEARNING_RATE: 0.0001
+  #     BT_ENABLE_COMPENSATION: True
+  #     BT_RARITY_WEIGHT: 0.01
+  #     BITTORRENT_TIMEOUT: 60.0
+  #     DATA_SPLIT_ALPHA: 0.3
+
+  # ==========================================================================
+  # TEST: Infinite timeout (100000s) to test if OOM is timeout-related
+  # ==========================================================================
+  - name: "test_infinite_timeout_alpha10000"
+    description: "TEST: Infinite timeout (100000s), Compensation ON, IID data"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      LEARNING_RATE: 0.0001
+      BT_ENABLE_COMPENSATION: True
+      BT_RARITY_WEIGHT: 0.01
+      BITTORRENT_TIMEOUT: 100000.0
+      DATA_SPLIT_ALPHA: 10000.0

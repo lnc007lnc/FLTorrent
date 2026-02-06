@@ -1,0 +1,67 @@
+# FLTorrent Experiment 3: Protocol-only Scaling
+# Purpose: Measure protocol overhead without ML computation
+# Usage: python run_ray_hpc.py --batch experiments_exp3_scaling.yaml
+
+global:
+  # Global SLURM settings for gpu3
+  partition: "gpu3"
+  nodes: 1
+  gpus_per_node: 2
+  cpus_per_task: 128
+  mem: "1400G"
+  time_limit: "24:00:00"
+
+  # Global FL configuration
+  CHUNK_TMP_DIR: "/tmp/fl_chunks"
+  CHUNK_NFS_COMPATIBLE: false
+  CHUNK_NUM: 16
+  BATCH_SIZE: 32
+  LEARNING_RATE: 0.01
+  OPTIMIZER: "SGD"
+  LOCAL_UPDATE_STEPS: 1
+
+  # BitTorrent configuration
+  BT_ENABLE_COMPENSATION: true
+  BT_CHUNK_SELECTION: "rarest_first"
+  BT_MAX_UPLOAD_SLOTS: 4
+  BT_SAVE_STATISTICS: true
+
+experiments:
+  - name: "exp3_scaling_n50"
+    description: "Protocol-only N=50"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 10
+      BT_PROTOCOL_ONLY: true
+      BT_SYNTHETIC_CHUNK_SIZE: 1048576
+      BT_SYNTHETIC_NUM_CHUNKS: 16
+      BITTORRENT_TIMEOUT: 60.0
+      DATASET: "toy"
+      MODEL_TYPE: "lr"
+      MODEL_OUT_CHANNELS: 1
+
+  - name: "exp3_scaling_n100"
+    description: "Protocol-only N=100"
+    config:
+      CLIENT_NUM: 100
+      TOTAL_ROUNDS: 10
+      BT_PROTOCOL_ONLY: true
+      BT_SYNTHETIC_CHUNK_SIZE: 1048576
+      BT_SYNTHETIC_NUM_CHUNKS: 16
+      BITTORRENT_TIMEOUT: 120.0
+      DATASET: "toy"
+      MODEL_TYPE: "lr"
+      MODEL_OUT_CHANNELS: 1
+
+  - name: "exp3_scaling_n200"
+    description: "Protocol-only N=200"
+    config:
+      CLIENT_NUM: 200
+      TOTAL_ROUNDS: 10
+      BT_PROTOCOL_ONLY: true
+      BT_SYNTHETIC_CHUNK_SIZE: 1048576
+      BT_SYNTHETIC_NUM_CHUNKS: 16
+      BITTORRENT_TIMEOUT: 180.0
+      DATASET: "toy"
+      MODEL_TYPE: "lr"
+      MODEL_OUT_CHANNELS: 1

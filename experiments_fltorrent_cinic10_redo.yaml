@@ -1,0 +1,641 @@
+# ============================================================================
+# CINIC10 FLTorrent Experiments - Redo with Sample Size Weighted Aggregation
+# ============================================================================
+#
+# Total: 18 experiments
+# GLOBAL ALPHA SORTING: alpha03 -> alpha1 -> alpha100000
+# Within each alpha: MobileNetV2 (t10000, t40) -> ResNet18 (t10000, t30) -> ResNet50 (t10000, t165)
+#
+# ============================================================================
+
+global:
+  code_snapshot_dir: "./experiments_snapshots"
+  output_base_dir: "./experiments_output_fltorrent_cinic10_redo"
+
+  partition: "gpu3"
+  nodes: 1
+  gpus_per_node: 2
+  cpus_per_task: 128
+  mem: "1400G"
+  time_limit: "48:00:00"
+
+  CHUNK_TMP_DIR: "/tmp/fl_chunks"
+  CHUNK_NUM: 16
+  DATA_ROOT: "./data"
+  DATA_SPLITTER: "lda"
+  DATA_SPLITS: [0.8, 0.1, 0.1]
+  DATA_AUGMENTATION: true
+  DATA_AUGMENTATION_CROP_SIZE: 32
+  DATA_AUGMENTATION_CROP_PADDING: 4
+  DATA_TRANSFORM_MEAN: [0.47889522, 0.47227842, 0.43047404]
+  DATA_TRANSFORM_STD: [0.24205776, 0.23828046, 0.25874835]
+
+experiments:
+  # ==========================================================================
+  # Alpha 0.3 (High non-IID) - All models and timeouts
+  # ==========================================================================
+  - name: "mobilenetv2_t10000_alpha03"
+    description: "MobileNetV2, timeout=10000s (full BT), high non-IID (alpha=0.3)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "mobilenetv2"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.05
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0004
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.000001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 10000.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 0.3
+
+  - name: "mobilenetv2_t40_alpha03"
+    description: "MobileNetV2, timeout=40s (partial BT), high non-IID (alpha=0.3)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "mobilenetv2"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.05
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0004
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.000001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 40.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 0.3
+
+  - name: "resnet18_t10000_alpha03"
+    description: "ResNet18, timeout=10000s (full BT), high non-IID (alpha=0.3)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 10000.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 0.3
+
+  - name: "resnet18_t30_alpha03"
+    description: "ResNet18, timeout=30s (partial BT), high non-IID (alpha=0.3)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 30.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 0.3
+
+  - name: "resnet50_t10000_alpha03"
+    description: "ResNet50, timeout=10000s (full BT), high non-IID (alpha=0.3)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 32
+      MODEL_TYPE: "resnet50"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 10000.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 0.3
+
+  - name: "resnet50_t165_alpha03"
+    description: "ResNet50, timeout=165s (partial BT), high non-IID (alpha=0.3)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 32
+      MODEL_TYPE: "resnet50"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 165.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 0.3
+
+  # ==========================================================================
+  # Alpha 1.0 (Moderate non-IID) - All models and timeouts
+  # ==========================================================================
+  - name: "mobilenetv2_t10000_alpha1"
+    description: "MobileNetV2, timeout=10000s (full BT), moderate non-IID (alpha=1.0)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "mobilenetv2"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.05
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0004
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.000001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 10000.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 1.0
+
+  - name: "mobilenetv2_t40_alpha1"
+    description: "MobileNetV2, timeout=40s (partial BT), moderate non-IID (alpha=1.0)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "mobilenetv2"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.05
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0004
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.000001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 40.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 1.0
+
+  - name: "resnet18_t10000_alpha1"
+    description: "ResNet18, timeout=10000s (full BT), moderate non-IID (alpha=1.0)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 10000.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 1.0
+
+  - name: "resnet18_t30_alpha1"
+    description: "ResNet18, timeout=30s (partial BT), moderate non-IID (alpha=1.0)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 30.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 1.0
+
+  - name: "resnet50_t10000_alpha1"
+    description: "ResNet50, timeout=10000s (full BT), moderate non-IID (alpha=1.0)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 32
+      MODEL_TYPE: "resnet50"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 10000.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 1.0
+
+  - name: "resnet50_t165_alpha1"
+    description: "ResNet50, timeout=165s (partial BT), moderate non-IID (alpha=1.0)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 32
+      MODEL_TYPE: "resnet50"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 165.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 1.0
+
+  # ==========================================================================
+  # Alpha 100000 (IID) - All models and timeouts
+  # ==========================================================================
+  - name: "mobilenetv2_t10000_alpha100000"
+    description: "MobileNetV2, timeout=10000s (full BT), IID data (alpha=100000)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "mobilenetv2"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.05
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0004
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.000001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 10000.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 100000.0
+      PERSONALIZATION_LOCAL_PARAM: []
+
+  - name: "mobilenetv2_t40_alpha100000"
+    description: "MobileNetV2, timeout=40s (partial BT), IID data (alpha=100000)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "mobilenetv2"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.05
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0004
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.000001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 40.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 100000.0
+      PERSONALIZATION_LOCAL_PARAM: []
+
+  - name: "resnet18_t10000_alpha100000"
+    description: "ResNet18, timeout=10000s (full BT), IID data (alpha=100000)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 10000.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 100000.0
+      PERSONALIZATION_LOCAL_PARAM: []
+
+  - name: "resnet18_t30_alpha100000"
+    description: "ResNet18, timeout=30s (partial BT), IID data (alpha=100000)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 64
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 30.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 100000.0
+      PERSONALIZATION_LOCAL_PARAM: []
+
+  - name: "resnet50_t10000_alpha100000"
+    description: "ResNet50, timeout=10000s (full BT), IID data (alpha=100000)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 32
+      MODEL_TYPE: "resnet50"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 10000.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 100000.0
+      PERSONALIZATION_LOCAL_PARAM: []
+
+  - name: "resnet50_t165_alpha100000"
+    description: "ResNet50, timeout=165s (partial BT), IID data (alpha=100000)"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 100
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "cinic10"
+      BATCH_SIZE: 32
+      MODEL_TYPE: "resnet50"
+      MODEL_OUT_CHANNELS: 10
+      LEARNING_RATE: 0.1
+      OPTIMIZER: "SGD"
+      OPTIMIZER_MOMENTUM: 0.9
+      WEIGHT_DECAY: 0.0005
+      LOCAL_UPDATE_STEPS: 1
+      GRAD_CLIP: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 0.00001
+      LR_SCHEDULER_MILESTONES: [11]
+      CRITERION_TYPE: "CrossEntropyLoss"
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "correct", "f1"]
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 165.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+      DATA_SPLIT_ALPHA: 100000.0
+      PERSONALIZATION_LOCAL_PARAM: []

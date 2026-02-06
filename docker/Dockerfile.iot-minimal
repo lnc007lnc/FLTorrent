@@ -1,0 +1,74 @@
+# IoT device simulation image
+# Extremely resource constrained, minimal installation
+
+FROM python:3.9-alpine
+
+LABEL device.type="iot"
+LABEL device.capability="minimal"
+LABEL device.gpu.support="false"
+
+# Set working directory
+WORKDIR /app
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies (Alpine Linux)
+RUN apk add --no-cache \
+    # Basic tools
+    curl \
+    wget \
+    # Network tools (tc for traffic control)
+    iproute2 \
+    iptables \
+    # Build dependencies
+    gcc \
+    g++ \
+    musl-dev \
+    linux-headers \
+    # Python dependencies
+    python3-dev \
+    # Clean cache
+    && rm -rf /var/cache/apk/*
+
+# Install minimal Python dependencies
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir \
+    numpy==1.24.3 \
+    torch==2.1.0+cpu \
+    --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir \
+    pyyaml \
+    requests
+
+# Copy minimal FederatedScope core files
+COPY federatedscope/ /app/federatedscope/
+COPY requirements_minimal.txt /tmp/
+
+# Install minimal dependencies
+RUN pip install --no-cache-dir -r /tmp/requirements_minimal.txt \
+    && rm /tmp/requirements_minimal.txt
+
+# Set device-specific environment variables
+ENV DEVICE_TYPE="iot_minimal"
+ENV GPU_AVAILABLE="false"
+ENV MEMORY_LIMIT="256"   # 256MB
+ENV CPU_CORES="1"
+ENV NETWORK_TYPE="2G/3G"
+
+# Extreme resource constraints
+ENV TORCH_NUM_THREADS="1"
+ENV OMP_NUM_THREADS="1"
+ENV MKL_NUM_THREADS="1"
+ENV MALLOC_TRIM_THRESHOLD_="100000"
+
+# Create directories
+RUN mkdir -p /app/data /app/logs /app/output /app/configs
+
+# Health check (simplified)
+HEALTHCHECK --interval=120s --timeout=30s --start-period=15s --retries=1 \
+    CMD python -c "print('IoT device ready')" || exit 1
+
+# Entry command
+CMD ["python", "/app/federatedscope/main.py"]

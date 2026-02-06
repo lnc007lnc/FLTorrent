@@ -1,0 +1,266 @@
+# ============================================================================
+# Experiments for GPU3 Node - TinyBERT + SST-2 New Experiments
+# ============================================================================
+#
+# Usage:
+#   python run_ray_hpc.py --batch experiments_gpu3_new.yaml
+#
+# Node: GPU3 (srv-it-node03) - 128 CPUs, 1.5TB RAM, 2x GPUs
+# Model: TinyBERT (14.35M parameters)
+# Dataset: SST-2 (Stanford Sentiment Treebank, binary classification)
+#
+# Experiments:
+#   Set 1: timeout=100000 (infinite wait), round=50, alpha=100000/1.0/0.3
+#   Set 2: timeout=55, round=50, alpha=100000/1.0/0.3
+#
+# ============================================================================
+
+# Global settings for TinyBERT + SST-2 on GPU3
+global:
+  code_snapshot_dir: "./experiments_snapshots"
+  output_base_dir: "./experiments_output_gpu3"
+
+  # GPU3 Node Resources (1.5TB RAM for TinyBERT)
+  partition: "gpu3"
+  nodes: 1
+  gpus_per_node: 2
+  cpus_per_task: 128
+  mem: "1400G"
+  time_limit: "48:00:00"
+
+experiments:
+  # ==========================================================================
+  # Set 1: Infinite timeout (timeout=100000), round=50
+  # ==========================================================================
+
+  # --- IID data (alpha=100000) ---
+  - name: "fltorrent_inf_r50_alpha100000"
+    description: "FLTorrent infinite timeout: 50 rounds, timeout=100000s, IID data"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 50
+      CHUNK_NUM: 16
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "sst2@huggingface_datasets"
+      DATA_ROOT: "glue"
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: True
+      DATA_SHARE_TEST_DATASET: True
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 100000.0
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_MERGE_LEAF_BEFORE_SPLIT: False
+      BATCH_SIZE: 32
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 2
+      TRAINER_TYPE: "nlptrainer"
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      LR_SCHEDULER_TYPE: ""
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+      BT_ENABLE_COMPENSATION: True
+      BITTORRENT_TIMEOUT: 100000.0
+      BT_RARITY_WEIGHT: 0.01
+      CHUNK_TMP_DIR: "/tmp/fl_chunks_gpu3"
+      CHUNK_NFS_COMPATIBLE: False
+
+  # --- Moderate non-IID (alpha=1.0) ---
+  - name: "fltorrent_inf_r50_alpha1"
+    description: "FLTorrent infinite timeout: 50 rounds, timeout=100000s, moderate non-IID"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 50
+      CHUNK_NUM: 16
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "sst2@huggingface_datasets"
+      DATA_ROOT: "glue"
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: True
+      DATA_SHARE_TEST_DATASET: True
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 1.0
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_MERGE_LEAF_BEFORE_SPLIT: False
+      BATCH_SIZE: 32
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 2
+      TRAINER_TYPE: "nlptrainer"
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      LR_SCHEDULER_TYPE: ""
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+      BT_ENABLE_COMPENSATION: True
+      BITTORRENT_TIMEOUT: 100000.0
+      BT_RARITY_WEIGHT: 0.01
+      CHUNK_TMP_DIR: "/tmp/fl_chunks_gpu3"
+      CHUNK_NFS_COMPATIBLE: False
+
+  # --- High non-IID (alpha=0.3) ---
+  - name: "fltorrent_inf_r50_alpha03"
+    description: "FLTorrent infinite timeout: 50 rounds, timeout=100000s, high non-IID"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 50
+      CHUNK_NUM: 16
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "sst2@huggingface_datasets"
+      DATA_ROOT: "glue"
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: True
+      DATA_SHARE_TEST_DATASET: True
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 0.3
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_MERGE_LEAF_BEFORE_SPLIT: False
+      BATCH_SIZE: 32
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 2
+      TRAINER_TYPE: "nlptrainer"
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      LR_SCHEDULER_TYPE: ""
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+      BT_ENABLE_COMPENSATION: True
+      BITTORRENT_TIMEOUT: 100000.0
+      BT_RARITY_WEIGHT: 0.01
+      CHUNK_TMP_DIR: "/tmp/fl_chunks_gpu3"
+      CHUNK_NFS_COMPATIBLE: False
+
+  # ==========================================================================
+  # Set 2: Timeout=55s, round=50
+  # ==========================================================================
+
+  # --- IID data (alpha=100000) ---
+  - name: "fltorrent_t55_r50_alpha100000"
+    description: "FLTorrent timeout=55s: 50 rounds, IID data"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 50
+      CHUNK_NUM: 16
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "sst2@huggingface_datasets"
+      DATA_ROOT: "glue"
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: True
+      DATA_SHARE_TEST_DATASET: True
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 100000.0
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_MERGE_LEAF_BEFORE_SPLIT: False
+      BATCH_SIZE: 32
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 2
+      TRAINER_TYPE: "nlptrainer"
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      LR_SCHEDULER_TYPE: ""
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+      BT_ENABLE_COMPENSATION: True
+      BITTORRENT_TIMEOUT: 55.0
+      BT_RARITY_WEIGHT: 0.01
+      CHUNK_TMP_DIR: "/tmp/fl_chunks_gpu3"
+      CHUNK_NFS_COMPATIBLE: False
+
+  # --- Moderate non-IID (alpha=1.0) ---
+  - name: "fltorrent_t55_r50_alpha1"
+    description: "FLTorrent timeout=55s: 50 rounds, moderate non-IID"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 50
+      CHUNK_NUM: 16
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "sst2@huggingface_datasets"
+      DATA_ROOT: "glue"
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: True
+      DATA_SHARE_TEST_DATASET: True
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 1.0
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_MERGE_LEAF_BEFORE_SPLIT: False
+      BATCH_SIZE: 32
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 2
+      TRAINER_TYPE: "nlptrainer"
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      LR_SCHEDULER_TYPE: ""
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+      BT_ENABLE_COMPENSATION: True
+      BITTORRENT_TIMEOUT: 55.0
+      BT_RARITY_WEIGHT: 0.01
+      CHUNK_TMP_DIR: "/tmp/fl_chunks_gpu3"
+      CHUNK_NFS_COMPATIBLE: False
+
+  # --- High non-IID (alpha=0.3) ---
+  - name: "fltorrent_t55_r50_alpha03"
+    description: "FLTorrent timeout=55s: 50 rounds, high non-IID"
+    config:
+      CLIENT_NUM: 50
+      TOTAL_ROUNDS: 50
+      CHUNK_NUM: 16
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      DATASET: "sst2@huggingface_datasets"
+      DATA_ROOT: "glue"
+      DATA_MAX_LEN: 128
+      DATA_HF_HALF_VAL_DUMMY_TEST: True
+      DATA_SHARE_TEST_DATASET: True
+      DATA_SPLITTER: "lda"
+      DATA_SPLIT_ALPHA: 0.3
+      DATA_SPLITS: [0.8, 0.1, 0.1]
+      DATA_MERGE_LEAF_BEFORE_SPLIT: False
+      BATCH_SIZE: 32
+      MODEL_TYPE: "./pretrained_models/TinyBERT_General_4L_312D@transformers"
+      MODEL_TASK: "SequenceClassification"
+      MODEL_OUT_CHANNELS: 2
+      TRAINER_TYPE: "nlptrainer"
+      LOCAL_UPDATE_STEPS: 1
+      LEARNING_RATE: 0.00002
+      OPTIMIZER: "AdamW"
+      WEIGHT_DECAY: 0.01
+      GRAD_CLIP: 1.0
+      CRITERION_TYPE: "CrossEntropyLoss"
+      LR_SCHEDULER_TYPE: ""
+      EVAL_FREQ: 1
+      EVAL_METRICS: ["acc", "f1"]
+      BT_ENABLE_COMPENSATION: True
+      BITTORRENT_TIMEOUT: 55.0
+      BT_RARITY_WEIGHT: 0.01
+      CHUNK_TMP_DIR: "/tmp/fl_chunks_gpu3"
+      CHUNK_NFS_COMPATIBLE: False

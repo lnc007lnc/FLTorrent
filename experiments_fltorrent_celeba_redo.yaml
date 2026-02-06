@@ -1,0 +1,225 @@
+# ============================================================================
+# CelebA FLTorrent Experiments - Redo with Sample Size Weighted Aggregation
+# ============================================================================
+#
+# Total: 6 experiments
+# GLOBAL ALPHA SORTING: alpha03 -> alpha1 -> alpha100000
+# Within each alpha: t60 -> t75
+#
+# ============================================================================
+
+global:
+  code_snapshot_dir: "./experiments_snapshots"
+  output_base_dir: "./experiments_output_fltorrent_celeba_redo"
+
+  partition: "gpu3"
+  nodes: 1
+  gpus_per_node: 2
+  cpus_per_task: 128
+  mem: "1400G"
+  time_limit: "72:00:00"
+
+  # Common settings
+  CLIENT_NUM: 50
+  CHUNK_NUM: 16
+  CHUNK_TMP_DIR: "/tmp/fl_chunks_celeba"
+  DATA_ROOT: "./data/"
+  DATA_SPLITTER: "lda"
+  DATA_SPLITS: [0.8, 0.1, 0.1]
+  DATA_SHARE_TEST_DATASET: true
+
+experiments:
+  # ==========================================================================
+  # Alpha 0.3 (High non-IID) - All timeouts
+  # ==========================================================================
+  - name: "fltorrent_t60_celeba_resnet_alpha03"
+    description: "FLTorrent t=60s: CelebA+ResNet18, 100 rounds, high non-IID (alpha=0.3)"
+    config:
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      TOTAL_ROUNDS: 100
+      BATCH_SIZE: 16
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0005
+      GRAD_CLIP: 5.0
+      LOCAL_UPDATE_STEPS: 1
+      DATA_SPLIT_ALPHA: 0.3
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 1e-8
+      LR_SCHEDULER_MILESTONES: [11]
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 60.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+
+  - name: "fltorrent_t75_celeba_resnet_alpha03"
+    description: "FLTorrent t=75s: CelebA+ResNet18, 100 rounds, high non-IID (alpha=0.3)"
+    config:
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      TOTAL_ROUNDS: 100
+      BATCH_SIZE: 16
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0005
+      GRAD_CLIP: 5.0
+      LOCAL_UPDATE_STEPS: 1
+      DATA_SPLIT_ALPHA: 0.3
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 1e-8
+      LR_SCHEDULER_MILESTONES: [11]
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 75.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+
+  # ==========================================================================
+  # Alpha 1.0 (Moderate non-IID) - All timeouts
+  # ==========================================================================
+  - name: "fltorrent_t60_celeba_resnet_alpha1"
+    description: "FLTorrent t=60s: CelebA+ResNet18, 100 rounds, moderate non-IID (alpha=1.0)"
+    config:
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      TOTAL_ROUNDS: 100
+      BATCH_SIZE: 16
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0005
+      GRAD_CLIP: 5.0
+      LOCAL_UPDATE_STEPS: 1
+      DATA_SPLIT_ALPHA: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 1e-8
+      LR_SCHEDULER_MILESTONES: [11]
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 60.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+
+  - name: "fltorrent_t75_celeba_resnet_alpha1"
+    description: "FLTorrent t=75s: CelebA+ResNet18, 100 rounds, moderate non-IID (alpha=1.0)"
+    config:
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      TOTAL_ROUNDS: 100
+      BATCH_SIZE: 16
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0005
+      GRAD_CLIP: 5.0
+      LOCAL_UPDATE_STEPS: 1
+      DATA_SPLIT_ALPHA: 1.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 1e-8
+      LR_SCHEDULER_MILESTONES: [11]
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 75.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+
+  # ==========================================================================
+  # Alpha 100000 (IID) - All timeouts
+  # ==========================================================================
+  - name: "fltorrent_t60_celeba_resnet_alpha100000"
+    description: "FLTorrent t=60s: CelebA+ResNet18, 100 rounds, IID (alpha=100000)"
+    config:
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      TOTAL_ROUNDS: 100
+      BATCH_SIZE: 16
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0005
+      GRAD_CLIP: 5.0
+      LOCAL_UPDATE_STEPS: 1
+      DATA_SPLIT_ALPHA: 100000.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 1e-8
+      LR_SCHEDULER_MILESTONES: [11]
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 60.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+
+  - name: "fltorrent_t75_celeba_resnet_alpha100000"
+    description: "FLTorrent t=75s: CelebA+ResNet18, 100 rounds, IID (alpha=100000)"
+    config:
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      TOTAL_ROUNDS: 100
+      BATCH_SIZE: 16
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0005
+      GRAD_CLIP: 5.0
+      LOCAL_UPDATE_STEPS: 1
+      DATA_SPLIT_ALPHA: 100000.0
+      LR_SCHEDULER_TYPE: "SequentialLR"
+      LR_SCHEDULER_PHASE1_START_FACTOR: 0.01
+      LR_SCHEDULER_PHASE1_TOTAL_ITERS: 10
+      LR_SCHEDULER_PHASE2_T_MAX: 90
+      LR_SCHEDULER_PHASE2_ETA_MIN: 1e-8
+      LR_SCHEDULER_MILESTONES: [11]
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 75.0
+      BT_ENABLE_COMPENSATION: true
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false

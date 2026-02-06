@@ -1,0 +1,66 @@
+# Experiment 1: Bandwidth Heterogeneity with Compensation DISABLED (Control)
+# Purpose: Figure showing (a) time-to-accuracy (b) per-client accuracy boxplot
+
+use_gpu: True
+device: 0
+seed: 42
+
+federate:
+  mode: 'standalone'
+  client_num: 50
+  total_round_num: 100
+  sample_client_num: 50
+  method: FedAvg
+
+data:
+  root: 'data/'
+  type: 'CIFAR10@torchvision'
+  splits: [0.8, 0.1, 0.1]
+  splitter: 'lda'
+  splitter_args: [{'alpha': 0.5}]
+
+dataloader:
+  batch_size: 32
+
+model:
+  type: convnet2
+  hidden: 512
+  out_channels: 10
+  dropout: 0.0
+
+train:
+  local_update_steps: 5
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.01
+    type: SGD
+
+criterion:
+  type: CrossEntropyLoss
+
+trainer:
+  type: cvtrainer
+
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  report: ['weighted_avg', 'avg', 'fairness', 'raw']
+
+# BitTorrent P2P exchange
+bittorrent:
+  enable: true
+  timeout: 120.0
+  enable_compensation: false  # KEY: Compensation DISABLED
+  bandwidth_heterogeneity: true
+  slow_client_ratio: 0.5
+  fast_bandwidth_mbps: 100.0
+  slow_bandwidth_mbps: 10.0
+  save_statistics: true
+  verbose: true
+  log_dir: 'exp_out/bandwidth_comp_off/bt_logs'
+
+chunk:
+  num_chunks: 16
+  importance_method: 'magnitude'
+
+outdir: 'exp_out/bandwidth_comp_off'

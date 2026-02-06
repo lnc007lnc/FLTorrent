@@ -1,0 +1,105 @@
+# ============================================================================
+# CelebA + ResNet18 FLTorrent t=30s alpha=0.3 - 3 Runs
+# ============================================================================
+#
+# Usage:
+#   python run_ray_hpc.py --batch experiments_celeba_t30_alpha03_3runs.yaml
+#
+# ============================================================================
+
+global:
+  code_snapshot_dir: "./experiments_snapshots"
+  output_base_dir: "./experiments_output_fltorrent_all_redo"
+
+  # GPU2 Node
+  partition: "gpu2"
+  nodes: 1
+  gpus_per_node: 4
+  cpus_per_task: 64
+  mem: "500G"
+  time_limit: "24:00:00"
+
+  # Common settings
+  CLIENT_NUM: 50
+  CHUNK_NUM: 16
+  CHUNK_TMP_DIR: "/tmp/fl_chunks_celeba_t30"
+
+  # Data settings
+  DATA_ROOT: "./data/"
+  DATA_SPLITTER: "lda"
+  DATA_SPLITS: [0.8, 0.1, 0.1]
+  DATA_SUBSAMPLE: 1.0
+  DATA_SHARE_TEST_DATASET: true
+
+experiments:
+  - name: "fltorrent_t30_celeba_alpha03_run1"
+    description: "FLTorrent t=30s CelebA ResNet18 alpha=0.3 Run1"
+    config:
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      TOTAL_ROUNDS: 100
+      BATCH_SIZE: 64
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0
+      LOCAL_UPDATE_STEPS: 1
+      DATA_SPLIT_ALPHA: 0.3
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 30.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+
+  - name: "fltorrent_t30_celeba_alpha03_run2"
+    description: "FLTorrent t=30s CelebA ResNet18 alpha=0.3 Run2"
+    config:
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      TOTAL_ROUNDS: 100
+      BATCH_SIZE: 64
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0
+      LOCAL_UPDATE_STEPS: 1
+      DATA_SPLIT_ALPHA: 0.3
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 30.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
+
+  - name: "fltorrent_t30_celeba_alpha03_run3"
+    description: "FLTorrent t=30s CelebA ResNet18 alpha=0.3 Run3"
+    config:
+      DATASET: "celeba"
+      MODEL_TYPE: "resnet18"
+      MODEL_OUT_CHANNELS: 1
+      CRITERION_TYPE: "BCEWithLogitsLoss"
+      TRAINER_TYPE: "cvtrainer"
+      EVAL_METRICS: ['acc', 'correct', 'f1']
+      TOTAL_ROUNDS: 100
+      BATCH_SIZE: 64
+      LEARNING_RATE: 0.0001
+      OPTIMIZER: "Adam"
+      WEIGHT_DECAY: 0.0
+      LOCAL_UPDATE_STEPS: 1
+      DATA_SPLIT_ALPHA: 0.3
+      TOPOLOGY_TYPE: "mesh"
+      TOPOLOGY_CONNECTIONS: 4
+      BITTORRENT_ENABLE: true
+      BITTORRENT_TIMEOUT: 30.0
+      BT_ENABLE_COMPENSATION: false
+      BT_RARITY_WEIGHT: 0.01
+      GOSSIP_ENABLE: false
