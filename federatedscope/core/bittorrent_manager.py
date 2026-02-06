@@ -447,26 +447,6 @@ class BitTorrentManager:
         # 🔧 MEMORY TEST: Reduced from 10000 to 500
         self._request_trigger_queue = queue.Queue(maxsize=500)
 
-        # ==================== Experiment 1: Bandwidth Heterogeneity ====================
-        # Initialize slow client IDs for bandwidth simulation
-        self._slow_client_ids = set()
-        if cfg and hasattr(cfg, 'bittorrent') and cfg.bittorrent.bandwidth_heterogeneity:
-            if cfg.bittorrent.slow_client_ids and len(cfg.bittorrent.slow_client_ids) > 0:
-                # Use explicit list from config
-                self._slow_client_ids = set(cfg.bittorrent.slow_client_ids)
-                logger.info(f"[BW-SIM] Client {client_id}: Using explicit slow client list: {self._slow_client_ids}")
-            else:
-                # Auto-assign based on slow_client_ratio
-                # Deterministic assignment: first N clients are slow
-                total_clients = cfg.federate.client_num if hasattr(cfg, 'federate') else 50
-                slow_count = int(total_clients * cfg.bittorrent.slow_client_ratio)
-                self._slow_client_ids = set(range(1, slow_count + 1))  # Client IDs start from 1
-                logger.info(f"[BW-SIM] Client {client_id}: Auto-assigned slow clients (first {slow_count}): {self._slow_client_ids}")
-
-            is_slow = client_id in self._slow_client_ids
-            bandwidth = cfg.bittorrent.slow_bandwidth_mbps if is_slow else cfg.bittorrent.fast_bandwidth_mbps
-            logger.info(f"[BW-SIM] Client {client_id}: {'SLOW' if is_slow else 'FAST'} node @ {bandwidth} Mbps")
-
         logger.debug(f"[BT] BitTorrentManager initialized for client {client_id}, round {round_num}")
         logger.debug(f"[BT] Client {client_id}: Concurrent settings - Active requests: {self.MAX_ACTIVE_REQUESTS}, Pending queue: {self.MAX_PENDING_QUEUE}, Upload slots: {self.MAX_UPLOAD_SLOTS}")
         logger.debug(f"[BT] Client {client_id}: Endgame settings - Threshold: {self.min_completion_ratio:.1%}, Max parallel peers: {self.endgame_max_parallel_peers}")
@@ -1512,24 +1492,6 @@ class BitTorrentManager:
             serialized_data = pickle.dumps(chunk_data)  # Fallback for legacy data
         checksum = hashlib.sha256(serialized_data).hexdigest()
         data_size = len(serialized_data)
-
-        # ==================== Experiment 1: Bandwidth Heterogeneity Simulation ====================
-        # Simulate rate-limited upload by adding delay proportional to data size
-        # Note: bandwidth = 0.0 means unlimited (no delay)
-        if self.cfg and hasattr(self.cfg, 'bittorrent') and self.cfg.bittorrent.bandwidth_heterogeneity:
-            if self.client_id in self._slow_client_ids:
-                bandwidth_mbps = self.cfg.bittorrent.slow_bandwidth_mbps
-            else:
-                bandwidth_mbps = self.cfg.bittorrent.fast_bandwidth_mbps
-
-            # Only apply rate limiting if bandwidth > 0 (0 means unlimited)
-            if bandwidth_mbps > 0:
-                bandwidth_bytes_per_sec = bandwidth_mbps * 1024 * 1024 / 8
-                # Calculate transfer delay: delay = data_size / bandwidth
-                transfer_delay = data_size / bandwidth_bytes_per_sec
-                if transfer_delay > 0.001:  # Only sleep if delay > 1ms
-                    time.sleep(transfer_delay)
-                    logger.debug(f"[BW-SIM] Client {self.client_id}: {data_size}B at {bandwidth_bytes_per_sec/1024/1024:.1f}MB/s = {transfer_delay:.3f}s delay")
 
         logger.debug(f"[BT-SEND] Client {self.client_id}: Preparing chunk {source_client_id}:{chunk_id}, size={data_size}B")
         

@@ -80,26 +80,6 @@ def extend_bittorrent_cfg(cfg):
     # Gossip-style DFL: neighbor-only collection
     cfg.bittorrent.neighbor_only_collection = False  # Only collect chunks from topology neighbors
 
-    # ==================== Experiment 1: Bandwidth Heterogeneity ====================
-    # Application-level bandwidth simulation (no root/tc required)
-    cfg.bittorrent.bandwidth_heterogeneity = False  # Enable bandwidth simulation
-    cfg.bittorrent.slow_client_ratio = 0.5  # Fraction of clients that are slow (0.5 = 50%)
-    cfg.bittorrent.slow_client_ids = []  # Explicit list of slow client IDs, or auto-assign if empty
-    cfg.bittorrent.fast_bandwidth_mbps = 100.0  # Fast clients: 100 Mbps
-    cfg.bittorrent.slow_bandwidth_mbps = 10.0   # Slow clients: 10 Mbps (10x slower)
-
-    # ==================== Experiment 2: Churn Injection ====================
-    # Simulate client failures for robustness testing
-    cfg.bittorrent.churn_injection = False  # Enable churn simulation
-    cfg.bittorrent.churn_rate = 0.0  # Probability of failure per round (0.1 = 10%)
-    cfg.bittorrent.churn_mode = 'silent'  # 'silent': sleep then return (blocking), 'delayed': slow response, 'skip': immediate skip (non-blocking, recommended)
-
-    # ==================== Experiment 3: Protocol-only Scaling ====================
-    # Synthetic payload mode for scalability testing (no ML computation)
-    cfg.bittorrent.protocol_only = False  # Enable protocol-only mode
-    cfg.bittorrent.synthetic_chunk_size = 1048576  # 1MB per chunk
-    cfg.bittorrent.synthetic_num_chunks = 50  # Number of synthetic chunks per client
-
 
 def assert_bittorrent_cfg(cfg):
     """Validate the validity of BitTorrent configuration parameters"""

@@ -859,12 +859,6 @@ class Server(BaseServer, ConnectionHandlerMixin):
         Returns:
             the formatted merged results
         """
-        # Protocol-only mode: skip evaluation result merging
-        if (hasattr(self._cfg, 'bittorrent') and
-            self._cfg.bittorrent.protocol_only):
-            logger.info("[Protocol-Only] Server: Skipping eval results merging")
-            return {}
-
         round = max(self.msg_buffer['eval'].keys())
         eval_msg_buffer = self.msg_buffer['eval'][round]
         eval_res_participated_clients = []

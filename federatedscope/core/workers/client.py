@@ -539,20 +539,12 @@ class Client(BaseClient):
                 self.early_stopper.early_stopped and \
                 self._cfg.federate.method in ["local", "global"]
 
-            # Protocol-only mode: skip actual training, only do BitTorrent exchange
-            is_protocol_only = (hasattr(self._cfg, 'bittorrent') and
-                               self._cfg.bittorrent.protocol_only)
-
-            if self.is_unseen_client or skip_train_isolated_or_global_mode or is_protocol_only:
-                # for these cases (1) unseen client (2) isolated_global_mode (3) protocol_only
+            if self.is_unseen_client or skip_train_isolated_or_global_mode:
+                # for these cases (1) unseen client (2) isolated_global_mode
                 # we do not local train and upload local model
                 sample_size, model_para_all, results = \
                     0, self.trainer.get_model_para(), {}
-                if is_protocol_only:
-                    logger.info(
-                        f"[Protocol-Only] Client #{self.ID} Round {round}: "
-                        f"Skipping training, only BitTorrent exchange")
-                elif skip_train_isolated_or_global_mode:
+                if skip_train_isolated_or_global_mode:
                     logger.info(
                         f"[Local/Global mode] Client #{self.ID} has been "
                         f"early stopped, we will skip the local training")
@@ -827,16 +819,8 @@ class Client(BaseClient):
         if message.content is not None:
             self.trainer.update(message.content,
                                 strict=self._cfg.federate.share_local_model)
-        # Protocol-only mode: skip actual evaluation
-        is_protocol_only = (hasattr(self._cfg, 'bittorrent') and
-                           self._cfg.bittorrent.protocol_only)
 
-        if is_protocol_only:
-            logger.info(
-                f"[Protocol-Only] Client #{self.ID} Round {self.state}: "
-                f"Skipping evaluation (protocol_only mode)")
-            metrics = {}
-        elif self.early_stopper.early_stopped and self._cfg.federate.method in [
+        if self.early_stopper.early_stopped and self._cfg.federate.method in [
                 "local", "global"
         ]:
             metrics = list(self.best_results.values())[0]
@@ -1107,11 +1091,6 @@ class Client(BaseClient):
         Stores model weights as chunks in local database with key format:
         (client_id, round_num, chunk_id) -> chunk_data
         """
-        # Protocol-only mode: skip saving model chunks (synthetic chunks already generated)
-        if (hasattr(self._cfg, 'bittorrent') and self._cfg.bittorrent.protocol_only):
-            logger.info(f"[Protocol-Only] Client {self.ID}: Skipping model chunk saving")
-            return
-
         try:
             from federatedscope.core.chunk_manager import ChunkManager
 
@@ -2436,33 +2415,7 @@ class Client(BaseClient):
 
         # 🚀 CRITICAL FIX: Register own chunks to memory AFTER bt_manager is created
         # Query chunk_manager for own chunks and register them to bt_manager
-
-        # ==================== Experiment 3: Protocol-only Scaling ====================
-        # Generate synthetic chunks for scalability testing (bypass ML training)
-        if (hasattr(self._cfg, 'bittorrent') and
-            self._cfg.bittorrent.protocol_only):
-            import numpy as np
-            chunks_per_client = self._cfg.bittorrent.synthetic_num_chunks
-            chunk_size = self._cfg.bittorrent.synthetic_chunk_size
-            logger.info(f"[Protocol-only] Client {self.ID}: Generating {chunks_per_client} synthetic chunks of {chunk_size}B each")
-
-            for i in range(chunks_per_client):
-                # Generate random bytes as synthetic chunk data
-                synthetic_data = np.random.bytes(chunk_size)
-                # Save to chunk_manager's cache so it can be retrieved for sending
-                if hasattr(self.chunk_manager, 'chunk_cache') and self.chunk_manager.chunk_cache is not None:
-                    self.chunk_manager.chunk_cache.save_chunk_data(
-                        round_num=round_num,
-                        source_client_id=self.ID,
-                        chunk_id=i,
-                        chunk_data=synthetic_data
-                    )
-                else:
-                    logger.warning(f"[Protocol-only] Client {self.ID}: chunk_cache not available, cannot save synthetic chunks")
-                    break
-            logger.info(f"[Protocol-only] Client {self.ID}: Generated and saved {chunks_per_client} synthetic chunks to cache")
-        else:
-            chunks_per_client = self._cfg.chunk.num_chunks if hasattr(self._cfg, 'chunk') else 16
+        chunks_per_client = self._cfg.chunk.num_chunks if hasattr(self._cfg, 'chunk') else 16
 
         own_chunk_keys = [(round_num, self.ID, i) for i in range(chunks_per_client)]
         self.bt_manager.register_own_chunks(own_chunk_keys)
@@ -2537,44 +2490,6 @@ class Client(BaseClient):
         logger.info(f"[BT] Client {self.ID}: Event-driven exchange loop started, expected_chunks={expected_chunks}")
         try:
             import time
-            import random as _churn_random
-
-            # ==================== Experiment 2: Churn Injection ====================
-            # Simulate client failure at the start of BitTorrent exchange
-            if (hasattr(self._cfg, 'bittorrent') and
-                self._cfg.bittorrent.churn_injection and
-                _churn_random.random() < self._cfg.bittorrent.churn_rate):
-
-                churn_mode = self._cfg.bittorrent.churn_mode
-                timeout_duration = self._cfg.bittorrent.timeout
-
-                if churn_mode == 'silent':
-                    # Silent failure: sleep for 80% of timeout, then return failure
-                    sleep_duration = timeout_duration * 0.8
-                    logger.info(f"[Churn] Client {self.ID}: Simulating SILENT failure - sleeping for {sleep_duration:.1f}s")
-                    time.sleep(sleep_duration)
-                    logger.info(f"[Churn] Client {self.ID}: Silent failure complete, triggering compensation")
-                    # Report with 0 chunks to indicate failure and trigger compensation
-                    self._report_bittorrent_completion(chunks_collected=0)
-                    return  # Exit exchange loop, will trigger compensation
-
-                elif churn_mode == 'delayed':
-                    # Delayed response: slow down significantly but eventually respond
-                    delay_factor = 5.0  # 5x slower than normal
-                    logger.info(f"[Churn] Client {self.ID}: Simulating DELAYED response - {delay_factor}x slower")
-                    # Add delay to each iteration in the main loop below
-                    self._churn_delay_factor = delay_factor
-
-                elif churn_mode == 'skip':
-                    # Skip mode: immediately report failure and exit, no blocking whatsoever
-                    # This simulates a node that drops out of this round without participating
-                    # Unlike 'silent' mode which sleeps for 80% of timeout, skip returns immediately
-                    logger.info(f"[Churn] Client {self.ID}: Simulating SKIP failure - immediately skipping BitTorrent exchange")
-                    self._report_bittorrent_completion(chunks_collected=0)
-                    return  # Exit exchange loop immediately, will trigger compensation
-
-                else:
-                    logger.warning(f"[Churn] Client {self.ID}: Unknown churn_mode '{churn_mode}', skipping")
 
             last_progress_time = time.time()
             last_unchoke_time = time.time()

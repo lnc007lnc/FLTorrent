@@ -202,23 +202,12 @@ class BaseRunner(object):
             self.cfg.federate.share_local_model else \
             self.gpu_manager.auto_choice()
 
-        # ==================== Experiment 3: Protocol-only Mode ====================
         # Determine which model to use for this client
         if client_model is not None:
             # Use provided shared model
             final_model = client_model
-        elif (hasattr(self.cfg, 'bittorrent') and
-              self.cfg.bittorrent.protocol_only):
-            # Protocol-only mode: use dummy model to bypass data shape requirements
-            from federatedscope.core.auxiliaries.model_builder import \
-                create_dummy_model_for_protocol_only
-            final_model = create_dummy_model_for_protocol_only(
-                client_specific_config.model, backend=self.cfg.backend)
-            if client_id == 1:  # Only log once to avoid spam
-                logger.info('[Protocol-Only] Clients using dummy models for '
-                           'protocol scalability testing')
         else:
-            # Original logic: build model from client data
+            # Build model from client data
             final_model = get_model(client_specific_config.model,
                                     client_data,
                                     backend=self.cfg.backend)
@@ -359,17 +348,9 @@ class StandaloneRunner(BaseRunner):
         self.client = dict()
         # assume the client-wise data are consistent in their input&output
         # shape
-        # ==================== Experiment 3: Protocol-only Mode ====================
         if self.cfg.federate.share_local_model:
-            if (hasattr(self.cfg, 'bittorrent') and
-                self.cfg.bittorrent.protocol_only):
-                from federatedscope.core.auxiliaries.model_builder import \
-                    create_dummy_model_for_protocol_only
-                self._shared_client_model = create_dummy_model_for_protocol_only(
-                    self.cfg.model, backend=self.cfg.backend)
-            else:
-                self._shared_client_model = get_model(
-                    self.cfg.model, self.data[1], backend=self.cfg.backend)
+            self._shared_client_model = get_model(
+                self.cfg.model, self.data[1], backend=self.cfg.backend)
         else:
             self._shared_client_model = None
         for client_id in range(1, self.cfg.federate.client_num + 1):
@@ -392,28 +373,17 @@ class StandaloneRunner(BaseRunner):
         else:
             server_data = None
 
-        # ==================== Experiment 3: Protocol-only Mode ====================
-        # In protocol_only mode, use dummy model to bypass data shape requirements
-        if (hasattr(self.cfg, 'bittorrent') and
-            self.cfg.bittorrent.protocol_only):
-            from federatedscope.core.auxiliaries.model_builder import \
-                create_dummy_model_for_protocol_only
-            model = create_dummy_model_for_protocol_only(
-                self.cfg.model, backend=self.cfg.backend)
-            logger.info('[Protocol-Only] Server using dummy model for '
-                       'protocol scalability testing')
+        # Build model from data
+        if server_data is not None:
+            model = get_model(self.cfg.model,
+                              server_data,
+                              backend=self.cfg.backend)
         else:
-            # Original logic: build model from data
-            if server_data is not None:
-                model = get_model(self.cfg.model,
-                                  server_data,
-                                  backend=self.cfg.backend)
-            else:
-                data_representative = self.data[1]
-                model = get_model(
-                    self.cfg.model, data_representative, backend=self.cfg.backend
-                )  # get the model according to client's data if the server
-                # does not own data
+            data_representative = self.data[1]
+            model = get_model(
+                self.cfg.model, data_representative, backend=self.cfg.backend
+            )  # get the model according to client's data if the server
+            # does not own data
 
         kw = {
             'shared_comm_queue': self.shared_comm_queue,
@@ -578,19 +548,9 @@ class DistributedRunner(BaseRunner):
 
     def _get_server_args(self, resource_info, client_resource_info):
         server_data = self.data
-        # ==================== Experiment 3: Protocol-only Mode ====================
-        if (hasattr(self.cfg, 'bittorrent') and
-            self.cfg.bittorrent.protocol_only):
-            from federatedscope.core.auxiliaries.model_builder import \
-                create_dummy_model_for_protocol_only
-            model = create_dummy_model_for_protocol_only(
-                self.cfg.model, backend=self.cfg.backend)
-            logger.info('[Protocol-Only] Server using dummy model for '
-                       'protocol scalability testing')
-        else:
-            model = get_model(self.cfg.model,
-                              server_data,
-                              backend=self.cfg.backend)
+        model = get_model(self.cfg.model,
+                          server_data,
+                          backend=self.cfg.backend)
         kw = self.server_address
         kw.update({'resource_info': resource_info})
         return server_data, model, kw
@@ -736,17 +696,9 @@ class FedRunner(object):
 
         # assume the client-wise data are consistent in their input&output
         # shape
-        # ==================== Experiment 3: Protocol-only Mode ====================
         if self.cfg.federate.share_local_model:
-            if (hasattr(self.cfg, 'bittorrent') and
-                self.cfg.bittorrent.protocol_only):
-                from federatedscope.core.auxiliaries.model_builder import \
-                    create_dummy_model_for_protocol_only
-                self._shared_client_model = create_dummy_model_for_protocol_only(
-                    self.cfg.model, backend=self.cfg.backend)
-            else:
-                self._shared_client_model = get_model(
-                    self.cfg.model, self.data[1], backend=self.cfg.backend)
+            self._shared_client_model = get_model(
+                self.cfg.model, self.data[1], backend=self.cfg.backend)
         else:
             self._shared_client_model = None
 
@@ -898,16 +850,7 @@ class FedRunner(object):
             else:
                 server_data = None
 
-            # ==================== Experiment 3: Protocol-only Mode ====================
-            if (hasattr(self.cfg, 'bittorrent') and
-                self.cfg.bittorrent.protocol_only):
-                from federatedscope.core.auxiliaries.model_builder import \
-                    create_dummy_model_for_protocol_only
-                model = create_dummy_model_for_protocol_only(
-                    self.cfg.model, backend=self.cfg.backend)
-                logger.info('[Protocol-Only] Server using dummy model for '
-                           'protocol scalability testing')
-            elif server_data is not None:
+            if server_data is not None:
                 model = get_model(self.cfg.model,
                                   server_data,
                                   backend=self.cfg.backend)
@@ -926,17 +869,9 @@ class FedRunner(object):
             }
         elif self.mode == 'distributed':
             server_data = self.data
-            # ==================== Experiment 3: Protocol-only Mode ====================
-            if (hasattr(self.cfg, 'bittorrent') and
-                self.cfg.bittorrent.protocol_only):
-                from federatedscope.core.auxiliaries.model_builder import \
-                    create_dummy_model_for_protocol_only
-                model = create_dummy_model_for_protocol_only(
-                    self.cfg.model, backend=self.cfg.backend)
-            else:
-                model = get_model(self.cfg.model,
-                                  server_data,
-                                  backend=self.cfg.backend)
+            model = get_model(self.cfg.model,
+                              server_data,
+                              backend=self.cfg.backend)
             kw = self.server_address
             kw.update({'resource_info': resource_info})
         else:
@@ -1004,19 +939,9 @@ class FedRunner(object):
                 self.cfg.federate.share_local_model else \
                 self.gpu_manager.auto_choice()
 
-            # ==================== Experiment 3: Protocol-only Mode ====================
             # Determine which model to use for this client
             if client_model is not None:
                 final_model = client_model
-            elif (hasattr(self.cfg, 'bittorrent') and
-                  self.cfg.bittorrent.protocol_only):
-                from federatedscope.core.auxiliaries.model_builder import \
-                    create_dummy_model_for_protocol_only
-                final_model = create_dummy_model_for_protocol_only(
-                    client_specific_config.model, backend=self.cfg.backend)
-                if client_id == 1:
-                    logger.info('[Protocol-Only] Clients using dummy models for '
-                               'protocol scalability testing')
             else:
                 final_model = get_model(client_specific_config.model,
                                         client_data,
