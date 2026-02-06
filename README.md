@@ -31,7 +31,7 @@ pip install -r environment/requirements-torch1.10.txt
 ## Run a Single Config
 
 ```bash
-python federatedscope/main.py --cfg configs/exp_bandwidth_comp_on.yaml
+python federatedscope/main.py --cfg configs/fltorrent_review.yaml
 ```
 
 ## Batch Submit (SLURM)
