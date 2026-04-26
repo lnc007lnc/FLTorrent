@@ -196,3 +196,13 @@ test_*.yaml
 # Large datasets
 data/celeba/
 *.zip
+
+# AI assistant files
+CLAUDE.md
+GEMINI.md
+
+# Node.js
+node_modules/
+
+# Server runtime files
+.server_info_*
