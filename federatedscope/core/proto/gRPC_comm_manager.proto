@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+service gRPCComServeFunc {
+    // 🚀 Original Unary RPC (compatibility)
+    rpc sendMessage (MessageRequest) returns (MessageResponse) {};
+    
+    // 🚀 New: bidirectional streaming RPC for chunk transmission
+    rpc streamChunks (stream ChunkStreamRequest) returns (stream ChunkStreamResponse) {};
+    
+    // 🚀 New: server-side streaming RPC for batch chunk download
+    rpc downloadChunks (ChunkBatchRequest) returns (stream ChunkStreamResponse) {};
+    
+    // 🚀 New: client-side streaming RPC for batch chunk upload  
+    rpc uploadChunks (stream ChunkStreamRequest) returns (ChunkBatchResponse) {};
+}
+
+message MessageRequest{
+    map<string, MsgValue> msg = 1;
+}
+
+message MsgValue{
+    oneof type {
+        mSingle single_msg = 1;
+        mList list_msg = 2;
+        mDict_keyIsString dict_msg_stringkey = 3;
+        mDict_keyIsInt dict_msg_intkey = 4;
+    }
+}
+
+message mSingle{
+    oneof type {
+        float float_value = 1;
+        int32 int_value = 2;
+        string str_value = 3;
+        bytes bytes_value = 4;  // 🚀 Add bytes support for chunk data
+    }
+}
+
+message mList{
+    repeated MsgValue list_value = 1;
+}
+
+message mDict_keyIsString{
+    map<string, MsgValue> dict_value = 1;
+}
+
+message mDict_keyIsInt{
+    map<int32, MsgValue> dict_value = 1;
+}
+
+message MessageResponse{
+    string msg = 1;
+}
+
+// 🚀 Streaming chunk messages for optimized BitTorrent transfer
+message ChunkStreamRequest {
+    int32 sender_id = 1;
+    int32 receiver_id = 2;  
+    int32 round_num = 3;
+    int32 source_client_id = 4;
+    int32 chunk_id = 5;
+    bytes chunk_data = 6;        // direct bytes, no additional serialization
+    string checksum = 7;
+    int64 timestamp = 8;
+    ChunkType chunk_type = 9;    // chunk type: REQUEST/PIECE/HAVE/CANCEL
+    float importance_score = 10; // chunk importance score
+}
+
+message ChunkStreamResponse {
+    int32 sender_id = 1;
+    int32 receiver_id = 2;
+    bool success = 3;
+    string error_message = 4;
+    int32 round_num = 5;
+    int32 chunk_id = 6;
+    ChunkResponseType response_type = 7; // ACK/NACK/HAVE/INTERESTED
+    bytes response_data = 8;     // optional: response data
+}
+
+message ChunkBatchRequest {
+    int32 client_id = 1;
+    int32 sender_id = 2;
+    int32 round_num = 3;
+    repeated ChunkRequest chunk_requests = 4;
+}
+
+message ChunkRequest {
+    int32 source_client_id = 1;
+    int32 chunk_id = 2;
+    float importance_score = 3;
+}
+
+message ChunkBatchResponse {
+    int32 client_id = 1;
+    int32 successful_chunks = 2;
+    int32 failed_chunks = 3;
+    repeated string error_messages = 4;
+}
+
+enum ChunkType {
+    CHUNK_REQUEST = 0;    // request chunk
+    CHUNK_PIECE = 1;      // chunk data
+    CHUNK_HAVE = 2;       // have notification
+    CHUNK_CANCEL = 3;     // cancel request
+    CHUNK_BITFIELD = 4;   // bitfield update
+    // 🔧 New: BitTorrent protocol control message types
+    CHUNK_INTERESTED_REQ = 5; // express interest in peer
+    CHUNK_UNCHOKE_REQ = 6;    // allow download
+    CHUNK_CHOKE_REQ = 7;      // forbid download
+}
+
+enum ChunkResponseType {
+    CHUNK_ACK = 0;        // acknowledge received
+    CHUNK_NACK = 1;       // reject/error
+    CHUNK_HAVE_RESP = 2;  // have response
+    CHUNK_INTERESTED_RESP = 3; // interested response
+}
